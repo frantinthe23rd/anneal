@@ -1,0 +1,10 @@
+# Secrets
+env.local.sh
+
+# Runtime state (lives on the SSD, but keep these out if ever produced here)
+*.log
+*.pid
+outputs/
+__pycache__/
+*.pyc
+.DS_Store
