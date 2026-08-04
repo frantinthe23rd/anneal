@@ -1,7 +1,13 @@
-# Local, on-demand generation API — music, speech, images
+# Anneal
 
-Three local models on a Mac mini M4, behind one HTTP gateway, reachable from the
+**Local, on-demand generation — music, speech and images behind one API.**
+
+Three models on a Mac mini M4, behind a single HTTP gateway, reachable from the
 host and over the tailnet. Nothing leaves the machine.
+
+Named for what it does to its models: heat one up on demand, let it cool and
+release the memory when idle. On 16 GB that isn't an optimisation, it's the only
+way all three fit.
 
 | Service | Model | Licence | Output |
 | --- | --- | --- | --- |

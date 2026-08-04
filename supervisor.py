@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""On-demand gateway for the local generation services.
+"""Anneal — on-demand gateway for the local generation services.
 
 The machine has 16 GB of unified memory. The music model holds ~7 GB once
 loaded and the image model about the same, so neither can stay resident and the
@@ -72,7 +72,7 @@ DOCS_HTML = """<!doctype html>
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Local Generation Gateway — API docs</title>
+    <title>Anneal — API docs</title>
     <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
     <style>body { margin: 0 } .topbar { display: none }</style>
   </head>

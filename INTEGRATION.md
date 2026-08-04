@@ -1,7 +1,10 @@
-# Integrating the local generation API
+# Integrating Anneal
 
-Self-hosted **music, speech and image** generation running on the Mac mini
-(`jons-mac-mini`), behind one HTTP gateway.
+**Anneal** is self-hosted **music, speech and image** generation running on the
+Mac mini (`jons-mac-mini`), behind one HTTP gateway.
+
+It's named for what it does to its models: heat one up on demand, let it cool
+and release the memory when idle.
 
 | Service | Model | Shape | Typical time |
 | --- | --- | --- | --- |
@@ -32,12 +35,13 @@ internet and not on the LAN. Your machine must be on the tailnet. TLS on the
 tailnet URL is terminated by Tailscale; the certificate is valid, so no
 `--insecure` or cert pinning is needed.
 
-Get the API key from the host at `~/dev/AIMusic/env.local.sh`. **Do not commit
-it.** Read it from an environment variable in your project:
+Get the API key from the host owner — it lives in `env.local.sh` in the checkout
+and is deliberately not in the repo. **Do not commit it.** Read it from an
+environment variable in your project:
 
 ```bash
-export MUSIC_API_URL=https://jons-mac-mini.pangolin-darter.ts.net
-export MUSIC_API_KEY=sk-aimusic-...
+export ANNEAL_URL=https://jons-mac-mini.pangolin-darter.ts.net
+export ANNEAL_KEY=sk-aimusic-...
 ```
 
 Requests without a valid key get `401`.
@@ -78,9 +82,9 @@ switch. Batch same-modality work together rather than alternating.
 scheduled), fire this first and the model loads while the user is still typing:
 
 ```bash
-curl -X POST -H "Authorization: Bearer $MUSIC_API_KEY" \
+curl -X POST -H "Authorization: Bearer $ANNEAL_KEY" \
   -H 'Content-Type: application/json' -d '{"service":"music"}' \
-  "$MUSIC_API_URL/supervisor/start"
+  "$ANNEAL_URL/supervisor/start"
 ```
 
 `service` is one of `music`, `speech`, `image`.
@@ -120,8 +124,8 @@ status line.
 ### 3.1 Submit
 
 ```bash
-curl -X POST "$MUSIC_API_URL/release_task" \
-  -H "Authorization: Bearer $MUSIC_API_KEY" \
+curl -X POST "$ANNEAL_URL/release_task" \
+  -H "Authorization: Bearer $ANNEAL_KEY" \
   -H 'Content-Type: application/json' \
   -d '{
         "prompt": "warm indie pop ballad, female vocals, brushed drums",
@@ -136,8 +140,8 @@ curl -X POST "$MUSIC_API_URL/release_task" \
 ### 3.2 Poll
 
 ```bash
-curl -X POST "$MUSIC_API_URL/query_result" \
-  -H "Authorization: Bearer $MUSIC_API_KEY" \
+curl -X POST "$ANNEAL_URL/query_result" \
+  -H "Authorization: Bearer $ANNEAL_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"task_id_list": ["42f580bc-..."]}'
 ```
@@ -173,8 +177,8 @@ Poll every **3–5 seconds**. Polling is cheap but there is no push/webhook.
 with the base URL and send the auth header:
 
 ```bash
-curl -o track.mp3 -H "Authorization: Bearer $MUSIC_API_KEY" \
-  "$MUSIC_API_URL/v1/audio?path=%2FVolumes%2FStorage%2F..."
+curl -o track.mp3 -H "Authorization: Bearer $ANNEAL_KEY" \
+  "$ANNEAL_URL/v1/audio?path=%2FVolumes%2FStorage%2F..."
 ```
 
 Files persist on the host and can be re-downloaded later without waking the
@@ -233,8 +237,8 @@ Stdlib only, handles cold starts and the double-encoded `result`.
 ```python
 import json, time, urllib.parse, urllib.request
 
-BASE = os.environ["MUSIC_API_URL"]
-KEY = os.environ["MUSIC_API_KEY"]
+BASE = os.environ["ANNEAL_URL"]
+KEY = os.environ["ANNEAL_KEY"]
 
 def _post(path, payload, timeout=1200):
     req = urllib.request.Request(
@@ -282,8 +286,8 @@ is copyable to any tailnet machine (`--base-url` to point it here).
 ### TypeScript
 
 ```ts
-const BASE = process.env.MUSIC_API_URL!;
-const KEY = process.env.MUSIC_API_KEY!;
+const BASE = process.env.ANNEAL_URL!;
+const KEY = process.env.ANNEAL_KEY!;
 
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(BASE + path, {
@@ -319,8 +323,8 @@ export async function generate(prompt: string, durationSec = 60) {
 Synchronous — post text, get audio bytes back. No polling.
 
 ```bash
-curl -X POST "$MUSIC_API_URL/v1/audio/speech" \
-  -H "Authorization: Bearer $MUSIC_API_KEY" \
+curl -X POST "$ANNEAL_URL/v1/audio/speech" \
+  -H "Authorization: Bearer $ANNEAL_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"input":"Your build finished successfully.","voice":"bf_emma","response_format":"mp3"}' \
   -o narration.mp3
@@ -345,8 +349,8 @@ works by changing the base URL, key, and voice name.
 Also synchronous, but slow — budget ~2 minutes per 1024x1024 image.
 
 ```bash
-curl -X POST "$MUSIC_API_URL/v1/images/generations" \
-  -H "Authorization: Bearer $MUSIC_API_KEY" \
+curl -X POST "$ANNEAL_URL/v1/images/generations" \
+  -H "Authorization: Bearer $ANNEAL_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"prompt":"a lighthouse in a storm, oil painting","size":"1024x1024","steps":4}'
 ```
