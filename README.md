@@ -1,32 +1,43 @@
-# AIMusic — local, on-demand music generation API
+# Local, on-demand generation API — music, speech, images
 
-[ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) (MIT) running natively on a
-Mac mini M4, exposed as an HTTP API to the host and to the tailnet.
+Three local models on a Mac mini M4, behind one HTTP gateway, reachable from the
+host and over the tailnet. Nothing leaves the machine.
 
-Text-to-music with vocals and lyrics, instrumentals, style transfer, covers,
-repainting and continuation — tracks up to 10 minutes, generated entirely locally.
+| Service | Model | Licence | Output |
+| --- | --- | --- | --- |
+| Music | [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) | MIT | Songs with vocals, instrumentals, covers, continuation — up to 10 min |
+| Speech | [Kokoro-82M](https://huggingface.co/prince-canuma/Kokoro-82M) via [mlx-audio](https://github.com/Blaizzy/mlx-audio) | Apache-2.0 | 28 voices, en/uk |
+| Image | FLUX.1-schnell 4-bit via [mflux](https://github.com/filipstrand/mflux) | Apache-2.0 | Up to ~1536px |
 
-**Integrating it into a project? Read [INTEGRATION.md](INTEGRATION.md).**
+**Integrating it? Live API docs at `/docs`, spec at `/openapi.json`, plus
+[INTEGRATION.md](INTEGRATION.md) for the things a spec can't tell you.**
 
 ## Architecture
 
 ```
-tailnet ──TLS──► tailscale serve ──► supervisor.py :8001 ──► ACE-Step :8011
-                                     (always on, ~25 MB)      (on demand, ~7 GB)
+                                        ┌─► ACE-Step  :8011  (on demand, ~7 GB, heavy)
+tailnet ─TLS─► tailscale serve ─► supervisor.py :8001 ─┼─► Kokoro    :8012  (on demand, ~400 MB, light)
+                                  (always on, ~25 MB)  └─► FLUX      :8013  (on demand, ~7 GB, heavy)
 ```
 
-The model needs ~7 GB of the machine's 16 GB, which is too much to pin
-permanently, and ACE-Step has no idle-unload of its own. So `supervisor.py` owns
-the public port and manages the model's lifecycle:
+16 GB of unified memory can't hold these permanently, and none of the backends
+offer idle-unload, so ending the process is the only way to reclaim the memory.
+`supervisor.py` owns the public port and manages every backend's lifecycle:
 
-- a request arrives → start ACE-Step, wait for it, forward the request
-- 10 minutes with no requests *and* no queued/running jobs → stop it, releasing the RAM
+- a request arrives → start the owning service, wait for it, forward the request
+- starting a **heavy** service first evicts the other heavy service
+- idle past the service's timeout, with nothing queued → stop it, releasing the RAM
 
-Measured: stopping the backend returns ~6.5 GB to the system. The cost is a
-~3–4 minute cold start on the first request after an idle period.
+Measured: stopping the music backend returns ~6.5 GB to the system. The cost is a
+~3–4 minute cold start for music (~30–60 s for images) after an idle period or an
+eviction. Speech is light enough to stay resident alongside either.
 
-`GET /health` and `GET /v1/audio` are served by the supervisor itself, so health
-checks and re-downloads never wake the model.
+`/health`, `/supervisor/status`, `/docs`, `/openapi.json` and `/v1/audio` are all
+answered by the supervisor itself, so health checks, docs and re-downloads never
+wake a model.
+
+Adding a fourth modality means adding an entry to `services.py` — the supervisor
+is generic.
 
 ## Where things live
 
@@ -35,11 +46,14 @@ Everything bulky is on the **Storage SSD**; the internal disk holds only these s
 | Path | Contents |
 | --- | --- |
 | `/Volumes/Storage/AIMusic/ACE-Step-1.5` | upstream repo + `.venv` (~1.2 GB) |
-| `/Volumes/Storage/AIMusic/models` | model weights (~9.4 GB) |
+| `/Volumes/Storage/AIMusic/models` | ACE-Step weights (~9.4 GB) |
+| `/Volumes/Storage/AIMusic/hf-cache` | Kokoro + FLUX weights (~9.4 GB) |
+| `/Volumes/Storage/AIMusic/gen-venv` | venv for speech + image (mlx-audio, mflux) |
 | `/Volumes/Storage/AIMusic/uv-cache`, `uv-python` | wheel cache + Python 3.12 (~3.2 GB) |
-| `/Volumes/Storage/AIMusic/outputs` | generated audio |
+| `/Volumes/Storage/AIMusic/outputs` | generated audio and `images/` |
 | `/Volumes/Storage/AIMusic/supervisor.log` | supervisor lifecycle log |
 | `/Volumes/Storage/AIMusic/api-server.log` | ACE-Step server log |
+| `/Volumes/Storage/AIMusic/speech-server.log`, `image-server.log` | backend logs |
 
 `ACE-Step-1.5/checkpoints` is a symlink to `models/` — the upstream server hardcodes
 that path and ignores `ACESTEP_CHECKPOINTS_DIR`. `start-api.sh` recreates it if a repo
@@ -65,12 +79,27 @@ source ./env.sh
 
 Audio lands in `/Volumes/Storage/AIMusic/outputs` (`--out` to change).
 
+Speech and images:
+
+```bash
+source ./env.sh
+curl -X POST localhost:8001/v1/audio/speech -H "Authorization: Bearer $ACESTEP_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"input":"Build finished.","voice":"bf_emma","response_format":"mp3"}' -o out.mp3
+
+curl -X POST localhost:8001/v1/images/generations -H "Authorization: Bearer $ACESTEP_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"a lighthouse in a storm, oil painting","response_format":"path"}'
+```
+
 Lifecycle control:
 
 ```bash
-curl -s localhost:8001/supervisor/status | python3 -m json.tool
-curl -X POST -H "Authorization: Bearer $ACESTEP_API_KEY" localhost:8001/supervisor/start  # pre-warm
-curl -X POST -H "Authorization: Bearer $ACESTEP_API_KEY" localhost:8001/supervisor/stop   # free RAM now
+curl -s localhost:8001/health | python3 -m json.tool          # what's loaded
+# pre-warm / unload a specific service: music | speech | image
+curl -X POST -H "Authorization: Bearer $ACESTEP_API_KEY" -H 'Content-Type: application/json' \
+  -d '{"service":"image"}' localhost:8001/supervisor/start
+curl -X POST -H "Authorization: Bearer $ACESTEP_API_KEY" localhost:8001/supervisor/stop  # stop everything
 ```
 
 ## Configuration

@@ -1,10 +1,21 @@
-# Integrating the local music generation API
+# Integrating the local generation API
 
-A self-hosted music generation service running on the Mac mini (`jons-mac-mini`).
-It turns a text description — plus optional lyrics — into finished audio.
+Self-hosted **music, speech and image** generation running on the Mac mini
+(`jons-mac-mini`), behind one HTTP gateway.
 
-This document is for developers and agents wiring the service into a project.
-You do not need to understand the model; treat it as an async HTTP job API.
+| Service | Model | Shape | Typical time |
+| --- | --- | --- | --- |
+| Music | ACE-Step 1.5 | async: submit → poll → download | 1.5–3 min |
+| Speech | Kokoro-82M | synchronous, returns bytes | 1–2 s |
+| Image | FLUX.1-schnell 4-bit | synchronous, returns bytes | ~2 min |
+
+**Interactive API docs are hosted at
+<https://jons-mac-mini.pangolin-darter.ts.net/docs>**, with the raw spec at
+`/openapi.json`. Point your tooling there — it is generated from the same
+contract described below and is the authoritative reference.
+
+This document covers the things a spec can't tell you: the memory model, the
+double-encoded result field, and how to set timeouts.
 
 ---
 
@@ -35,18 +46,24 @@ Requests without a valid key get `401`.
 
 ## 2. The one thing that will surprise you: cold starts
 
-The machine has 16 GB of RAM, and the model needs ~7 GB of it. Keeping it
-loaded permanently starved everything else, so the model is **loaded on demand
-and unloaded after 10 minutes of inactivity**.
+The machine has 16 GB of RAM. The music model needs ~7 GB and the image model
+about the same. Keeping either loaded permanently starved everything else, so
+models are **loaded on demand and unloaded after an idle period** — and the two
+heavy models are **never resident together**. Asking for an image evicts the
+music model, and vice versa. Speech is small enough to coexist with either.
 
 Practical consequences:
 
 | Situation | First-response latency |
 | --- | --- |
-| Model already warm | generation time only (~1.5–3 min) |
-| Model cold (idle >10 min) | **+3–4 minutes** while weights load |
+| Model already warm | generation time only |
+| Music cold, or evicted by an image request | **+3–4 minutes** while weights load |
+| Image cold | **+30–60 s** |
 
-So a single request can legitimately take **up to ~8 minutes** end to end.
+So a single music request can legitimately take **up to ~8 minutes** end to end.
+
+If your app interleaves music and image work, expect a cold start on *every*
+switch. Batch same-modality work together rather than alternating.
 
 **Design for this:**
 
@@ -62,8 +79,11 @@ scheduled), fire this first and the model loads while the user is still typing:
 
 ```bash
 curl -X POST -H "Authorization: Bearer $MUSIC_API_KEY" \
+  -H 'Content-Type: application/json' -d '{"service":"music"}' \
   "$MUSIC_API_URL/supervisor/start"
 ```
+
+`service` is one of `music`, `speech`, `image`.
 
 It blocks until the model is ready, then returns. Any subsequent request within
 the idle window is warm. Each request resets the idle timer.
@@ -74,9 +94,10 @@ you like.
 
 ---
 
-## 3. The flow
+## 3. Music: the flow
 
-Generation is asynchronous — three steps:
+Music generation is asynchronous — three steps. (Speech and image are plain
+synchronous calls; see sections 6a and 6b.)
 
 ```
 POST /release_task   -> task_id
@@ -293,19 +314,76 @@ export async function generate(prompt: string, durationSec = 60) {
 
 ---
 
+## 6a. Speech
+
+Synchronous — post text, get audio bytes back. No polling.
+
+```bash
+curl -X POST "$MUSIC_API_URL/v1/audio/speech" \
+  -H "Authorization: Bearer $MUSIC_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"input":"Your build finished successfully.","voice":"bf_emma","response_format":"mp3"}' \
+  -o narration.mp3
+```
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| `input` | — | Required. Text to speak. |
+| `voice` | `af_heart` | `GET /v1/voices` lists all 28. Prefix encodes language and gender: `a`=American, `b`=British, `f`=female, `m`=male. |
+| `response_format` | `wav` | `wav`, `mp3`, `flac`, `opus`, `aac`. |
+| `speed` | `1.0` | 0.5–2.0. |
+
+Roughly 1–2 s per sentence once warm; the model is only ~350 MB so it loads in
+about a second and can stay resident alongside music or image work. Long inputs
+scale linearly — chunk anything book-length and concatenate client-side.
+
+This is the OpenAI `/v1/audio/speech` shape, so most OpenAI TTS client code
+works by changing the base URL, key, and voice name.
+
+## 6b. Images
+
+Also synchronous, but slow — budget ~2 minutes per 1024x1024 image.
+
+```bash
+curl -X POST "$MUSIC_API_URL/v1/images/generations" \
+  -H "Authorization: Bearer $MUSIC_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"a lighthouse in a storm, oil painting","size":"1024x1024","steps":4}'
+```
+
+→ `{"created": ..., "data": [{"b64_json": "...", "path": "...", "seed": 7, "seconds": 122.4}]}`
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| `prompt` | — | Required. |
+| `size` | `1024x1024` | Snapped to a multiple of 16, max ~1536x1536. Smaller is proportionally faster. |
+| `steps` | `4` | schnell is distilled for 4 steps; more mostly costs time. |
+| `n` | `1` | Max 4. Each costs a full generation. |
+| `seed` | random | With `n>1` seeds increment from this. |
+| `response_format` | `b64_json` | Use `path` to skip base64 and fetch via `/v1/images/file?path=`. |
+
+`b64_json` inflates a ~1.3 MB PNG to ~1.7 MB of JSON. For anything
+latency-sensitive use `"response_format": "path"` and fetch the bytes separately.
+
+Remember this evicts the music model.
+
 ## 7. Endpoint summary
 
 | Method | Path | Wakes model? | Purpose |
 | --- | --- | --- | --- |
-| POST | `/release_task` | yes | Submit a job |
-| POST | `/query_result` | yes | Poll job status |
-| GET | `/v1/audio?path=` | no | Download output |
-| GET | `/v1/stats` | yes | Queue depth |
-| GET | `/health` | **no** | Liveness + whether the model is loaded |
+| POST | `/release_task` | music | Submit a music job |
+| POST | `/query_result` | music | Poll job status |
+| GET | `/v1/audio?path=` | **no** | Download generated music |
+| GET | `/v1/stats` | music | Queue depth |
+| POST | `/v1/audio/speech` | speech | Synthesize speech, returns bytes |
+| GET | `/v1/voices` | speech | List voices |
+| POST | `/v1/images/generations` | image | Generate images |
+| GET | `/v1/images/file?path=` | image | Download a generated image |
+| GET | `/health` | **no** | Per-service state |
 | GET | `/supervisor/status` | **no** | Idle seconds, memory, in-flight count |
 | POST | `/supervisor/start` | yes | Pre-warm; blocks until ready |
-| POST | `/supervisor/stop` | no | Unload now, free the RAM |
-| GET | `/docs` | yes | Interactive OpenAPI docs |
+| POST | `/supervisor/stop` | **no** | Unload now, free the RAM |
+| GET | `/docs`, `/openapi.json` | **no** | Interactive docs and raw spec |
 
 ---
 
@@ -316,12 +394,15 @@ writing progress copy:
 
 | Job | Warm | Cold |
 | --- | --- | --- |
+| Speech, one sentence | ~1.2 s | ~3 s |
 | 20 s instrumental | ~1.5 min | ~5 min |
 | 30 s instrumental | ~2.5 min | ~6 min |
 | 45 s with vocals | ~2.7 min | ~6 min |
+| 1024x1024 image, 4 steps | ~2 min | ~2.5 min |
 
-Roughly 9 s per diffusion step, 8 steps, plus VAE decode. Longer durations cost
-proportionally more. Tell your users it takes minutes, not seconds.
+Music runs roughly 9 s per diffusion step across 8 steps, plus VAE decode;
+longer durations cost proportionally more. Tell your users music and images take
+minutes, not seconds — speech is the only one that feels instant.
 
 ---
 
