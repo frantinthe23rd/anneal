@@ -125,7 +125,7 @@
           "music"
         ],
         "summary": "Poll one or more music jobs",
-        "description": "Poll every 3–5 seconds. There is no webhook.\n\n**`result` is a JSON-encoded string, not an object** — parse it a second time. It decodes to a list with one entry per take.\n\n**Orphaned jobs.** The generation queue lives in memory and dies with the backend process. The gateway tracks the ids it issued, so a job lost to a restart is reported as `status: 2` with `\"orphaned\": true` rather than sitting at `status: 0` forever. Treat it as a failure and resubmit — do not keep polling.\n\n**Transient errors.** A `502` during polling means the backend was restarting, not that the job failed. Retry the poll; never resubmit on a 502, or you will queue duplicate work.",
+        "description": "Poll every 3–5 seconds. There is no webhook.\n\n**`result` is a JSON-encoded string, not an object** — parse it a second time. It decodes to a list with one entry per take.\n\n**Jobs survive a restart.** The gateway records every job and replays anything outstanding when the backend restarts. Keep polling the id you were given — the replayed job gets a new id internally and the gateway translates both ways, so you will see `status: 0` across a restart and the result when it lands.\n\n**Orphaned jobs** are the residual case: something too old to replay, or that has failed repeatedly, returns `status: 2` with `\"orphaned\": true`. That is final — resubmit.\n\n**Transient errors.** A `502` during polling means the backend was restarting, not that the job failed. Retry the poll; never resubmit on a 502, or you will queue duplicate work.",
         "requestBody": {
           "required": true,
           "content": {
@@ -583,7 +583,7 @@
         }
       },
       "BackendUnavailable": {
-        "description": "Model failed to start — usually the external SSD is unmounted on the host"
+        "description": "Model could not be started. `reason: host_memory_exhausted` means Anneal refused to load it because the machine is out of RAM — the body carries free/swap figures. Otherwise the backend failed to start, usually because the external SSD is unmounted on the host."
       }
     },
     "schemas": {

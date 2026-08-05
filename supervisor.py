@@ -45,6 +45,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from services import SERVICES, resolve  # noqa: E402
+from jobstore import JobStore  # noqa: E402
 
 LISTEN_HOST = os.environ.get("SUPERVISOR_HOST", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("SUPERVISOR_PORT", "8001"))
@@ -54,6 +55,11 @@ ACESTEP_DIR = os.environ.get("ACESTEP_DIR", os.path.join(AIMUSIC_ROOT, "ACE-Step
 
 REAP_INTERVAL = 20.0
 PROXY_TIMEOUT = float(os.environ.get("PROXY_TIMEOUT", "1800"))
+
+# Refuse to start a heavy model below this much free RAM. Deliberately modest:
+# these models are expected to consume most of the machine, so this guards
+# against "nothing left at all", not against "it will be tight".
+MIN_FREE_MB_FOR_HEAVY = int(os.environ.get("ANNEAL_MIN_FREE_MB", "1200"))
 
 # Generated files are served straight off disk, but only from under these roots.
 # Reading back an old result must never wake the model that made it.
@@ -276,8 +282,13 @@ class Service:
             if self.is_running() and self.port_open():
                 return
             if self.port_open():
-                log("%s: port %d already open, adopting it" % (self.name, self.port))
-                return
+                # A TCP connect alone is not proof of a live backend: straight
+                # after a stop the socket can still accept briefly, and we would
+                # "adopt" a corpse. Require a health response before believing it.
+                if self._get_json("/health", timeout=3.0) is not None:
+                    log("%s: port %d already open, adopting it" % (self.name, self.port))
+                    return
+                log("%s: port %d open but not healthy; starting our own" % (self.name, self.port))
 
             env = dict(os.environ)
             env.update(self.spec.get("env") or {})
@@ -426,6 +437,51 @@ _heavy_lock = threading.Lock()
 _ISSUED = {}
 _issued_lock = threading.Lock()
 MAX_TRACKED_JOBS = 5000
+
+JOBS = JobStore(os.path.join(AIMUSIC_ROOT, "jobs.db"))
+
+
+def replay_pending_music_jobs():
+    """Resubmit jobs that were outstanding when the backend last stopped.
+
+    Callers keep polling the id they were originally given; set_alias maps that
+    to the new id in both directions, so from outside the job simply took a
+    while. Runs in a thread so a slow replay never blocks the request that
+    triggered the start.
+    """
+    music = SERVICE_OBJECTS["music"]
+    outstanding = JOBS.pending()
+    if not outstanding:
+        return
+    log("replaying %d outstanding music job(s) after restart" % len(outstanding))
+
+    for original_id, payload, attempts in outstanding:
+        if not music.is_running():
+            return                       # stopped again; leave the rest pending
+        try:
+            body = json.dumps(payload).encode()
+            conn = http.client.HTTPConnection("127.0.0.1", music.port, timeout=120)
+            try:
+                headers = {"Content-Type": "application/json"}
+                if API_KEY:
+                    headers["Authorization"] = "Bearer %s" % API_KEY
+                conn.request("POST", "/release_task", body=body, headers=headers)
+                resp = conn.getresponse()
+                data = json.loads(resp.read().decode("utf-8")).get("data") or {}
+            finally:
+                conn.close()
+            new_id = data.get("task_id") or data.get("taskId")
+            if not new_id:
+                continue
+            # Count the attempt only once the backend has actually accepted the
+            # job. A failed connection means it was never tried, and shouldn't
+            # burn one of the few retries a crash-looping job is allowed.
+            JOBS.bump_attempt(original_id)
+            JOBS.set_alias(original_id, new_id)
+            _record_issued(new_id)
+            log("replayed %s -> %s (attempt %d)" % (original_id, new_id, attempts + 1))
+        except Exception as exc:
+            log("replay of %s failed: %r" % (original_id, exc))
 # Grace period after a backend start before we trust /v1/stats to say "idle" —
 # a job can be accepted a moment before it shows up in the queue counters.
 ORPHAN_GRACE_SECONDS = 20.0
@@ -446,6 +502,12 @@ def _is_orphaned(task_id):
     music = SERVICE_OBJECTS["music"]
     with _issued_lock:
         issued_epoch = _ISSUED.get(task_id)
+
+    # A job the store still holds as pending is queued for replay, not lost.
+    # Without this check, orphan detection would report it failed moments before
+    # the replay thread resurrects it.
+    if any(job_id == task_id for job_id, _, _ in JOBS.pending()):
+        return False
 
     if issued_epoch is not None:
         # We handed this id out; if the backend has restarted since, it's gone.
@@ -497,6 +559,26 @@ def _annotate_orphans(body, requested):
         return body
 
 
+class HostExhausted(Exception):
+    """The machine has no room to load another model right now.
+
+    Anneal is not the only thing running on this desktop. Starting a multi-GB
+    load into a machine that is already out of memory produces a job that dies
+    slowly and confusingly; refusing up front is kinder and much faster to
+    diagnose.
+    """
+
+    def __init__(self, info, wanted):
+        self.info = info
+        self.wanted = wanted
+        Exception.__init__(
+            self,
+            "not enough memory to load %s: %d MB free with %d MB of swap in use. "
+            "Close other applications, or stop a loaded model with "
+            "POST /supervisor/stop." % (wanted, info.get("free_mb", 0), info.get("swap_used_mb", 0)),
+        )
+
+
 class ServiceBusy(Exception):
     """Another heavy service is mid-job and must not be evicted."""
 
@@ -534,7 +616,16 @@ def start_service(name):
                 raise ServiceBusy(other_name, name)
             log("evicting idle heavy service %r to make room for %r" % (other_name, name))
             other.stop("evicted by %s" % name)
+
+        # Check headroom only after eviction — the freed model was very likely
+        # the thing occupying the memory we are about to need.
+        info = system_memory()
+        if info.get("free_mb") is not None and info["free_mb"] < MIN_FREE_MB_FOR_HEAVY:
+            raise HostExhausted(info, name)
+        was_down = not svc.is_running()
         svc.ensure_started()
+        if name == "music" and was_down:
+            threading.Thread(target=replay_pending_music_jobs, daemon=True).start()
 
 
 def reaper():
@@ -633,23 +724,77 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/release_task":
             try:
                 data = json.loads(response_body.decode("utf-8")).get("data") or {}
-                _record_issued(data.get("task_id") or data.get("taskId"))
+                task_id = data.get("task_id") or data.get("taskId")
+                _record_issued(task_id)
+                if task_id and request_body:
+                    JOBS.record(task_id, json.loads(request_body.decode("utf-8")))
             except Exception:
                 pass
             return response_body
 
         if route == "/query_result":
-            requested = set()
-            try:
-                asked = json.loads((request_body or b"{}").decode("utf-8")).get("task_id_list")
-                if isinstance(asked, str):
-                    asked = json.loads(asked)
-                requested = set(asked or [])
-            except Exception:
-                return response_body
+            # What the caller asked for, captured before the ids were rewritten.
+            requested = getattr(self, "_polled_originals", None)
+            if requested is None:
+                try:
+                    asked = json.loads((request_body or b"{}").decode("utf-8")).get("task_id_list")
+                    if isinstance(asked, str):
+                        asked = json.loads(asked)
+                    requested = set(asked or [])
+                except Exception:
+                    return response_body
+            response_body = self._restore_original_ids(response_body, requested)
             return _annotate_orphans(response_body, requested)
 
         return response_body
+
+    def _rewrite_polled_ids(self, request_body):
+        """Point a poll at the replayed job, if this id was replayed.
+
+        Records what the caller actually asked for, because the rewritten body
+        no longer says — and the response has to be translated back to it.
+        """
+        self._polled_originals = set()
+        if not request_body:
+            return request_body
+        try:
+            payload = json.loads(request_body.decode("utf-8"))
+            asked = payload.get("task_id_list")
+            if isinstance(asked, str):
+                asked = json.loads(asked)
+            if not asked:
+                return request_body
+            self._polled_originals = set(asked)
+            mapped = [JOBS.to_current(t) for t in asked]
+            if mapped == list(asked):
+                return request_body
+            payload["task_id_list"] = mapped
+            return json.dumps(payload).encode()
+        except Exception:
+            return request_body
+
+    def _restore_original_ids(self, response_body, requested):
+        """Answer with the id the caller asked about, not the replayed one."""
+        try:
+            payload = json.loads(response_body.decode("utf-8"))
+            rows = payload.get("data")
+            if not isinstance(rows, list):
+                return response_body
+            changed = False
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                current = row.get("task_id")
+                original = JOBS.to_original(current)
+                if original != current and original in requested:
+                    row["task_id"] = original
+                    changed = True
+                # A terminal state means it never needs replaying again.
+                if row.get("status") in (1, 2):
+                    JOBS.complete(original, "done" if row.get("status") == 1 else "failed")
+            return json.dumps(payload).encode() if changed else response_body
+        except Exception:
+            return response_body
 
     # -- proxying ---------------------------------------------------------
     def _proxy(self, method, body=None):
@@ -662,6 +807,8 @@ class Handler(BaseHTTPRequestHandler):
         if body is None:
             length = int(self.headers.get("Content-Length") or 0)
             body = self.rfile.read(length) if length else None
+        if route == "/query_result":
+            body = self._rewrite_polled_ids(body)
 
         svc = SERVICE_OBJECTS[name]
         try:
@@ -679,6 +826,12 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(payload)
             return
+        except HostExhausted as exhausted:
+            self._send_json({
+                "code": 503, "error": str(exhausted),
+                "reason": "host_memory_exhausted", "system": exhausted.info,
+            }, 503)
+            return
         except Exception as exc:
             self._send_json({"code": 503, "error": "%s failed to start: %s" % (name, exc)}, 503)
             return
@@ -691,8 +844,16 @@ class Handler(BaseHTTPRequestHandler):
             for key, value in self.headers.items():
                 if key.lower() in HOP_BY_HOP or key.lower() == "host":
                     continue
+                if key.lower() == "content-length":
+                    continue      # set from the body we actually send, below
                 headers[key] = value
             headers["Host"] = "127.0.0.1:%d" % svc.port
+            # Rewriting task ids changes the body length, so Content-Length must
+            # be recomputed. Forwarding the client's value truncated the body by
+            # a byte, which corrupted the backend's JSON *and* desynced
+            # keep-alive on this connection.
+            if body is not None:
+                headers["Content-Length"] = str(len(body))
 
             conn = http.client.HTTPConnection("127.0.0.1", svc.port, timeout=PROXY_TIMEOUT)
             try:

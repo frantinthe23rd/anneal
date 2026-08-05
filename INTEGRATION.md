@@ -169,11 +169,18 @@ curl -X POST "$ANNEAL_URL/query_result" \
 | `1` | succeeded |
 | `2` | failed (`result` carries the error) |
 
-**Orphaned jobs.** The queue lives in memory and dies with the backend process.
-The gateway remembers the ids it issued, so a job lost to a restart now comes
-back as `status: 2` with `"orphaned": true` and an explanatory `result`, instead
-of sitting at `status: 0` forever looking merely slow. Treat it as a failure and
-resubmit.
+**Jobs now survive a restart.** The queue inside the model backend still lives
+in memory, but the gateway records every job it hands out and **replays anything
+outstanding when the backend comes back**. Keep polling the id you were given —
+the replayed job gets a new id internally, and the gateway translates in both
+directions, so the indirection is invisible.
+
+You will therefore see `status: 0` across a restart rather than a failure, and
+the result arrives once the replay completes.
+
+**Orphaned jobs** are now the residual case only: a job that can't be replayed
+(too old, or it has already failed repeatedly) comes back as `status: 2` with
+`"orphaned": true`. Treat that as final and resubmit.
 
 **Transient 502s.** A `502` while polling means the backend was restarting — the
 poll failed, not the job. Retry the poll. **Never resubmit on a 502**, or you
@@ -447,6 +454,7 @@ minutes, not seconds — speech is the only one that feels instant.
 | `401` | Missing or wrong `Authorization` header | — |
 | Client timeout on first request | Cold start | Raise timeout to 900s+, or pre-warm |
 | `503 backend start failed` | Model couldn't load — usually the SSD is unmounted | Check `/Volumes/Storage` on the host |
+| `503` with `reason: host_memory_exhausted` | The machine is out of RAM; Anneal refused to start a model rather than thrash | Close other apps, or `POST /supervisor/stop`. The body carries the memory figures |
 | `409` on an image or music request | The other heavy model is mid-job | Wait and retry, or stop it explicitly |
 | `502` while polling | Backend restarting | Retry the poll. **Never resubmit** |
 | `400 ... looks double-encoded` | You re-encoded the `file` field | Append `file` to the base URL as-is |
