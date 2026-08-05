@@ -64,7 +64,7 @@
       "post": {
         "tags": ["music"],
         "summary": "Poll one or more music jobs",
-        "description": "Poll every 3–5 seconds. There is no webhook.\n\n**`result` is a JSON-encoded string, not an object** — parse it a second time. It decodes to a list with one entry per take.",
+        "description": "Poll every 3–5 seconds. There is no webhook.\n\n**`result` is a JSON-encoded string, not an object** — parse it a second time. It decodes to a list with one entry per take.\n\n**Orphaned jobs.** The generation queue lives in memory and dies with the backend process. The gateway tracks the ids it issued, so a job lost to a restart is reported as `status: 2` with `\"orphaned\": true` rather than sitting at `status: 0` forever. Treat it as a failure and resubmit — do not keep polling.\n\n**Transient errors.** A `502` during polling means the backend was restarting, not that the job failed. Retry the poll; never resubmit on a 502, or you will queue duplicate work.",
         "requestBody": {
           "required": true,
           "content": {
@@ -99,9 +99,9 @@
       "get": {
         "tags": ["music"],
         "summary": "Download generated music",
-        "description": "Served straight off disk by the gateway — this never wakes the music model.\n\nFiles live in a cache the server prunes. **Persist the bytes yourself**; do not treat the URL as durable.",
+        "description": "Served straight off disk by the gateway — this never wakes the music model.\n\n**Do not build this URL yourself.** The `file` field in a result is *already* a complete request path including its query string, e.g. `/v1/audio?path=%2FVolumes%2F...`. Append it to the base URL exactly as given:\n\n```\nGET {base_url}{file}\n```\n\nURL-encoding `file` and passing it as `path` double-encodes it. That used to fail with a misleading `403 Access denied`; it now returns `400` naming the mistake.\n\nFiles live in a cache the server prunes. **Persist the bytes yourself**; do not treat the URL as durable.",
         "parameters": [
-          { "name": "path", "in": "query", "required": true, "schema": { "type": "string" }, "description": "URL-encoded absolute path, taken from the `file` field of a result." }
+          { "name": "path", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Absolute filesystem path, already URL-encoded inside the `file` field. You normally never set this by hand — just append `file` to the base URL." }
         ],
         "responses": {
           "200": { "description": "Audio bytes", "content": { "audio/mpeg": { "schema": { "type": "string", "format": "binary" } } } },
@@ -167,7 +167,7 @@
       "post": {
         "tags": ["image"],
         "summary": "Generate an image",
-        "description": "Synchronous. Measured at ~120s per 1024x1024 image at 4 steps on this hardware, plus ~30-60s model load if the image model is cold. Smaller sizes are proportionally faster.\n\nRequesting an image **evicts the music model** and vice versa — only one heavy model fits in memory. Set client timeouts to 900s or more.",
+        "description": "Synchronous. Measured at ~120s per 1024x1024 image at 4 steps on this hardware, plus ~30-60s model load if the image model is cold. Smaller sizes are proportionally faster.\n\nOnly one heavy model fits in memory, so an image request evicts an **idle** music model. If music is mid-generation the request is refused with **409** and a `Retry-After` header rather than killing that job — retry when it finishes, or stop music explicitly to take the slot. Set client timeouts to 900s or more.",
         "requestBody": {
           "required": true,
           "content": {
@@ -188,6 +188,7 @@
           },
           "400": { "description": "Missing prompt or invalid size" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/HeavyServiceBusy" },
           "503": { "$ref": "#/components/responses/BackendUnavailable" }
         }
       }
@@ -259,6 +260,10 @@
     },
     "responses": {
       "Unauthorized": { "description": "Missing or invalid Authorization header" },
+      "HeavyServiceBusy": {
+        "description": "The other heavy model is mid-generation and will not be evicted. Nothing is broken — wait and retry (see `Retry-After`), or stop the busy service to claim the slot.",
+        "content": { "application/json": { "example": { "code": 409, "error": "music is mid-generation and only one heavy model fits in memory...", "busy_service": "music", "requested_service": "image" } } }
+      },
       "BackendUnavailable": { "description": "Model failed to start — usually the external SSD is unmounted on the host" }
     },
     "schemas": {

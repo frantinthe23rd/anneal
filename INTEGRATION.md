@@ -69,6 +69,17 @@ So a single music request can legitimately take **up to ~8 minutes** end to end.
 If your app interleaves music and image work, expect a cold start on *every*
 switch. Batch same-modality work together rather than alternating.
 
+**A busy heavy model is never evicted.** If you ask for an image while music is
+mid-generation you get a **409** with a `Retry-After` header, not a cold start —
+the in-flight job is protected. Handle 409 by waiting and retrying, or by
+explicitly stopping the other service if your work is more important:
+
+```bash
+curl -X POST -H "Authorization: Bearer $ANNEAL_KEY" \
+  -H 'Content-Type: application/json' -d '{"service":"music"}' \
+  "$ANNEAL_URL/supervisor/stop"    # abandons its work, frees the slot
+```
+
 **Design for this:**
 
 - Set HTTP client timeouts to **at least 900s** on `POST /release_task`, or
@@ -158,6 +169,16 @@ curl -X POST "$ANNEAL_URL/query_result" \
 | `1` | succeeded |
 | `2` | failed (`result` carries the error) |
 
+**Orphaned jobs.** The queue lives in memory and dies with the backend process.
+The gateway remembers the ids it issued, so a job lost to a restart now comes
+back as `status: 2` with `"orphaned": true` and an explanatory `result`, instead
+of sitting at `status: 0` forever looking merely slow. Treat it as a failure and
+resubmit.
+
+**Transient 502s.** A `502` while polling means the backend was restarting — the
+poll failed, not the job. Retry the poll. **Never resubmit on a 502**, or you
+queue duplicate work behind the original.
+
 **`result` is a JSON-encoded string, not an object** — parse it a second time.
 It decodes to a *list*, one entry per take (see `batch_size`). Each entry has:
 
@@ -173,13 +194,21 @@ Poll every **3–5 seconds**. Polling is cheap but there is no push/webhook.
 
 ### 3.3 Download
 
-`file` comes back as `/v1/audio?path=<url-encoded absolute path>`. Prefix it
-with the base URL and send the auth header:
+`file` is **already a complete request path, including its query string** —
+something like `/v1/audio?path=%2FVolumes%2FStorage%2F...`. It is not a bare
+filesystem path. Append it to the base URL exactly as given:
 
-```bash
-curl -o track.mp3 -H "Authorization: Bearer $ANNEAL_KEY" \
-  "$ANNEAL_URL/v1/audio?path=%2FVolumes%2FStorage%2F..."
+```python
+url = base_url + take["file"]          # correct
 ```
+
+```python
+url = f"{base_url}/v1/audio?path={quote(take['file'])}"   # WRONG — double-encoded
+```
+
+Double-encoding used to fail with `403 Access denied: path outside allowed
+directory`, which reads like a permissions problem and sends you hunting in the
+wrong place. It now returns a `400` that names the mistake.
 
 Files persist on the host and can be re-downloaded later without waking the
 model — but they live in a temp cache the server prunes. **Download and store
@@ -418,8 +447,12 @@ minutes, not seconds — speech is the only one that feels instant.
 | `401` | Missing or wrong `Authorization` header | — |
 | Client timeout on first request | Cold start | Raise timeout to 900s+, or pre-warm |
 | `503 backend start failed` | Model couldn't load — usually the SSD is unmounted | Check `/Volumes/Storage` on the host |
-| `status: 2` | Generation failed | `result` has the traceback; surface it and let the user retry |
-| Job vanished after restart | Queue is in memory | Own your job state; resubmit |
+| `409` on an image or music request | The other heavy model is mid-job | Wait and retry, or stop it explicitly |
+| `502` while polling | Backend restarting | Retry the poll. **Never resubmit** |
+| `400 ... looks double-encoded` | You re-encoded the `file` field | Append `file` to the base URL as-is |
+| `status: 2`, `orphaned: true` | Backend restarted; queue was lost | Resubmit — it is not coming back |
+| `status: 2` otherwise | Generation failed | `result` has the traceback; surface it and let the user retry |
+| Polls forever at `status: 0` | Should no longer happen — report it | Cross-check `GET /v1/stats` for `queued`/`running` |
 
 Ask the host owner to run `./verify-models.py` if generation fails repeatedly —
 incomplete weight files produce confusing load errors.

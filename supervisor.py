@@ -112,6 +112,11 @@ class Service:
         self.in_flight = 0
         self.flight_lock = threading.Lock()
         self.peak_rss_mb = 0
+        # Bumped every time the backend starts. Job ids issued under an older
+        # epoch cannot still be queued — the in-memory queue died with the
+        # previous process. This is what lets us spot orphaned jobs.
+        self.epoch = 0
+        self.started_at = 0.0
 
     # -- state ------------------------------------------------------------
     def is_running(self):
@@ -187,6 +192,8 @@ class Service:
                     )
                 if self._get_json("/health", timeout=3.0) is not None:
                     log("%s: ready in %.0fs" % (self.name, time.time() - started))
+                    self.epoch += 1
+                    self.started_at = time.time()
                     self.touch()
                     return
                 time.sleep(1.0)
@@ -274,18 +281,121 @@ SERVICE_OBJECTS = {name: Service(name, spec) for name, spec in SERVICES.items()}
 # Serialises heavy-service swaps so two cold requests can't both load 7 GB.
 _heavy_lock = threading.Lock()
 
+# task_id -> music epoch it was issued under. ACE-Step's queue lives in memory,
+# so anything issued under an older epoch is gone; the backend cannot tell the
+# difference and keeps reporting status 0 (queued), which reads as "just slow"
+# forever. We remember what we handed out so we can say so.
+_ISSUED = {}
+_issued_lock = threading.Lock()
+MAX_TRACKED_JOBS = 5000
+# Grace period after a backend start before we trust /v1/stats to say "idle" —
+# a job can be accepted a moment before it shows up in the queue counters.
+ORPHAN_GRACE_SECONDS = 20.0
+
+
+def _record_issued(task_id):
+    if not task_id:
+        return
+    with _issued_lock:
+        if len(_ISSUED) >= MAX_TRACKED_JOBS:
+            for stale in list(_ISSUED)[: MAX_TRACKED_JOBS // 5]:
+                _ISSUED.pop(stale, None)
+        _ISSUED[task_id] = SERVICE_OBJECTS["music"].epoch
+
+
+def _is_orphaned(task_id):
+    """True when a task cannot possibly still be queued or running."""
+    music = SERVICE_OBJECTS["music"]
+    with _issued_lock:
+        issued_epoch = _ISSUED.get(task_id)
+
+    if issued_epoch is not None:
+        # We handed this id out; if the backend has restarted since, it's gone.
+        return issued_epoch < music.epoch
+
+    # We have no record — either a different gateway instance issued it, or the
+    # id is simply wrong. A stopped backend holds no queue at all, so that case
+    # is decisive; otherwise fall back to the same check a careful client would
+    # make, once the counters have had a moment to catch up.
+    if not music.is_running():
+        return True
+    if time.time() - music.started_at < ORPHAN_GRACE_SECONDS:
+        return False
+    return not music.has_work()
+
+
+def _annotate_orphans(body, requested):
+    """Rewrite status 0 to status 2 for jobs that no longer exist.
+
+    Leaves genuinely-queued jobs untouched. Returns the original bytes on any
+    parse failure — never make a poll worse than it already was.
+    """
+    try:
+        payload = json.loads(body.decode("utf-8"))
+        rows = payload.get("data")
+        if not isinstance(rows, list):
+            return body
+        changed = False
+        for row in rows:
+            if not isinstance(row, dict) or row.get("status") != 0:
+                continue
+            task_id = row.get("task_id")
+            if task_id in requested and _is_orphaned(task_id):
+                row["status"] = 2
+                row["result"] = json.dumps([{
+                    "status": 2,
+                    "error": "orphaned: the generation queue is held in memory and "
+                             "was lost when the music backend restarted. This job is "
+                             "not running and never will. Resubmit it.",
+                }])
+                row["orphaned"] = True
+                changed = True
+        if not changed:
+            return body
+        log("query_result: reported %d orphaned job(s) as failed"
+            % sum(1 for r in rows if isinstance(r, dict) and r.get("orphaned")))
+        return json.dumps(payload).encode()
+    except Exception:
+        return body
+
+
+class ServiceBusy(Exception):
+    """Another heavy service is mid-job and must not be evicted."""
+
+    def __init__(self, holder, wanted):
+        self.holder = holder
+        self.wanted = wanted
+        Exception.__init__(
+            self,
+            "%s is mid-generation and only one heavy model fits in memory. "
+            "Retry once it finishes, or POST /supervisor/stop {\"service\": \"%s\"} "
+            "to abandon its work and free the slot." % (holder, holder),
+        )
+
 
 def start_service(name):
-    """Start `name`, first evicting any other heavy service."""
+    """Start `name`, first evicting any other *idle* heavy service.
+
+    Eviction used to be unconditional, which silently killed in-flight music
+    jobs whenever an image was requested — and because a dead queue still
+    reports status 0, the client polled forever on work that no longer existed.
+    Refusing loudly is far better than losing someone's job quietly.
+    """
     svc = SERVICE_OBJECTS[name]
-    if svc.heavy:
-        with _heavy_lock:
-            for other_name, other in SERVICE_OBJECTS.items():
-                if other_name != name and other.heavy and other.is_running():
-                    log("evicting heavy service %r to make room for %r" % (other_name, name))
-                    other.stop("evicted by %s" % name)
-            svc.ensure_started()
-    else:
+    if not svc.heavy:
+        svc.ensure_started()
+        return
+
+    with _heavy_lock:
+        for other_name, other in SERVICE_OBJECTS.items():
+            if other_name == name or not other.heavy or not other.is_running():
+                continue
+            with other.flight_lock:
+                in_flight = other.in_flight
+            if in_flight or other.has_work():
+                raise ServiceBusy(other_name, name)
+            log("evicting idle heavy service %r to make room for %r" % (other_name, name))
+            other.stop("evicted by %s" % name)
         svc.ensure_started()
 
 
@@ -383,6 +493,30 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(chunk)
         return True
 
+    # -- job tracking -----------------------------------------------------
+    def _track_music_jobs(self, route, request_body, response_body):
+        """Remember issued task_ids, and flag ones that no longer exist."""
+        if route == "/release_task":
+            try:
+                data = json.loads(response_body.decode("utf-8")).get("data") or {}
+                _record_issued(data.get("task_id") or data.get("taskId"))
+            except Exception:
+                pass
+            return response_body
+
+        if route == "/query_result":
+            requested = set()
+            try:
+                asked = json.loads((request_body or b"{}").decode("utf-8")).get("task_id_list")
+                if isinstance(asked, str):
+                    asked = json.loads(asked)
+                requested = set(asked or [])
+            except Exception:
+                return response_body
+            return _annotate_orphans(response_body, requested)
+
+        return response_body
+
     # -- proxying ---------------------------------------------------------
     def _proxy(self, method, body=None):
         route = urllib.parse.urlparse(self.path).path
@@ -398,6 +532,19 @@ class Handler(BaseHTTPRequestHandler):
         svc = SERVICE_OBJECTS[name]
         try:
             start_service(name)
+        except ServiceBusy as busy:
+            # 409, not 503: nothing is broken and retrying immediately won't help.
+            self.send_response(409)
+            payload = json.dumps({
+                "code": 409, "error": str(busy),
+                "busy_service": busy.holder, "requested_service": busy.wanted,
+            }).encode()
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Retry-After", "60")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
         except Exception as exc:
             self._send_json({"code": 503, "error": "%s failed to start: %s" % (name, exc)}, 503)
             return
@@ -418,6 +565,9 @@ class Handler(BaseHTTPRequestHandler):
                 conn.request(method, self.path, body=body, headers=headers)
                 resp = conn.getresponse()
                 payload = resp.read()
+
+                if resp.status == 200:
+                    payload = self._track_music_jobs(route, body, payload)
 
                 self.send_response(resp.status)
                 for key, value in resp.getheaders():
@@ -466,6 +616,28 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self._serve_audio_from_disk():
                 return  # served without waking anything
+            # Don't fall through to the backend: it answers a malformed path
+            # with "Access denied: path outside allowed directory", which reads
+            # like a permissions problem rather than a client-side encoding bug.
+            raw = (urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                   .get("path") or [""])[0]
+            if "/v1/audio" in raw or "?path=" in raw or raw.startswith("%2F"):
+                self._send_json({
+                    "code": 400,
+                    "error": "the `path` value looks double-encoded. The `file` field "
+                             "returned by /query_result is already a complete request "
+                             "path including its query string — append it to the base "
+                             "URL as-is, do not URL-encode it again.",
+                    "received": raw[:200],
+                }, 400)
+                return
+            self._send_json({
+                "code": 404,
+                "error": "no such audio file. Generated files live in a cache the "
+                         "server prunes — persist the bytes when you download them.",
+                "received": raw[:200],
+            }, 404)
+            return
         self._proxy("GET")
 
     def do_POST(self):

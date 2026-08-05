@@ -18,6 +18,7 @@ import json
 import os
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -61,7 +62,12 @@ def submit(base_url: str, api_key: str, args) -> str:
         payload["use_random_seed"] = False
         payload["seed"] = args.seed
 
-    body = _post(base_url, "/release_task", payload, api_key)
+    try:
+        body = _post(base_url, "/release_task", payload, api_key)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 409:
+            sys.exit(f"busy: {json.load(exc).get('error')}")
+        raise
     if body.get("code") != 200:
         sys.exit(f"submit failed: {body.get('error')}")
     data = body.get("data") or {}
@@ -73,8 +79,22 @@ def submit(base_url: str, api_key: str, args) -> str:
 
 def poll(base_url: str, api_key: str, task_id: str, timeout: int) -> list[dict]:
     deadline = time.time() + timeout
+    transient = 0
     while time.time() < deadline:
-        body = _post(base_url, "/query_result", {"task_id_list": [task_id]}, api_key)
+        try:
+            body = _post(base_url, "/query_result", {"task_id_list": [task_id]}, api_key)
+        except Exception as exc:
+            # A failed poll is not a failed job — the backend may just be
+            # restarting. Keep polling; never resubmit, or you queue duplicate
+            # work behind the original.
+            transient += 1
+            if transient > 20:
+                sys.exit(f"\ngave up after {transient} consecutive poll failures: {exc}")
+            print("?", end="", flush=True)
+            time.sleep(5)
+            continue
+        transient = 0
+
         for entry in body.get("data") or []:
             if entry.get("task_id") != task_id:
                 continue
@@ -84,7 +104,10 @@ def poll(base_url: str, api_key: str, task_id: str, timeout: int) -> list[dict]:
                 result = entry.get("result")
                 return json.loads(result) if isinstance(result, str) else (result or [])
             if status == 2:
-                sys.exit(f"generation failed: {entry.get('result')}")
+                if entry.get("orphaned"):
+                    sys.exit(f"\njob {task_id} was orphaned by a backend restart "
+                             f"and is not running. Resubmit it.")
+                sys.exit(f"\ngeneration failed: {entry.get('result')}")
         print(".", end="", flush=True)
         time.sleep(3)
     sys.exit(f"\ntimed out after {timeout}s (task {task_id} may still be running)")
