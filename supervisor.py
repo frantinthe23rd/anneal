@@ -607,6 +607,12 @@ def start_service(name):
         svc.ensure_started()
         return
 
+    # Already up: nothing to load, so neither eviction nor a headroom check
+    # applies. Without this, merely polling a running job could be refused for
+    # low memory — memory that the running model itself is legitimately using.
+    if svc.is_running() and svc.port_open():
+        return
+
     with _heavy_lock:
         for other_name, other in SERVICE_OBJECTS.items():
             if other_name == name or not other.heavy or not other.is_running():

@@ -214,3 +214,31 @@ If you'd rather click than curl (bypasses the supervisor and holds memory while 
 ```bash
 cd /Volumes/Storage/AIMusic/ACE-Step-1.5 && source ~/dev/AIMusic/env.sh && ./start_gradio_ui_macos.sh
 ```
+
+## MCP server
+
+`mcp_server.py` exposes the services as MCP tools over stdio — stdlib only, so
+it needs no environment of its own.
+
+```json
+{
+  "mcpServers": {
+    "anneal": {
+      "command": "/Users/jon/dev/AIMusic/mcp_server.py",
+      "env": {
+        "ANNEAL_URL": "https://jons-mac-mini.pangolin-darter.ts.net",
+        "ANNEAL_KEY": "sk-aimusic-..."
+      }
+    }
+  }
+}
+```
+
+Tools: `service_status`, `prewarm`, `unload_models`, `generate_music`,
+`check_music_job`, `generate_speech`, `generate_image`.
+
+Two deliberate choices. **Music submits and returns a job id** rather than
+blocking for minutes — `check_music_job` collects, and the descriptions tell the
+agent not to resubmit a slow job. **Binary comes back as a file path**, not
+base64: a 1.3 MB PNG is ~1.7 MB of text in a tool result, which is a poor use of
+anyone's context.
