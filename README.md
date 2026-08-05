@@ -30,9 +30,9 @@ and a forge strip showing which models are hot.
 ## Architecture
 
 ```
-                                        ┌─► ACE-Step  :8011  (on demand, ~7 GB, heavy)
+                                        ┌─► ACE-Step  :8011  (on demand, ~21 GB, heavy)
 tailnet ─TLS─► tailscale serve ─► supervisor.py :8001 ─┼─► Kokoro    :8012  (on demand, ~400 MB, light)
-                                  (always on, ~25 MB)  └─► FLUX      :8013  (on demand, ~7 GB, heavy)
+                                  (always on, ~25 MB)  └─► FLUX      :8013  (on demand, ~11 GB, heavy)
 ```
 
 16 GB of unified memory can't hold these permanently, and none of the backends
@@ -43,9 +43,16 @@ offer idle-unload, so ending the process is the only way to reclaim the memory.
 - starting a **heavy** service first evicts the other heavy service
 - idle past the service's timeout, with nothing queued → stop it, releasing the RAM
 
-Measured: stopping the music backend returns ~6.5 GB to the system. The cost is a
-~3–4 minute cold start for music (~30–60 s for images) after an idle period or an
-eviction. Speech is light enough to stay resident alongside either.
+Measured: loading music takes free RAM from ~11 GB to ~1.5 GB and drives swap
+from 4 GB to 17 GB; stopping it hands all of that back. The cost is a ~3–4 minute
+cold start for music (~30–60 s for images) after an idle period or an eviction.
+Speech is light enough to stay resident alongside either.
+
+**Measure with `phys_footprint`, never RSS.** MLX allocates through Metal, which
+`ps` does not attribute to the process — a backend genuinely holding 21 GB
+reports an RSS of ~120 MB that jitters as ordinary heap moves around. The
+supervisor shells out to `footprint`, the same figure Activity Monitor shows.
+Every memory number here was wrong until that was fixed.
 
 `/health`, `/supervisor/status`, `/docs`, `/openapi.json` and `/v1/audio` are all
 answered by the supervisor itself, so health checks, docs and re-downloads never
@@ -80,8 +87,12 @@ update clobbers it; without it the server silently re-downloads 9.4 GB.
 on the tailnet. It asks once for the API key and keeps it in `localStorage`.
 
 - **Music / Speech / Image** tabs, prompt box, and the options that matter per mode.
-- **Forge strip** in the header shows each model as cold or hot with its resident
-  size — updated from `/health`, which never wakes anything.
+- **Forge strip** in the header shows each model as **cold**, **heating** or
+  **hot**, with its true footprint once loaded — updated from `/health`, which
+  never wakes anything. "Heating" matters: the process answers long before the
+  weights are in, and reporting that as ready was actively misleading.
+- A **host** chip appears when the machine is short on memory or swapping hard,
+  which on 16 GB is the usual reason a job crawls or dies.
 - Cold-start warnings appear *before* you commit to a slow request, so a 4-minute
   music generation isn't a surprise.
 - A `409` (the other heavy model is mid-job) offers to stop it and retry rather

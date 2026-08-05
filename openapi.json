@@ -3,38 +3,73 @@
   "info": {
     "title": "Anneal",
     "version": "2.0.0",
-    "description": "Music, speech and image generation running locally on a Mac mini M4, reachable over the tailnet.\n\nNamed for what it does to its models: heat one up on demand, let it cool and release the memory when idle.\n\n## Memory model — read this first\n\nThe host has 16 GB of unified memory. The music and image models hold ~7 GB each, so **models are loaded on demand and unloaded after an idle period**, and the two heavy models are never resident at the same time — requesting one evicts the other.\n\nWhat that means for you:\n\n- A request against a cold model takes **3–4 minutes longer** while weights load. Set client timeouts to **900s or more**; a 30s default will fail every cold request.\n- Do not auto-retry a slow first request. A retry queues more work behind the one already running.\n- Call `POST /supervisor/start` ahead of time to pre-warm, or `GET /supervisor/status` to see what is currently loaded.\n- `GET /health`, `GET /supervisor/status` and `GET /v1/audio` never wake a model, so they are free to poll.\n\n## Auth\n\nEvery endpoint except `/health`, `/supervisor/status`, `/openapi.json` and `/docs` requires `Authorization: Bearer <key>`.\n\n## Concurrency\n\nOne job at a time per service. Music has a queue (max 200) that is held in memory and lost on restart — own your job state and be ready to resubmit."
+    "description": "Music, speech and image generation running locally on a Mac mini M4, reachable over the tailnet.\n\nNamed for what it does to its models: heat one up on demand, let it cool and release the memory when idle.\n\n## Memory model — read this first\n\nThe host has 16 GB of unified memory. The music model holds ~21 GB once loaded and the image model ~11 GB, so **models are loaded on demand and unloaded after an idle period**, and the two heavy models are never resident at the same time — requesting one evicts the other. Music exceeds physical RAM on its own and therefore always swaps, which is why generation takes minutes rather than seconds.\n\nWhat that means for you:\n\n- A request against a cold model takes **3–4 minutes longer** while weights load. Set client timeouts to **900s or more**; a 30s default will fail every cold request.\n- Do not auto-retry a slow first request. A retry queues more work behind the one already running.\n- Call `POST /supervisor/start` ahead of time to pre-warm, or `GET /supervisor/status` to see what is currently loaded.\n- `GET /health`, `GET /supervisor/status` and `GET /v1/audio` never wake a model, so they are free to poll.\n\n## Auth\n\nEvery endpoint except `/health`, `/supervisor/status`, `/openapi.json` and `/docs` requires `Authorization: Bearer <key>`.\n\n## Concurrency\n\nOne job at a time per service. Music has a queue (max 200) that is held in memory and lost on restart — own your job state and be ready to resubmit."
   },
   "servers": [
-    { "url": "https://jons-mac-mini.pangolin-darter.ts.net", "description": "Tailnet (TLS)" },
-    { "url": "http://127.0.0.1:8001", "description": "On the host itself" }
+    {
+      "url": "https://jons-mac-mini.pangolin-darter.ts.net",
+      "description": "Tailnet (TLS)"
+    },
+    {
+      "url": "http://127.0.0.1:8001",
+      "description": "On the host itself"
+    }
   ],
-  "security": [{ "bearerAuth": [] }],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
   "tags": [
-    { "name": "music", "description": "ACE-Step 1.5 — text to music with vocals. Asynchronous: submit, poll, download." },
-    { "name": "speech", "description": "Kokoro-82M — text to speech. Synchronous, a couple of seconds." },
-    { "name": "image", "description": "FLUX.1-schnell 4-bit — text to image. Synchronous, roughly two minutes per 1024px image." },
-    { "name": "supervisor", "description": "Model lifecycle: what is loaded, pre-warm, unload." }
+    {
+      "name": "music",
+      "description": "ACE-Step 1.5 — text to music with vocals. Asynchronous: submit, poll, download."
+    },
+    {
+      "name": "speech",
+      "description": "Kokoro-82M — text to speech. Synchronous, a couple of seconds."
+    },
+    {
+      "name": "image",
+      "description": "FLUX.1-schnell 4-bit — text to image. Synchronous, roughly two minutes per 1024px image."
+    },
+    {
+      "name": "supervisor",
+      "description": "Model lifecycle: what is loaded, pre-warm, unload."
+    }
   ],
   "paths": {
     "/release_task": {
       "post": {
-        "tags": ["music"],
+        "tags": [
+          "music"
+        ],
         "summary": "Submit a music generation job",
         "description": "Returns immediately with a task_id. Poll /query_result until status is 1 or 2.\n\nOnly `prompt` is required; anything omitted is filled in by a small planning LM.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/MusicRequest" },
+              "schema": {
+                "$ref": "#/components/schemas/MusicRequest"
+              },
               "examples": {
                 "instrumental": {
                   "summary": "30s instrumental",
-                  "value": { "prompt": "warm lo-fi hip hop with rhodes piano and vinyl crackle", "lyrics": "[instrumental]", "audio_duration": 30 }
+                  "value": {
+                    "prompt": "warm lo-fi hip hop with rhodes piano and vinyl crackle",
+                    "lyrics": "[instrumental]",
+                    "audio_duration": 30
+                  }
                 },
                 "song": {
                   "summary": "Song with vocals",
-                  "value": { "prompt": "warm indie pop ballad, female vocals, brushed drums", "lyrics": "[verse]\nStreetlights blur into the rain\n\n[chorus]\nHold on, hold on", "audio_duration": 45, "audio_format": "mp3" }
+                  "value": {
+                    "prompt": "warm indie pop ballad, female vocals, brushed drums",
+                    "lyrics": "[verse]\nStreetlights blur into the rain\n\n[chorus]\nHold on, hold on",
+                    "audio_duration": 45,
+                    "audio_format": "mp3"
+                  }
                 }
               }
             }
@@ -47,22 +82,48 @@
               "application/json": {
                 "schema": {
                   "allOf": [
-                    { "$ref": "#/components/schemas/Envelope" },
-                    { "type": "object", "properties": { "data": { "type": "object", "properties": { "task_id": { "type": "string" } } } } }
+                    {
+                      "$ref": "#/components/schemas/Envelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "task_id": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      }
+                    }
                   ]
                 },
-                "example": { "data": { "task_id": "42f580bc-f8a5-44c2-9685-a124f54d6f49" }, "code": 200, "error": null }
+                "example": {
+                  "data": {
+                    "task_id": "42f580bc-f8a5-44c2-9685-a124f54d6f49"
+                  },
+                  "code": 200,
+                  "error": null
+                }
               }
             }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "503": { "$ref": "#/components/responses/BackendUnavailable" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/BackendUnavailable"
+          }
         }
       }
     },
     "/query_result": {
       "post": {
-        "tags": ["music"],
+        "tags": [
+          "music"
+        ],
         "summary": "Poll one or more music jobs",
         "description": "Poll every 3–5 seconds. There is no webhook.\n\n**`result` is a JSON-encoded string, not an object** — parse it a second time. It decodes to a list with one entry per take.\n\n**Orphaned jobs.** The generation queue lives in memory and dies with the backend process. The gateway tracks the ids it issued, so a job lost to a restart is reported as `status: 2` with `\"orphaned\": true` rather than sitting at `status: 0` forever. Treat it as a failure and resubmit — do not keep polling.\n\n**Transient errors.** A `502` during polling means the backend was restarting, not that the job failed. Retry the poll; never resubmit on a 502, or you will queue duplicate work.",
         "requestBody": {
@@ -71,10 +132,23 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["task_id_list"],
-                "properties": { "task_id_list": { "type": "array", "items": { "type": "string" } } }
+                "required": [
+                  "task_id_list"
+                ],
+                "properties": {
+                  "task_id_list": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
               },
-              "example": { "task_id_list": ["42f580bc-f8a5-44c2-9685-a124f54d6f49"] }
+              "example": {
+                "task_id_list": [
+                  "42f580bc-f8a5-44c2-9685-a124f54d6f49"
+                ]
+              }
             }
           }
         },
@@ -84,56 +158,116 @@
             "content": {
               "application/json": {
                 "example": {
-                  "data": [{ "task_id": "42f580bc-...", "status": 1, "result": "[{\"file\": \"/v1/audio?path=%2FVolumes%2F...\", \"metas\": {\"bpm\": 96, \"duration\": 45}, \"seed_value\": \"12345\"}]" }],
+                  "data": [
+                    {
+                      "task_id": "42f580bc-...",
+                      "status": 1,
+                      "result": "[{\"file\": \"/v1/audio?path=%2FVolumes%2F...\", \"metas\": {\"bpm\": 96, \"duration\": 45}, \"seed_value\": \"12345\"}]"
+                    }
+                  ],
                   "code": 200,
                   "error": null
                 }
               }
             }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
         }
       }
     },
     "/v1/audio": {
       "get": {
-        "tags": ["music"],
+        "tags": [
+          "music"
+        ],
         "summary": "Download generated music",
         "description": "Served straight off disk by the gateway — this never wakes the music model.\n\n**Do not build this URL yourself.** The `file` field in a result is *already* a complete request path including its query string, e.g. `/v1/audio?path=%2FVolumes%2F...`. Append it to the base URL exactly as given:\n\n```\nGET {base_url}{file}\n```\n\nURL-encoding `file` and passing it as `path` double-encodes it. That used to fail with a misleading `403 Access denied`; it now returns `400` naming the mistake.\n\nFiles live in a cache the server prunes. **Persist the bytes yourself**; do not treat the URL as durable.",
         "parameters": [
-          { "name": "path", "in": "query", "required": true, "schema": { "type": "string" }, "description": "Absolute filesystem path, already URL-encoded inside the `file` field. You normally never set this by hand — just append `file` to the base URL." }
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Absolute filesystem path, already URL-encoded inside the `file` field. You normally never set this by hand — just append `file` to the base URL."
+          }
         ],
         "responses": {
-          "200": { "description": "Audio bytes", "content": { "audio/mpeg": { "schema": { "type": "string", "format": "binary" } } } },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "description": "File no longer exists" }
+          "200": {
+            "description": "Audio bytes",
+            "content": {
+              "audio/mpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "File no longer exists"
+          }
         }
       }
     },
     "/v1/stats": {
       "get": {
-        "tags": ["music"],
+        "tags": [
+          "music"
+        ],
         "summary": "Queue depth",
         "description": "Wakes the music service. Use for backpressure or to show queue position.",
         "responses": {
           "200": {
             "description": "Queue state",
-            "content": { "application/json": { "example": { "data": { "jobs": { "total": 4, "queued": 0, "running": 1, "succeeded": 3, "failed": 0 }, "queue_size": 0, "avg_job_seconds": 151.9 }, "code": 200 } } }
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "jobs": {
+                      "total": 4,
+                      "queued": 0,
+                      "running": 1,
+                      "succeeded": 3,
+                      "failed": 0
+                    },
+                    "queue_size": 0,
+                    "avg_job_seconds": 151.9
+                  },
+                  "code": 200
+                }
+              }
+            }
           }
         }
       }
     },
     "/v1/audio/speech": {
       "post": {
-        "tags": ["speech"],
+        "tags": [
+          "speech"
+        ],
         "summary": "Synthesize speech",
         "description": "Synchronous — returns audio bytes directly. About 1–2 seconds per sentence once warm.\n\nKokoro is small enough that it can stay loaded alongside a heavy model.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/SpeechRequest" },
-              "example": { "input": "The local speech service is running entirely on device.", "voice": "bf_emma", "response_format": "mp3", "speed": 1.0 }
+              "schema": {
+                "$ref": "#/components/schemas/SpeechRequest"
+              },
+              "example": {
+                "input": "The local speech service is running entirely on device.",
+                "voice": "bf_emma",
+                "response_format": "mp3",
+                "speed": 1.0
+              }
             }
           }
         },
@@ -141,39 +275,81 @@
           "200": {
             "description": "Audio bytes",
             "content": {
-              "audio/wav": { "schema": { "type": "string", "format": "binary" } },
-              "audio/mpeg": { "schema": { "type": "string", "format": "binary" } }
+              "audio/wav": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "audio/mpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
             }
           },
-          "400": { "description": "Missing input, unknown voice, or unsupported format" },
-          "401": { "$ref": "#/components/responses/Unauthorized" }
+          "400": {
+            "description": "Missing input, unknown voice, or unsupported format"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
         }
       }
     },
     "/v1/voices": {
       "get": {
-        "tags": ["speech"],
+        "tags": [
+          "speech"
+        ],
         "summary": "List available voices",
         "description": "Voice ids encode language and gender: `a`=American, `b`=British; `f`=female, `m`=male.",
         "responses": {
           "200": {
             "description": "Voice ids",
-            "content": { "application/json": { "example": { "data": { "voices": ["af_heart", "af_bella", "am_michael", "bf_emma", "bm_george"], "default": "af_heart" }, "code": 200 } } }
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "voices": [
+                      "af_heart",
+                      "af_bella",
+                      "am_michael",
+                      "bf_emma",
+                      "bm_george"
+                    ],
+                    "default": "af_heart"
+                  },
+                  "code": 200
+                }
+              }
+            }
           }
         }
       }
     },
     "/v1/images/generations": {
       "post": {
-        "tags": ["image"],
+        "tags": [
+          "image"
+        ],
         "summary": "Generate an image",
         "description": "Synchronous. Measured at ~120s per 1024x1024 image at 4 steps on this hardware, plus ~30-60s model load if the image model is cold. Smaller sizes are proportionally faster.\n\nOnly one heavy model fits in memory, so an image request evicts an **idle** music model. If music is mid-generation the request is refused with **409** and a `Retry-After` header rather than killing that job — retry when it finishes, or stop music explicitly to take the slot. Set client timeouts to 900s or more.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/ImageRequest" },
-              "example": { "prompt": "a puffin standing on a mossy cliff at golden hour, photographic", "size": "1024x1024", "steps": 4, "n": 1, "response_format": "b64_json" }
+              "schema": {
+                "$ref": "#/components/schemas/ImageRequest"
+              },
+              "example": {
+                "prompt": "a puffin standing on a mossy cliff at golden hour, photographic",
+                "size": "1024x1024",
+                "steps": 4,
+                "n": 1,
+                "response_format": "b64_json"
+              }
             }
           }
         },
@@ -182,89 +358,233 @@
             "description": "Generated images",
             "content": {
               "application/json": {
-                "example": { "created": 1785881567, "data": [{ "path": "/Volumes/Storage/AIMusic/outputs/images/a_puffin-42.png", "url": "/v1/images/file?path=...", "seed": 42, "seconds": 34.2, "b64_json": "iVBORw0KGgo..." }], "code": 200 }
+                "example": {
+                  "created": 1785881567,
+                  "data": [
+                    {
+                      "path": "/Volumes/Storage/AIMusic/outputs/images/a_puffin-42.png",
+                      "url": "/v1/images/file?path=...",
+                      "seed": 42,
+                      "seconds": 34.2,
+                      "b64_json": "iVBORw0KGgo..."
+                    }
+                  ],
+                  "code": 200
+                }
               }
             }
           },
-          "400": { "description": "Missing prompt or invalid size" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "409": { "$ref": "#/components/responses/HeavyServiceBusy" },
-          "503": { "$ref": "#/components/responses/BackendUnavailable" }
+          "400": {
+            "description": "Missing prompt or invalid size"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "409": {
+            "$ref": "#/components/responses/HeavyServiceBusy"
+          },
+          "503": {
+            "$ref": "#/components/responses/BackendUnavailable"
+          }
         }
       }
     },
     "/v1/images/file": {
       "get": {
-        "tags": ["image"],
+        "tags": [
+          "image"
+        ],
         "summary": "Download a generated image",
-        "parameters": [{ "name": "path", "in": "query", "required": true, "schema": { "type": "string" } }],
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
-          "200": { "description": "PNG bytes", "content": { "image/png": { "schema": { "type": "string", "format": "binary" } } } },
-          "404": { "description": "Not found" }
+          "200": {
+            "description": "PNG bytes",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          }
         }
       }
     },
     "/health": {
       "get": {
-        "tags": ["supervisor"],
+        "tags": [
+          "supervisor"
+        ],
         "summary": "Gateway and service state",
         "description": "Never wakes a model. Safe to poll as often as you like. No auth required.",
         "security": [],
         "responses": {
           "200": {
             "description": "Per-service state",
-            "content": { "application/json": { "example": { "data": { "supervisor": "ok", "services": { "music": { "running": false, "heavy": true, "idle_seconds": 812.4 }, "speech": { "running": true, "heavy": false }, "image": { "running": false, "heavy": true } } }, "code": 200 } } }
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "supervisor": "ok",
+                    "services": {
+                      "music": {
+                        "running": false,
+                        "heavy": true,
+                        "idle_seconds": 812.4
+                      },
+                      "speech": {
+                        "running": true,
+                        "heavy": false
+                      },
+                      "image": {
+                        "running": false,
+                        "heavy": true
+                      }
+                    }
+                  },
+                  "code": 200
+                }
+              }
+            }
           }
         }
       }
     },
     "/supervisor/status": {
       "get": {
-        "tags": ["supervisor"],
+        "tags": [
+          "supervisor"
+        ],
         "summary": "Detailed lifecycle state",
         "description": "Per-service RSS, peak RSS, idle seconds, in-flight count. Never wakes a model. No auth required.",
         "security": [],
-        "responses": { "200": { "description": "Service detail" } }
+        "responses": {
+          "200": {
+            "description": "Service detail"
+          }
+        }
       }
     },
     "/supervisor/start": {
       "post": {
-        "tags": ["supervisor"],
+        "tags": [
+          "supervisor"
+        ],
         "summary": "Pre-warm a model",
         "description": "Blocks until the model is loaded and ready, then returns. Call this when you know work is coming so the user does not absorb the cold start.\n\nStarting a heavy service stops the other heavy service.",
         "requestBody": {
-          "content": { "application/json": { "schema": { "type": "object", "properties": { "service": { "type": "string", "enum": ["music", "speech", "image"] } } }, "example": { "service": "music" } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "service": {
+                    "type": "string",
+                    "enum": [
+                      "music",
+                      "speech",
+                      "image"
+                    ]
+                  }
+                }
+              },
+              "example": {
+                "service": "music"
+              }
+            }
+          }
         },
         "responses": {
-          "200": { "description": "Ready" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "503": { "$ref": "#/components/responses/BackendUnavailable" }
+          "200": {
+            "description": "Ready"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/BackendUnavailable"
+          }
         }
       }
     },
     "/supervisor/stop": {
       "post": {
-        "tags": ["supervisor"],
+        "tags": [
+          "supervisor"
+        ],
         "summary": "Unload now and free memory",
         "description": "Omit `service` to stop everything.",
         "requestBody": {
-          "content": { "application/json": { "schema": { "type": "object", "properties": { "service": { "type": "string", "enum": ["music", "speech", "image"] } } } } }
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "service": {
+                    "type": "string",
+                    "enum": [
+                      "music",
+                      "speech",
+                      "image"
+                    ]
+                  }
+                }
+              }
+            }
+          }
         },
-        "responses": { "200": { "description": "Stopped" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+        "responses": {
+          "200": {
+            "description": "Stopped"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
       }
     }
   },
   "components": {
     "securitySchemes": {
-      "bearerAuth": { "type": "http", "scheme": "bearer", "description": "Ask the host owner for the key. Read it from an env var; never commit it." }
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Ask the host owner for the key. Read it from an env var; never commit it."
+      }
     },
     "responses": {
-      "Unauthorized": { "description": "Missing or invalid Authorization header" },
+      "Unauthorized": {
+        "description": "Missing or invalid Authorization header"
+      },
       "HeavyServiceBusy": {
         "description": "The other heavy model is mid-generation and will not be evicted. Nothing is broken — wait and retry (see `Retry-After`), or stop the busy service to claim the slot.",
-        "content": { "application/json": { "example": { "code": 409, "error": "music is mid-generation and only one heavy model fits in memory...", "busy_service": "music", "requested_service": "image" } } }
+        "content": {
+          "application/json": {
+            "example": {
+              "code": 409,
+              "error": "music is mid-generation and only one heavy model fits in memory...",
+              "busy_service": "music",
+              "requested_service": "image"
+            }
+          }
+        }
       },
-      "BackendUnavailable": { "description": "Model failed to start — usually the external SSD is unmounted on the host" }
+      "BackendUnavailable": {
+        "description": "Model failed to start — usually the external SSD is unmounted on the host"
+      }
     },
     "schemas": {
       "Envelope": {
@@ -272,51 +592,189 @@
         "description": "Every music and supervisor endpoint wraps its payload like this. Check `code == 200` — an HTTP 200 can still carry `code: 500`.",
         "properties": {
           "data": {},
-          "code": { "type": "integer", "example": 200 },
-          "error": { "type": ["string", "null"] },
-          "timestamp": { "type": "integer", "description": "milliseconds" }
+          "code": {
+            "type": "integer",
+            "example": 200
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timestamp": {
+            "type": "integer",
+            "description": "milliseconds"
+          }
         }
       },
       "MusicRequest": {
         "type": "object",
-        "required": ["prompt"],
+        "required": [
+          "prompt"
+        ],
         "properties": {
-          "prompt": { "type": "string", "description": "Style description: genre, instruments, mood, production." },
-          "lyrics": { "type": "string", "default": "", "description": "Use [verse] / [chorus] / [bridge] tags. Use \"[instrumental]\" for no vocals." },
-          "audio_duration": { "type": "number", "minimum": 10, "maximum": 600, "description": "Seconds. Defaults to the model's choice." },
-          "audio_format": { "type": "string", "enum": ["mp3", "flac", "wav", "wav32", "opus", "aac"], "default": "mp3" },
-          "batch_size": { "type": "integer", "minimum": 1, "maximum": 8, "default": 2, "description": "Takes per request. Each costs roughly a full generation." },
-          "bpm": { "type": "integer", "minimum": 30, "maximum": 300 },
-          "key_scale": { "type": "string", "example": "F# minor" },
-          "time_signature": { "type": "string", "enum": ["2", "3", "4", "6"] },
-          "vocal_language": { "type": "string", "default": "en" },
-          "seed": { "type": "integer", "description": "Set with use_random_seed=false to reproduce a take." },
-          "use_random_seed": { "type": "boolean", "default": true },
-          "inference_steps": { "type": "integer", "default": 8, "description": "The turbo model wants 8. Raising it mostly costs time." },
-          "thinking": { "type": "boolean", "default": false, "description": "Run an LM planning pass — better structure, slower." },
-          "task_type": { "type": "string", "enum": ["text2music", "cover", "repaint", "lego", "extract", "complete"], "default": "text2music" }
+          "prompt": {
+            "type": "string",
+            "description": "Style description: genre, instruments, mood, production."
+          },
+          "lyrics": {
+            "type": "string",
+            "default": "",
+            "description": "Use [verse] / [chorus] / [bridge] tags. Use \"[instrumental]\" for no vocals."
+          },
+          "audio_duration": {
+            "type": "number",
+            "minimum": 10,
+            "maximum": 600,
+            "description": "Seconds. Defaults to the model's choice."
+          },
+          "audio_format": {
+            "type": "string",
+            "enum": [
+              "mp3",
+              "flac",
+              "wav",
+              "wav32",
+              "opus",
+              "aac"
+            ],
+            "default": "mp3"
+          },
+          "batch_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8,
+            "default": 2,
+            "description": "Takes per request. Each costs roughly a full generation."
+          },
+          "bpm": {
+            "type": "integer",
+            "minimum": 30,
+            "maximum": 300
+          },
+          "key_scale": {
+            "type": "string",
+            "example": "F# minor"
+          },
+          "time_signature": {
+            "type": "string",
+            "enum": [
+              "2",
+              "3",
+              "4",
+              "6"
+            ]
+          },
+          "vocal_language": {
+            "type": "string",
+            "default": "en"
+          },
+          "seed": {
+            "type": "integer",
+            "description": "Set with use_random_seed=false to reproduce a take."
+          },
+          "use_random_seed": {
+            "type": "boolean",
+            "default": true
+          },
+          "inference_steps": {
+            "type": "integer",
+            "default": 8,
+            "description": "The turbo model wants 8. Raising it mostly costs time."
+          },
+          "thinking": {
+            "type": "boolean",
+            "default": false,
+            "description": "Run an LM planning pass — better structure, slower."
+          },
+          "task_type": {
+            "type": "string",
+            "enum": [
+              "text2music",
+              "cover",
+              "repaint",
+              "lego",
+              "extract",
+              "complete"
+            ],
+            "default": "text2music"
+          }
         }
       },
       "SpeechRequest": {
         "type": "object",
-        "required": ["input"],
+        "required": [
+          "input"
+        ],
         "properties": {
-          "input": { "type": "string", "description": "Text to speak." },
-          "voice": { "type": "string", "default": "af_heart", "description": "See GET /v1/voices." },
-          "response_format": { "type": "string", "enum": ["wav", "mp3", "flac", "opus", "aac"], "default": "wav" },
-          "speed": { "type": "number", "minimum": 0.5, "maximum": 2.0, "default": 1.0 }
+          "input": {
+            "type": "string",
+            "description": "Text to speak."
+          },
+          "voice": {
+            "type": "string",
+            "default": "af_heart",
+            "description": "See GET /v1/voices."
+          },
+          "response_format": {
+            "type": "string",
+            "enum": [
+              "wav",
+              "mp3",
+              "flac",
+              "opus",
+              "aac"
+            ],
+            "default": "wav"
+          },
+          "speed": {
+            "type": "number",
+            "minimum": 0.5,
+            "maximum": 2.0,
+            "default": 1.0
+          }
         }
       },
       "ImageRequest": {
         "type": "object",
-        "required": ["prompt"],
+        "required": [
+          "prompt"
+        ],
         "properties": {
-          "prompt": { "type": "string" },
-          "size": { "type": "string", "default": "1024x1024", "description": "WxH, snapped to a multiple of 16, max ~1536x1536." },
-          "steps": { "type": "integer", "minimum": 1, "maximum": 20, "default": 4, "description": "schnell is distilled for 4 steps." },
-          "n": { "type": "integer", "minimum": 1, "maximum": 4, "default": 1 },
-          "seed": { "type": "integer", "description": "Omit for random. With n>1, seeds increment." },
-          "response_format": { "type": "string", "enum": ["b64_json", "path"], "default": "b64_json" }
+          "prompt": {
+            "type": "string"
+          },
+          "size": {
+            "type": "string",
+            "default": "1024x1024",
+            "description": "WxH, snapped to a multiple of 16, max ~1536x1536."
+          },
+          "steps": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20,
+            "default": 4,
+            "description": "schnell is distilled for 4 steps."
+          },
+          "n": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4,
+            "default": 1
+          },
+          "seed": {
+            "type": "integer",
+            "description": "Omit for random. With n>1, seeds increment."
+          },
+          "response_format": {
+            "type": "string",
+            "enum": [
+              "b64_json",
+              "path"
+            ],
+            "default": "b64_json"
+          }
         }
       }
     }

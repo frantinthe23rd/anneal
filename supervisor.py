@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Anneal — on-demand gateway for the local generation services.
 
-The machine has 16 GB of unified memory. The music model holds ~7 GB once
-loaded and the image model about the same, so neither can stay resident and the
-two can never be resident together. None of the backends offer idle-unload of
-their own, so the only way to give the memory back is to end the process.
+The machine has 16 GB of unified memory. Measured by phys_footprint, the music
+model holds ~21 GB once loaded and the image model ~11 GB, so music necessarily
+swaps and the two can never be resident together. None of the backends offer
+idle-unload of their own, so the only way to give the memory back is to end the
+process.
+
+(RSS is worthless for measuring this: MLX allocates through Metal, so `ps`
+reports ~120 MB for a backend actually holding 21 GB. See Service.memory_mb.)
 
 This is a small always-on proxy (a few tens of MB) that owns the public port and
 manages every backend's lifecycle:
@@ -108,6 +112,64 @@ def log(msg: str) -> None:
     print("[supervisor] %s %s" % (time.strftime("%H:%M:%S"), msg), flush=True)
 
 
+_SIZE_UNITS = {"B": 1.0 / (1024 * 1024), "KB": 1.0 / 1024, "MB": 1.0, "GB": 1024.0, "TB": 1024.0 * 1024}
+
+
+def _parse_size_mb(text):
+    """'20 GB' / '512 MB' -> megabytes."""
+    parts = text.replace(" ", " ").split()
+    if not parts:
+        return 0.0
+    try:
+        value = float(parts[0].replace(",", ""))
+    except ValueError:
+        return 0.0
+    unit = (parts[1].upper() if len(parts) > 1 else "MB")
+    return value * _SIZE_UNITS.get(unit, 1.0)
+
+
+def system_memory():
+    """Free memory and swap, so callers can see when the host is thrashing."""
+    info = {}
+    try:
+        out = subprocess.check_output(["vm_stat"], text=True)
+        page = 16384
+        stats = {}
+        for line in out.splitlines():
+            if ":" not in line:
+                continue
+            k, v = line.split(":", 1)
+            # vm_stat's first line is a header whose "value" is prose — skip
+            # anything that isn't a page count rather than losing the whole read.
+            try:
+                stats[k.strip()] = int(v.strip().rstrip(".").replace(",", "") or 0)
+            except ValueError:
+                continue
+        free = (stats.get("Pages free", 0) + stats.get("Pages inactive", 0)) * page
+        info["free_mb"] = int(free / (1024 * 1024))
+    except Exception:
+        pass
+    try:
+        out = subprocess.check_output(["sysctl", "-n", "vm.swapusage"], text=True)
+        # total = 21504.00M  used = 20418.56M  free = 1085.44M
+        for token in out.split():
+            pass
+        parts = dict(zip(out.replace("=", " ").split()[0::2], out.replace("=", " ").split()[1::2]))
+        used = parts.get("used", "0M").rstrip("M")
+        total = parts.get("total", "0M").rstrip("M")
+        info["swap_used_mb"] = int(float(used))
+        info["swap_total_mb"] = int(float(total))
+    except Exception:
+        pass
+    # Either condition alone is worth surfacing. Requiring both missed the real
+    # case: a loaded music model leaves ~2.5 GB free while sitting on 16 GB of
+    # swap, which is thrashing however much headroom the free counter claims.
+    info["pressure"] = bool(
+        info.get("swap_used_mb", 0) > 8192 or info.get("free_mb", 99999) < 1536
+    )
+    return info
+
+
 class Service:
     """Owns one backend process."""
 
@@ -127,6 +189,8 @@ class Service:
         # previous process. This is what lets us spot orphaned jobs.
         self.epoch = 0
         self.started_at = 0.0
+        self._snapshot = {"state": "cold", "memory_mb": None}
+        self._snapshot_at = 0.0
 
     # -- state ------------------------------------------------------------
     def is_running(self):
@@ -146,26 +210,65 @@ class Service:
     def touch(self):
         self.last_activity = time.time()
 
-    def rss_mb(self):
-        """Total RSS of the backend's process group.
-
-        Launchers like `uv run` are thin wrappers — the weights live in a child,
-        so measuring only self.proc reports a misleading few MB.
-        """
-        if not self.is_running():
-            return None
+    def _pgid_pids(self):
         try:
             pgid = os.getpgid(self.proc.pid)
-            out = subprocess.check_output(["ps", "-A", "-o", "pgid=,rss="], text=True)
+            out = subprocess.check_output(["ps", "-A", "-o", "pgid=,pid="], text=True)
         except Exception:
-            return None
-        total = 0
+            return []
+        pids = []
         for line in out.splitlines():
             parts = line.split()
             if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
                 if int(parts[0]) == pgid:
-                    total += int(parts[1])
-        return total // 1024 if total else None
+                    pids.append(parts[1])
+        return pids
+
+    def memory_mb(self):
+        """Physical footprint of the backend, in MB.
+
+        RSS is useless here. MLX allocates its tensors through Metal/IOKit, which
+        `ps` does not attribute to the process: a music backend holding ~20 GB
+        reports an RSS of ~120 MB, and the number jitters as ordinary heap moves
+        around. `footprint` reports phys_footprint — the same figure Activity
+        Monitor shows — which actually tracks the model.
+
+        Costs ~150 ms per process, so callers should use the cached snapshot
+        rather than invoking this on every request.
+        """
+        if not self.is_running():
+            return None
+        total = 0
+        for pid in self._pgid_pids():
+            try:
+                out = subprocess.check_output(
+                    ["/usr/bin/footprint", "-p", pid], text=True, stderr=subprocess.DEVNULL
+                )
+            except Exception:
+                continue
+            for line in out.splitlines():
+                if "phys_footprint:" in line and "peak" not in line:
+                    total += _parse_size_mb(line.split(":", 1)[1].strip())
+                    break
+        return int(total) if total else None
+
+    def model_state(self):
+        """cold | heating | hot.
+
+        `running` only means the process answered — for music the weights then
+        load lazily for another three or four minutes. Reporting that as "hot"
+        told users the model was ready when it was not.
+        """
+        if not self.is_running():
+            return "cold"
+        payload = self._get_json("/health", timeout=2.0)
+        if payload is None:
+            return "heating"
+        data = payload.get("data", payload) or {}
+        for key in ("models_initialized", "loaded"):
+            if key in data:
+                return "hot" if data[key] else "heating"
+        return "hot"
 
     # -- lifecycle --------------------------------------------------------
     def ensure_started(self):
@@ -204,6 +307,9 @@ class Service:
                     log("%s: ready in %.0fs" % (self.name, time.time() - started))
                     self.epoch += 1
                     self.started_at = time.time()
+                    # Force the next status read to re-measure: a cached "cold"
+                    # would otherwise linger for the cache window after start.
+                    self._snapshot_at = 0.0
                     self.touch()
                     return
                 time.sleep(1.0)
@@ -216,8 +322,8 @@ class Service:
                 return
             # Report the high-water mark: MLX hands buffers back once a job
             # finishes, so RSS sampled at stop time understates what was held.
-            log("%s: stopping (%s), peak RSS was ~%s MB"
-                % (self.name, reason, self.peak_rss_mb or self.rss_mb()))
+            log("%s: stopping (%s), peak memory was ~%s MB"
+                % (self.name, reason, self.peak_rss_mb or self.memory_mb()))
             try:
                 os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
             except (ProcessLookupError, PermissionError):
@@ -237,6 +343,8 @@ class Service:
                     pass
             self.proc = None
             self.peak_rss_mb = 0
+            self._snapshot = {"state": "cold", "memory_mb": None}
+            self._snapshot_at = time.time()
             log("%s: stopped" % self.name)
 
     # -- helpers ----------------------------------------------------------
@@ -274,13 +382,33 @@ class Service:
             or data.get("queue_size") or data.get("in_flight")
         )
 
+    def refresh_snapshot(self):
+        """Recompute state + memory. ~150ms per process, so call it sparingly."""
+        state = self.model_state()
+        mem = self.memory_mb() if state != "cold" else None
+        if mem and mem > self.peak_rss_mb:
+            self.peak_rss_mb = mem
+        self._snapshot = {"state": state, "memory_mb": mem}
+        self._snapshot_at = time.time()
+        return self._snapshot
+
+    def snapshot(self, max_age=8.0):
+        if not self.is_running():
+            self._snapshot = {"state": "cold", "memory_mb": None}
+            self._snapshot_at = time.time()
+        elif time.time() - self._snapshot_at > max_age:
+            self.refresh_snapshot()
+        return self._snapshot
+
     def status(self):
+        snap = self.snapshot()
         return {
             "running": self.is_running(),
+            "state": snap["state"],                 # cold | heating | hot
             "heavy": self.heavy,
             "port": self.port,
-            "rss_mb": self.rss_mb(),
-            "peak_rss_mb": self.peak_rss_mb or None,
+            "memory_mb": snap["memory_mb"],         # phys_footprint, not RSS
+            "peak_memory_mb": self.peak_rss_mb or None,
             "idle_seconds": round(time.time() - self.last_activity, 1),
             "idle_timeout_seconds": self.spec["idle_timeout"],
             "in_flight": self.in_flight,
@@ -288,7 +416,7 @@ class Service:
 
 
 SERVICE_OBJECTS = {name: Service(name, spec) for name, spec in SERVICES.items()}
-# Serialises heavy-service swaps so two cold requests can't both load 7 GB.
+# Serialises heavy-service swaps so two cold requests can't both start loading.
 _heavy_lock = threading.Lock()
 
 # task_id -> music epoch it was issued under. ACE-Step's queue lives in memory,
@@ -416,9 +544,7 @@ def reaper():
             try:
                 if not svc.is_running():
                     continue
-                sample = svc.rss_mb()
-                if sample and sample > svc.peak_rss_mb:
-                    svc.peak_rss_mb = sample
+                svc.refresh_snapshot()
                 with svc.flight_lock:
                     busy = svc.in_flight > 0
                 if busy:
@@ -469,6 +595,7 @@ class Handler(BaseHTTPRequestHandler):
         return {
             "supervisor": "ok",
             "services": {name: svc.status() for name, svc in SERVICE_OBJECTS.items()},
+            "system": system_memory(),
         }
 
     # -- local endpoints --------------------------------------------------

@@ -50,8 +50,8 @@ Requests without a valid key get `401`.
 
 ## 2. The one thing that will surprise you: cold starts
 
-The machine has 16 GB of RAM. The music model needs ~7 GB and the image model
-about the same. Keeping either loaded permanently starved everything else, so
+The machine has 16 GB of RAM. Measured properly, the music model holds ~21 GB
+and the image model ~11 GB. Keeping either loaded permanently starved everything else, so
 models are **loaded on demand and unloaded after an idle period** — and the two
 heavy models are **never resident together**. Asking for an image evicts the
 music model, and vice versa. Speech is small enough to coexist with either.
