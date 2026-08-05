@@ -1,0 +1,746 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anneal</title>
+<style>
+/* ---------------------------------------------------------------- palette
+   Committed dark. A forge is dark; the heat is the only light source, so the
+   accent is reserved for things that are actually hot or actually happening. */
+:root {
+  --bg:        #100d0c;
+  --surface:   #1a1614;
+  --surface-2: #221d1a;
+  --line:      #302825;
+  --text:      #ece4dc;
+  --muted:     #948477;
+  --faint:     #6b5d53;
+
+  --heat-1:  #ff5f1f;   /* forge orange */
+  --heat-2:  #ffb03a;   /* yellow heat  */
+  --cold:    #6d7f8c;   /* cold steel   */
+  --quench:  #7fb3c4;
+  --bad:     #e0574a;
+  --good:    #7fbf6a;
+
+  --radius: 10px;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+/* Faint heat bloom from the bottom, like light off a hearth. */
+body::before {
+  content: ""; position: fixed; inset: auto 0 0 0; height: 45vh; pointer-events: none;
+  background: radial-gradient(60% 100% at 50% 100%, rgba(255,95,31,.07), transparent 70%);
+  z-index: 0;
+}
+
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .45; }
+:focus-visible { outline: 2px solid var(--heat-1); outline-offset: 2px; }
+
+/* ---------------------------------------------------------------- layout */
+.wrap { position: relative; z-index: 1; max-width: 1240px; margin: 0 auto; padding: 0 20px 64px; }
+
+header {
+  display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+  padding: 18px 0 16px; border-bottom: 1px solid var(--line); margin-bottom: 24px;
+}
+.brand { display: flex; align-items: baseline; gap: 10px; margin-right: auto; }
+.brand h1 {
+  margin: 0; font-size: 19px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase;
+  background: linear-gradient(95deg, var(--heat-2), var(--heat-1));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.brand small { color: var(--faint); font-size: 12px; letter-spacing: .02em; }
+
+/* ------------------------------------------------------- forge status bar */
+.forge { display: flex; gap: 8px; flex-wrap: wrap; }
+.svc {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px 6px 10px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--surface); font-size: 12.5px; white-space: nowrap;
+}
+.svc .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cold); flex: none; }
+.svc .nm { color: var(--muted); letter-spacing: .06em; text-transform: uppercase; font-size: 11px; }
+.svc .st { color: var(--faint); font-family: var(--mono); font-size: 11px; }
+.svc.hot { border-color: rgba(255,95,31,.42); background: rgba(255,95,31,.07); }
+.svc.hot .dot { background: var(--heat-1); box-shadow: 0 0 0 3px rgba(255,95,31,.18); }
+.svc.hot .st { color: var(--heat-2); }
+.svc.working .dot { animation: pulse 1.15s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+
+.iconbtn {
+  border: 1px solid var(--line); background: var(--surface); color: var(--muted);
+  border-radius: 8px; padding: 6px 10px; font-size: 12px;
+}
+.iconbtn:hover { color: var(--text); border-color: var(--faint); }
+
+.cols { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 24px; align-items: start; }
+@media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+
+/* ---------------------------------------------------------------- tabs */
+.tabs { display: flex; padding: 5px; gap: 4px; border-bottom: 1px solid var(--line); }
+.tab {
+  flex: 1; padding: 9px 6px; border: 0; background: transparent; color: var(--muted);
+  border-radius: 7px; font-size: 13px; letter-spacing: .04em; transition: background .15s, color .15s;
+}
+.tab:hover { color: var(--text); }
+.tab[aria-selected="true"] { background: var(--surface-2); color: var(--text); box-shadow: inset 0 -2px 0 var(--heat-1); }
+
+.pad { padding: 18px; }
+label.f { display: block; margin-bottom: 7px; color: var(--muted); font-size: 11.5px; letter-spacing: .09em; text-transform: uppercase; }
+
+textarea, input[type=text], input[type=number], select {
+  width: 100%; padding: 11px 12px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; color: var(--text);
+}
+textarea { resize: vertical; min-height: 92px; font-family: var(--sans); }
+textarea.code { font-family: var(--mono); font-size: 13px; min-height: 120px; }
+input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline: none; }
+
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.field { margin-top: 14px; }
+.hint { margin-top: 6px; color: var(--faint); font-size: 12px; }
+
+.row { display: flex; align-items: center; gap: 10px; }
+.check { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.check input { width: auto; accent-color: var(--heat-1); }
+
+/* ---------------------------------------------------------------- action */
+.go {
+  width: 100%; margin-top: 18px; padding: 13px 16px; border: 0; border-radius: 9px;
+  background: linear-gradient(95deg, var(--heat-1), var(--heat-2));
+  color: #21120a; font-weight: 650; letter-spacing: .1em; text-transform: uppercase; font-size: 13px;
+  transition: filter .15s, transform .05s;
+}
+.go:hover:not(:disabled) { filter: brightness(1.09); }
+.go:active:not(:disabled) { transform: translateY(1px); }
+.go.busy { background: var(--surface-2); color: var(--muted); box-shadow: inset 0 0 0 1px var(--line); }
+
+/* ---------------------------------------------------------------- status */
+.status { margin-top: 14px; padding: 12px 14px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--line); font-size: 13px; display: none; }
+.status.show { display: block; }
+.status .hd { display: flex; align-items: center; gap: 9px; }
+.status .msg { color: var(--muted); }
+.status .el { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--faint); }
+.status.err { border-color: rgba(224,87,74,.45); background: rgba(224,87,74,.08); }
+.status.err .msg { color: #f0a49c; }
+.status.warn { border-color: rgba(255,176,58,.4); background: rgba(255,176,58,.07); }
+.status.warn .msg { color: var(--heat-2); }
+.status .act { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+.status .act button { border: 1px solid var(--line); background: var(--surface); border-radius: 7px; padding: 6px 11px; font-size: 12px; color: var(--text); }
+.status .act button:hover { border-color: var(--heat-1); }
+
+.bar { height: 2px; margin-top: 11px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.bar i { display: block; height: 100%; width: 35%; border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--heat-1), var(--heat-2), transparent);
+  animation: slide 1.6s ease-in-out infinite; }
+@keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(320%); } }
+
+/* ---------------------------------------------------------------- output */
+.outhead { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.outhead h2 { margin: 0; font-size: 12px; letter-spacing: .11em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.outhead .n { margin-left: auto; color: var(--faint); font-family: var(--mono); font-size: 12px; }
+
+.empty { padding: 64px 24px; text-align: center; color: var(--faint); }
+.empty svg { opacity: .3; margin-bottom: 14px; }
+.empty p { margin: 0; font-size: 13.5px; }
+
+.items { padding: 14px; display: flex; flex-direction: column; gap: 14px; max-height: calc(100vh - 210px); overflow-y: auto; }
+.item { background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px; padding: 14px; }
+.item.pending { border-style: dashed; }
+.item .top { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+.kind {
+  flex: none; font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  padding: 3px 8px; border-radius: 5px; background: rgba(255,95,31,.13); color: var(--heat-2);
+  border: 1px solid rgba(255,95,31,.25);
+}
+.item .pr { flex: 1; min-width: 0; font-size: 13.5px; color: var(--text); word-break: break-word; }
+.item .meta { color: var(--faint); font-family: var(--mono); font-size: 11.5px; white-space: nowrap; }
+.item audio { width: 100%; margin-top: 4px; }
+.item img { width: 100%; border-radius: 7px; display: block; margin-top: 4px; background: var(--bg); }
+.item .foot { display: flex; align-items: center; gap: 14px; margin-top: 10px; flex-wrap: wrap; }
+.item .foot a, .item .foot button {
+  color: var(--muted); font-size: 12px; text-decoration: none; background: none; border: 0; padding: 0;
+}
+.item .foot a:hover, .item .foot button:hover { color: var(--heat-2); }
+.item .foot .sp { color: var(--faint); font-family: var(--mono); font-size: 11.5px; margin-left: auto; }
+.item.failed { border-color: rgba(224,87,74,.4); }
+.item .err { color: #f0a49c; font-size: 12.5px; font-family: var(--mono); word-break: break-word; }
+
+/* ---------------------------------------------------------------- key gate */
+.gate { position: fixed; inset: 0; background: rgba(10,8,7,.9); display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 50; }
+.gate .box { width: 100%; max-width: 440px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 26px; }
+.gate h2 { margin: 0 0 6px; font-size: 17px; }
+.gate p { margin: 0 0 18px; color: var(--muted); font-size: 13.5px; }
+.gate code { font-family: var(--mono); font-size: 12px; color: var(--heat-2); background: var(--bg); padding: 2px 6px; border-radius: 4px; }
+.gate .err { color: var(--bad); font-size: 12.5px; margin-top: 10px; min-height: 17px; }
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <h1>Anneal</h1>
+      <small>local generation · <span id="hostname">—</span></small>
+    </div>
+    <div class="forge" id="forge"></div>
+    <button class="iconbtn" id="btnDocs" title="OpenAPI documentation">API</button>
+    <button class="iconbtn" id="btnKey" title="Change API key">Key</button>
+  </header>
+
+  <div class="cols">
+    <!-- ------------------------------------------------------ controls -->
+    <div class="panel">
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" data-mode="music"  aria-selected="true">Music</button>
+        <button class="tab" role="tab" data-mode="speech" aria-selected="false">Speech</button>
+        <button class="tab" role="tab" data-mode="image"  aria-selected="false">Image</button>
+      </div>
+
+      <div class="pad">
+        <!-- MUSIC -->
+        <section data-panel="music">
+          <label class="f" for="mPrompt">Describe the track</label>
+          <textarea id="mPrompt" placeholder="warm lo-fi hip hop with rhodes piano and vinyl crackle"></textarea>
+
+          <div class="field">
+            <label class="check"><input type="checkbox" id="mInstr" checked> Instrumental</label>
+          </div>
+
+          <div class="field" id="mLyricsWrap" style="display:none">
+            <label class="f" for="mLyrics">Lyrics</label>
+            <textarea id="mLyrics" class="code" placeholder="[verse]&#10;Streetlights blur into the rain&#10;&#10;[chorus]&#10;Hold on, hold on"></textarea>
+            <div class="hint">Use [verse], [chorus], [bridge] section tags.</div>
+          </div>
+
+          <div class="field grid2">
+            <div>
+              <label class="f" for="mDur">Length (s)</label>
+              <input type="number" id="mDur" value="30" min="10" max="600" step="5">
+            </div>
+            <div>
+              <label class="f" for="mTakes">Takes</label>
+              <input type="number" id="mTakes" value="1" min="1" max="4">
+            </div>
+          </div>
+
+          <div class="field grid2">
+            <div>
+              <label class="f" for="mBpm">BPM <span style="text-transform:none;letter-spacing:0">(optional)</span></label>
+              <input type="number" id="mBpm" placeholder="auto" min="30" max="300">
+            </div>
+            <div>
+              <label class="f" for="mKey">Key <span style="text-transform:none;letter-spacing:0">(optional)</span></label>
+              <input type="text" id="mKey" placeholder="auto — e.g. F# minor">
+            </div>
+          </div>
+          <div class="hint">Anything left blank is chosen by the model from your description.</div>
+        </section>
+
+        <!-- SPEECH -->
+        <section data-panel="speech" class="hidden">
+          <label class="f" for="sText">Text to speak</label>
+          <textarea id="sText" placeholder="The forge is hot and the metal is ready."></textarea>
+
+          <div class="field grid2">
+            <div>
+              <label class="f" for="sVoice">Voice</label>
+              <select id="sVoice"></select>
+            </div>
+            <div>
+              <label class="f" for="sSpeed">Speed</label>
+              <input type="number" id="sSpeed" value="1.0" min="0.5" max="2" step="0.05">
+            </div>
+          </div>
+          <div class="hint">Voice prefixes: <b>a</b> American, <b>b</b> British · <b>f</b> female, <b>m</b> male.</div>
+        </section>
+
+        <!-- IMAGE -->
+        <section data-panel="image" class="hidden">
+          <label class="f" for="iPrompt">Describe the image</label>
+          <textarea id="iPrompt" placeholder="a blacksmith's anvil at dawn, sparks in cold air, photographic"></textarea>
+
+          <div class="field grid2">
+            <div>
+              <label class="f" for="iSize">Size</label>
+              <select id="iSize">
+                <option value="1024x1024">1024 × 1024 — square</option>
+                <option value="1280x768">1280 × 768 — landscape</option>
+                <option value="768x1280">768 × 1280 — portrait</option>
+                <option value="512x512">512 × 512 — quick draft</option>
+              </select>
+            </div>
+            <div>
+              <label class="f" for="iSteps">Steps</label>
+              <input type="number" id="iSteps" value="4" min="1" max="20">
+            </div>
+          </div>
+          <div class="hint">Schnell is distilled for 4 steps — more mostly costs time. Smaller sizes are proportionally faster.</div>
+        </section>
+
+        <button class="go" id="go">Forge</button>
+
+        <div class="status" id="status">
+          <div class="hd">
+            <span class="msg" id="statusMsg"></span>
+            <span class="el" id="statusEl"></span>
+          </div>
+          <div class="bar" id="statusBar"><i></i></div>
+          <div class="act" id="statusAct"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- -------------------------------------------------------- output -->
+    <div class="panel">
+      <div class="outhead">
+        <h2>Output</h2>
+        <span class="n" id="outCount"></span>
+        <button class="iconbtn" id="btnClear">Clear</button>
+      </div>
+      <div id="empty" class="empty">
+        <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+          <path d="M3 15h13l3-4h2M5 15v4h9v-4M7 11l2-6h4l-1 6"/>
+        </svg>
+        <p>Nothing forged yet.</p>
+      </div>
+      <div class="items hidden" id="items"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ------------------------------------------------------------- key gate -->
+<div class="gate hidden" id="gate">
+  <div class="box">
+    <h2>API key</h2>
+    <p>Anneal needs its bearer key. It's in <code>env.local.sh</code> on the host and is stored only in this browser.</p>
+    <input type="text" id="keyInput" placeholder="sk-aimusic-…" autocomplete="off" spellcheck="false">
+    <div class="err" id="keyErr"></div>
+    <button class="go" id="keySave" style="margin-top:14px">Save</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ------------------------------------------------------------------ state */
+const KEY_STORE = "anneal.key";
+let apiKey = localStorage.getItem(KEY_STORE) || "";
+let mode = "music";
+let busy = false;
+let results = [];          // newest first, rendered into #items
+let blobUrls = [];         // revoked on clear so we don't leak memory
+
+const $ = (id) => document.getElementById(id);
+const el = (t, c, txt) => { const n = document.createElement(t); if (c) n.className = c; if (txt != null) n.textContent = txt; return n; };
+
+/* -------------------------------------------------------------- transport */
+async function api(path, { method = "GET", body, raw = false } = {}) {
+  const res = await fetch(path, {
+    method,
+    headers: Object.assign(
+      { "Authorization": "Bearer " + apiKey },
+      body ? { "Content-Type": "application/json" } : {}
+    ),
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  if (res.status === 401) { openGate("That key was rejected."); throw new Error("unauthorized"); }
+
+  if (raw) {
+    if (!res.ok) throw await httpError(res);
+    return res.blob();
+  }
+
+  let payload = null;
+  try { payload = await res.json(); } catch (_) { /* fall through */ }
+
+  if (!res.ok) {
+    const err = new Error((payload && payload.error) || ("HTTP " + res.status));
+    err.status = res.status;
+    err.payload = payload;
+    throw err;
+  }
+  // A 200 can still carry code:500 in the envelope.
+  if (payload && payload.code && payload.code !== 200) throw new Error(payload.error || "request failed");
+  return payload;
+}
+
+async function httpError(res) {
+  let msg = "HTTP " + res.status;
+  try { const j = await res.json(); if (j.error) msg = j.error; } catch (_) {}
+  const e = new Error(msg); e.status = res.status; return e;
+}
+
+/* ----------------------------------------------------------- forge status */
+const SERVICES = ["music", "speech", "image"];
+let health = {};
+
+async function refreshHealth() {
+  try {
+    const r = await fetch("/health");           // unauthenticated, never wakes a model
+    const d = (await r.json()).data || {};
+    health = d.services || {};
+  } catch (_) { health = {}; }
+  renderForge();
+}
+
+function renderForge() {
+  const box = $("forge");
+  box.textContent = "";
+  SERVICES.forEach((name) => {
+    const s = health[name] || {};
+    const chip = el("div", "svc" + (s.running ? " hot" : "") + (busy && name === mode ? " working" : ""));
+    chip.appendChild(el("span", "dot"));
+    chip.appendChild(el("span", "nm", name));
+    let state = "cold";
+    if (s.running) state = s.rss_mb ? s.rss_mb + " MB" : "hot";
+    chip.appendChild(el("span", "st", state));
+    chip.title = s.running
+      ? `${name} is hot — responds immediately. Idles out after ${s.idle_timeout_seconds}s.`
+      : `${name} is cold — first request pays the load time.`;
+    box.appendChild(chip);
+  });
+}
+
+/* ------------------------------------------------------------- status line */
+let elapsedTimer = null, startedAt = 0;
+
+function setStatus(msg, kind = "", { bar = false, actions = [] } = {}) {
+  const s = $("status");
+  s.className = "status show" + (kind ? " " + kind : "");
+  $("statusMsg").textContent = msg;
+  $("statusBar").style.display = bar ? "" : "none";
+  const act = $("statusAct");
+  act.textContent = "";
+  actions.forEach(([label, fn]) => { const b = el("button", null, label); b.onclick = fn; act.appendChild(b); });
+}
+function hideStatus() { $("status").className = "status"; stopElapsed(); }
+
+function startElapsed() {
+  startedAt = Date.now();
+  stopElapsed();
+  elapsedTimer = setInterval(() => {
+    const s = Math.round((Date.now() - startedAt) / 1000);
+    $("statusEl").textContent = s < 60 ? s + "s" : Math.floor(s / 60) + "m " + (s % 60) + "s";
+  }, 500);
+}
+function stopElapsed() { if (elapsedTimer) clearInterval(elapsedTimer); elapsedTimer = null; $("statusEl").textContent = ""; }
+
+/* ------------------------------------------------------------- result list */
+function addResult(r) { results.unshift(r); renderResults(); return r; }
+
+function renderResults() {
+  const box = $("items");
+  $("empty").classList.toggle("hidden", results.length > 0);
+  box.classList.toggle("hidden", results.length === 0);
+  $("outCount").textContent = results.length ? results.length + " item" + (results.length > 1 ? "s" : "") : "";
+  box.textContent = "";
+
+  results.forEach((r) => {
+    const item = el("div", "item" + (r.failed ? " failed" : "") + (r.pending ? " pending" : ""));
+    const top = el("div", "top");
+    top.appendChild(el("span", "kind", r.kind));
+    top.appendChild(el("div", "pr", r.prompt));
+    if (r.meta) top.appendChild(el("div", "meta", r.meta));
+    item.appendChild(top);
+
+    if (r.failed) {
+      item.appendChild(el("div", "err", r.error));
+    } else if (r.pending) {
+      const b = el("div", "bar"); b.appendChild(el("i")); item.appendChild(b);
+    } else if (r.audio) {
+      const a = document.createElement("audio");
+      a.controls = true; a.src = r.audio; a.preload = "metadata";
+      item.appendChild(a);
+    } else if (r.image) {
+      const i = document.createElement("img");
+      i.src = r.image; i.alt = r.prompt; i.loading = "lazy";
+      item.appendChild(i);
+    }
+
+    if (!r.pending && !r.failed) {
+      const foot = el("div", "foot");
+      const dl = document.createElement("a");
+      dl.href = r.audio || r.image; dl.download = r.filename || "anneal-output";
+      dl.textContent = "Download";
+      foot.appendChild(dl);
+      if (r.seed != null) foot.appendChild(el("span", "sp", "seed " + r.seed));
+      else if (r.took) foot.appendChild(el("span", "sp", r.took));
+      item.appendChild(foot);
+    }
+    box.appendChild(item);
+  });
+}
+
+/* ---------------------------------------------------------- cold-start hint */
+function coldWarning(service) {
+  const s = health[service];
+  if (s && s.running) return null;
+  if (service === "music") return "Music is cold — loading the model takes about 3–4 minutes before generation even starts.";
+  if (service === "image") return "Image is cold — loading the model takes 30–60 seconds before generation starts.";
+  return null;
+}
+
+/* ------------------------------------------------------------------ submit */
+async function run() {
+  if (busy) return;
+  busy = true;
+  $("go").disabled = true;
+  $("go").classList.add("busy");
+  $("go").textContent = "Working…";
+  renderForge();
+  startElapsed();
+
+  try {
+    if (mode === "music") await runMusic();
+    else if (mode === "speech") await runSpeech();
+    else await runImage();
+  } catch (e) {
+    if (e && e.status === 409) {
+      // Another heavy model is mid-job. Offer the explicit override.
+      const holder = (e.payload && e.payload.busy_service) || "the other model";
+      setStatus(e.message, "warn", { actions: [
+        ["Stop " + holder + " and retry", async () => {
+          await api("/supervisor/stop", { method: "POST", body: { service: holder } });
+          await refreshHealth();
+          hideStatus(); run();
+        }],
+        ["Wait", () => hideStatus()],
+      ]});
+    } else if (e && e.message !== "unauthorized") {
+      setStatus(e.message || String(e), "err");
+    }
+  } finally {
+    busy = false;
+    $("go").disabled = false;
+    $("go").classList.remove("busy");
+    $("go").textContent = "Forge";
+    stopElapsed();
+    refreshHealth();
+  }
+}
+
+/* --- music: submit, poll, fetch bytes ------------------------------------ */
+async function runMusic() {
+  const prompt = $("mPrompt").value.trim();
+  if (!prompt) { setStatus("Describe the track first.", "warn"); return; }
+
+  const instrumental = $("mInstr").checked;
+  const body = {
+    prompt,
+    lyrics: instrumental ? "[instrumental]" : ($("mLyrics").value || ""),
+    audio_duration: Number($("mDur").value) || 30,
+    batch_size: Math.min(4, Math.max(1, Number($("mTakes").value) || 1)),
+    audio_format: "mp3",
+  };
+  const bpm = Number($("mBpm").value); if (bpm) body.bpm = bpm;
+  const key = $("mKey").value.trim();   if (key) body.key_scale = key;
+
+  const cold = coldWarning("music");
+  setStatus(cold || "Submitting…", cold ? "warn" : "", { bar: true });
+
+  const { task_id } = (await api("/release_task", { method: "POST", body })).data;
+
+  setStatus(cold ? "Heating the model, then generating…" : "Generating…", "", { bar: true });
+
+  // Poll. A failed poll is not a failed job — the backend may be restarting.
+  let misses = 0;
+  for (;;) {
+    await sleep(3000);
+    let rows;
+    try {
+      rows = (await api("/query_result", { method: "POST", body: { task_id_list: [task_id] } })).data || [];
+      misses = 0;
+    } catch (e) {
+      if (++misses > 20) throw new Error("Lost contact with the backend while polling.");
+      continue;                       // never resubmit
+    }
+
+    const row = rows.find((r) => r.task_id === task_id);
+    if (!row) continue;
+
+    if (row.status === 2) {
+      if (row.orphaned) throw new Error("The job was lost when the model restarted. Nothing is running — submit it again.");
+      let msg = row.result;
+      try { const p = JSON.parse(row.result); msg = (p[0] && (p[0].error || p[0].result)) || row.result; } catch (_) {}
+      throw new Error(String(msg).slice(0, 400));
+    }
+    if (row.status === 1) {
+      let takes = [];
+      try { takes = JSON.parse(row.result) || []; } catch (_) {}
+      setStatus("Fetching audio…", "", { bar: true });
+      for (const take of takes) {
+        if (!take.file) continue;
+        // `file` is already a complete request path — append it, never re-encode.
+        const blob = await api(take.file, { raw: true });
+        const url = URL.createObjectURL(blob); blobUrls.push(url);
+        const m = take.metas || {};
+        addResult({
+          kind: "music", prompt, audio: url,
+          filename: slug(prompt) + ".mp3",
+          meta: [m.duration ? Math.round(m.duration) + "s" : null, m.bpm ? m.bpm + " bpm" : null, m.keyscale].filter(Boolean).join(" · "),
+          took: fmtElapsed(),
+        });
+      }
+      hideStatus();
+      return;
+    }
+  }
+}
+
+/* --- speech -------------------------------------------------------------- */
+async function runSpeech() {
+  const text = $("sText").value.trim();
+  if (!text) { setStatus("Enter some text first.", "warn"); return; }
+  setStatus("Synthesising…", "", { bar: true });
+
+  const blob = await api("/v1/audio/speech", {
+    method: "POST", raw: true,
+    body: { input: text, voice: $("sVoice").value, speed: Number($("sSpeed").value) || 1, response_format: "mp3" },
+  });
+  const url = URL.createObjectURL(blob); blobUrls.push(url);
+  addResult({
+    kind: "speech", prompt: text.length > 160 ? text.slice(0, 160) + "…" : text,
+    audio: url, filename: slug(text) + ".mp3",
+    meta: $("sVoice").value, took: fmtElapsed(),
+  });
+  hideStatus();
+}
+
+/* --- image --------------------------------------------------------------- */
+async function runImage() {
+  const prompt = $("iPrompt").value.trim();
+  if (!prompt) { setStatus("Describe the image first.", "warn"); return; }
+
+  const cold = coldWarning("image");
+  setStatus(cold || "Generating…", cold ? "warn" : "", { bar: true });
+
+  const res = await api("/v1/images/generations", {
+    method: "POST",
+    body: { prompt, size: $("iSize").value, steps: Number($("iSteps").value) || 4, n: 1, response_format: "path" },
+  });
+
+  for (const img of res.data || []) {
+    // Fetch through the API so the auth header is applied; <img src> can't send one.
+    const blob = await api(img.url, { raw: true });
+    const url = URL.createObjectURL(blob); blobUrls.push(url);
+    addResult({
+      kind: "image", prompt, image: url, filename: slug(prompt) + ".png",
+      meta: $("iSize").value, seed: img.seed,
+    });
+  }
+  hideStatus();
+}
+
+/* ------------------------------------------------------------------ utils */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const slug = (s) => (s.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase().slice(0, 48) || "anneal");
+function fmtElapsed() {
+  const s = Math.round((Date.now() - startedAt) / 1000);
+  return s < 60 ? s + "s" : Math.floor(s / 60) + "m " + (s % 60) + "s";
+}
+
+/* ------------------------------------------------------------------- gate */
+function openGate(msg) { $("gate").classList.remove("hidden"); $("keyErr").textContent = msg || ""; $("keyInput").value = apiKey; $("keyInput").focus(); }
+function closeGate() { $("gate").classList.add("hidden"); }
+
+$("keySave").onclick = () => {
+  const v = $("keyInput").value.trim();
+  if (!v) { $("keyErr").textContent = "Paste the key to continue."; return; }
+  apiKey = v; localStorage.setItem(KEY_STORE, v); closeGate(); boot();
+};
+$("keyInput").addEventListener("keydown", (e) => { if (e.key === "Enter") $("keySave").click(); });
+$("btnKey").onclick = () => openGate();
+$("btnDocs").onclick = () => window.open("/docs", "_blank");
+
+/* ------------------------------------------------------------------- wiring */
+document.querySelectorAll(".tab").forEach((tab) => {
+  tab.onclick = () => {
+    mode = tab.dataset.mode;
+    document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", String(t === tab)));
+    document.querySelectorAll("[data-panel]").forEach((p) => p.classList.toggle("hidden", p.dataset.panel !== mode));
+    hideStatus();
+    renderForge();
+  };
+});
+
+$("mInstr").onchange = () => { $("mLyricsWrap").style.display = $("mInstr").checked ? "none" : "block"; };
+$("go").onclick = run;
+$("btnClear").onclick = () => {
+  blobUrls.forEach(URL.revokeObjectURL); blobUrls = [];
+  results = []; renderResults();
+};
+
+// Cmd/Ctrl+Enter submits from any field.
+document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); run(); }
+});
+
+/* -------------------------------------------------------------------- boot */
+/* Kokoro's voice list is fixed by the model, so ship it inline. Fetching
+   /v1/voices at boot would wake the speech backend on every page load, which
+   is exactly the behaviour the on-demand design exists to avoid. */
+const VOICES = [
+  "af_heart", "af_alloy", "af_aoede", "af_bella", "af_jessica", "af_kore",
+  "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
+  "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael",
+  "am_onyx", "am_puck", "am_santa",
+  "bf_alice", "bf_emma", "bf_isabella", "bf_lily",
+  "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
+];
+const DEFAULT_VOICE = "af_heart";
+let voicesRefreshed = false;
+
+function fillVoices(list, def) {
+  const sel = $("sVoice");
+  const keep = sel.value;
+  sel.textContent = "";
+  list.forEach((v) => {
+    const o = document.createElement("option");
+    o.value = v; o.textContent = v;
+    if (v === (keep || def)) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+
+/* Only reconcile against the server once speech is already hot — free then. */
+async function maybeRefreshVoices() {
+  if (voicesRefreshed || !health.speech || !health.speech.running) return;
+  voicesRefreshed = true;
+  try {
+    const d = (await api("/v1/voices")).data;
+    if (d && d.voices && d.voices.length) fillVoices(d.voices, d.default);
+  } catch (_) { /* keep the built-in list */ }
+}
+
+async function boot() {
+  if (!apiKey) { openGate(); return; }
+  $("hostname").textContent = location.host;
+  fillVoices(VOICES, DEFAULT_VOICE);
+  await refreshHealth();
+  setInterval(async () => { await refreshHealth(); maybeRefreshVoices(); }, 5000);
+}
+
+renderResults();
+boot();
+</script>
+</body>
+</html>

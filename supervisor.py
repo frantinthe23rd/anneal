@@ -51,19 +51,29 @@ ACESTEP_DIR = os.environ.get("ACESTEP_DIR", os.path.join(AIMUSIC_ROOT, "ACE-Step
 REAP_INTERVAL = 20.0
 PROXY_TIMEOUT = float(os.environ.get("PROXY_TIMEOUT", "1800"))
 
-# /v1/audio is served straight off disk, but only from under these roots.
+# Generated files are served straight off disk, but only from under these roots.
+# Reading back an old result must never wake the model that made it.
 AUDIO_ROOTS = [
     os.path.realpath(os.path.join(ACESTEP_DIR, ".cache")),
     os.path.realpath(os.path.join(ACESTEP_DIR, "gradio_outputs")),
     os.path.realpath(AIMUSIC_ROOT),
 ]
+IMAGE_ROOTS = [os.path.realpath(os.path.join(AIMUSIC_ROOT, "outputs"))]
+
+CONTENT_TYPES = {
+    ".mp3": "audio/mpeg", ".flac": "audio/flac", ".wav": "audio/wav",
+    ".opus": "audio/opus", ".aac": "audio/aac", ".m4a": "audio/mp4",
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
+}
 
 HOP_BY_HOP = {
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
     "te", "trailers", "transfer-encoding", "upgrade",
 }
 
-OPENAPI_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "openapi.json")
+HERE = os.path.dirname(os.path.abspath(__file__))
+OPENAPI_PATH = os.path.join(HERE, "openapi.json")
+UI_PATH = os.path.join(HERE, "ui.html")
 
 # Swagger UI pulled from a CDN — the spec itself is served locally, and this page
 # is only ever opened by a browser on the tailnet that has normal internet access.
@@ -462,22 +472,19 @@ class Handler(BaseHTTPRequestHandler):
         }
 
     # -- local endpoints --------------------------------------------------
-    def _serve_audio_from_disk(self):
-        """Serve /v1/audio off disk so downloads never wake the music model."""
+    def _serve_file_from_disk(self, roots):
+        """Serve a generated artefact off disk, so reading it never wakes a model."""
         params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         raw = (params.get("path") or [""])[0]
         if not raw:
             return False
         path = os.path.realpath(raw)
-        if not any(path.startswith(root + os.sep) for root in AUDIO_ROOTS):
+        if not any(path.startswith(root + os.sep) for root in roots):
             return False
         if not os.path.isfile(path):
             return False
 
-        ctype = {
-            ".mp3": "audio/mpeg", ".flac": "audio/flac", ".wav": "audio/wav",
-            ".opus": "audio/opus", ".aac": "audio/aac", ".m4a": "audio/mp4",
-        }.get(os.path.splitext(path)[1].lower(), "application/octet-stream")
+        ctype = CONTENT_TYPES.get(os.path.splitext(path)[1].lower(), "application/octet-stream")
 
         self.send_response(200)
         self.send_header("Content-Type", ctype)
@@ -607,14 +614,30 @@ class Handler(BaseHTTPRequestHandler):
             except OSError as exc:
                 self._send_json({"code": 500, "error": "spec unavailable: %s" % exc}, 500)
             return
-        if route in ("/docs", "/docs/", "/"):
+        if route in ("/", "/ui", "/ui/"):
+            try:
+                with open(UI_PATH, "rb") as fh:
+                    self._send_bytes(fh.read(), "text/html; charset=utf-8")
+            except OSError as exc:
+                self._send_json({"code": 500, "error": "UI unavailable: %s" % exc}, 500)
+            return
+        if route in ("/docs", "/docs/"):
             self._send_bytes(DOCS_HTML.encode(), "text/html; charset=utf-8")
             return
+        if route == "/v1/images/file":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            if self._serve_file_from_disk(IMAGE_ROOTS):
+                return  # served without waking the image model
+            self._send_json({"code": 404, "error": "no such image"}, 404)
+            return
+
         if route == "/v1/audio":
             if not self._authorized():
                 self._send_json({"code": 401, "error": "unauthorized"}, 401)
                 return
-            if self._serve_audio_from_disk():
+            if self._serve_file_from_disk(AUDIO_ROOTS):
                 return  # served without waking anything
             # Don't fall through to the backend: it answers a malformed path
             # with "Access denied: path outside allowed directory", which reads

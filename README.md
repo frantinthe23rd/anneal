@@ -15,8 +15,17 @@ way all three fit.
 | Speech | [Kokoro-82M](https://huggingface.co/prince-canuma/Kokoro-82M) via [mlx-audio](https://github.com/Blaizzy/mlx-audio) | Apache-2.0 | 28 voices, en/uk |
 | Image | FLUX.1-schnell 4-bit via [mflux](https://github.com/filipstrand/mflux) | Apache-2.0 | Up to ~1536px |
 
+**Using it by hand?** Open the web UI at **`/`** — prompt window, output view,
+and a forge strip showing which models are hot.
+
 **Integrating it? Live API docs at `/docs`, spec at `/openapi.json`, plus
 [INTEGRATION.md](INTEGRATION.md) for the things a spec can't tell you.**
+
+| Path | |
+| --- | --- |
+| `/` | Web UI |
+| `/docs` | Swagger UI |
+| `/openapi.json` | Raw spec |
 
 ## Architecture
 
@@ -64,6 +73,24 @@ Everything bulky is on the **Storage SSD**; the internal disk holds only these s
 `ACE-Step-1.5/checkpoints` is a symlink to `models/` — the upstream server hardcodes
 that path and ignores `ACESTEP_CHECKPOINTS_DIR`. `start-api.sh` recreates it if a repo
 update clobbers it; without it the server silently re-downloads 9.4 GB.
+
+## The UI
+
+`http://127.0.0.1:8001/` on the host, or `https://<tailnet-host>/` from anywhere
+on the tailnet. It asks once for the API key and keeps it in `localStorage`.
+
+- **Music / Speech / Image** tabs, prompt box, and the options that matter per mode.
+- **Forge strip** in the header shows each model as cold or hot with its resident
+  size — updated from `/health`, which never wakes anything.
+- Cold-start warnings appear *before* you commit to a slow request, so a 4-minute
+  music generation isn't a surprise.
+- A `409` (the other heavy model is mid-job) offers to stop it and retry rather
+  than just failing.
+- Results stack newest-first with inline playback or preview and a download link.
+- `Cmd/Ctrl+Enter` submits.
+
+Dark by design — the accent colour is reserved for things that are genuinely hot
+or genuinely in progress.
 
 ## Usage
 
