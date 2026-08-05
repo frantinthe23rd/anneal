@@ -3,7 +3,9 @@
 # Everything heavy (venv, wheel cache, model weights, generated audio) lives on
 # the external SSD at /Volumes/Storage/AIMusic — the internal disk is nearly full.
 
-export AIMUSIC_ROOT="/Volumes/Storage/AIMusic"
+# Where models, venvs, logs and output live. Override to relocate the whole
+# installation; nothing below assumes this specific path.
+export AIMUSIC_ROOT="${AIMUSIC_ROOT:-/Volumes/Storage/AIMusic}"
 export ACESTEP_DIR="$AIMUSIC_ROOT/ACE-Step-1.5"
 
 # --- keep all bulk data off the internal disk ---
@@ -55,6 +57,29 @@ export ACESTEP_IDLE_TIMEOUT="600"
 # asking for the bundled 1.7B here is silently overridden, so don't bother.
 export ACESTEP_LM_MODEL_PATH="acestep-5Hz-lm-0.6B"
 
-export UV_BIN="/opt/homebrew/bin/uv"
-export TS_BIN="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
-export TAILNET_HOST="jons-mac-mini.pangolin-darter.ts.net"
+# Resolve tools rather than hardcoding one machine's layout.
+export UV_BIN="${UV_BIN:-$(command -v uv || echo /opt/homebrew/bin/uv)}"
+
+# Executable is not the same as working: on macOS the Homebrew `tailscale`
+# symlink points into the app bundle and dies with "The current bundleIdentifier
+# is unknown to the registry" when run directly. Prefer the bundle, and prove
+# each candidate answers before accepting it.
+if [[ -z "${TS_BIN:-}" ]]; then
+    for _candidate in \
+        "/Applications/Tailscale.app/Contents/MacOS/Tailscale" \
+        "$(command -v tailscale 2>/dev/null || true)" \
+        "/usr/bin/tailscale" \
+        "/usr/local/bin/tailscale"; do
+        [[ -n "$_candidate" && -x "$_candidate" ]] || continue
+        if "$_candidate" status --json >/dev/null 2>&1; then export TS_BIN="$_candidate"; break; fi
+    done
+fi
+export TS_BIN="${TS_BIN:-}"
+
+# Ask Tailscale for this machine's name instead of baking one host in. Empty is
+# fine — it only affects the URL printed at startup.
+if [[ -z "${TAILNET_HOST:-}" && -n "$TS_BIN" && -x "$TS_BIN" ]]; then
+    TAILNET_HOST="$("$TS_BIN" status --json 2>/dev/null \
+        | tr ',' '\n' | grep -m1 '"DNSName"' | cut -d'"' -f4 | sed 's/\.$//')"
+fi
+export TAILNET_HOST="${TAILNET_HOST:-localhost}"

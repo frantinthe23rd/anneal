@@ -1,29 +1,16 @@
 #!/usr/bin/env bash
-# (Re)download the ACE-Step 1.5 weights to the SSD.
+# Download every model Anneal needs, at the revisions recorded in
+# models.lock.json, then verify the files are actually complete.
 #
-# HF_HUB_DISABLE_XET=1 is required: the Xet transfer backend silently produced
-# sparse (partially zero-filled) files on this external APFS volume, which then
-# fail deep inside model loading. The classic HTTP path writes them correctly.
+# Pinned rather than latest: an unpinned re-download silently pulls whatever
+# upstream is current, so a rebuilt machine can end up with different weights
+# than the one that was tested. Change pins deliberately via ./update.sh.
+#
+# HF_HUB_DISABLE_XET=1 is not optional. The Xet transfer backend silently wrote
+# *sparse* files to this external APFS volume — correct logical size, zero-filled
+# interiors — which then failed deep inside model loading with an opaque
+# "invalid JSON in header". That is what verify-models.py exists to catch.
 set -euo pipefail
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env.sh"
-
-export HF_HUB_DISABLE_XET=1
-export HF_HUB_ENABLE_HF_TRANSFER=0
-
-mkdir -p "$ACESTEP_CHECKPOINTS_DIR"
-cd "$ACESTEP_DIR"
-
-echo "Downloading ACE-Step/Ace-Step1.5 -> $ACESTEP_CHECKPOINTS_DIR"
-"$UV_BIN" run python - <<PY
-from huggingface_hub import snapshot_download
-snapshot_download(
-    repo_id="ACE-Step/Ace-Step1.5",
-    local_dir="$ACESTEP_CHECKPOINTS_DIR",
-    max_workers=4,
-)
-print("download finished")
-PY
-
-echo
-"$(dirname "${BASH_SOURCE[0]}")/verify-models.py"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec "$HERE/update.sh" --models

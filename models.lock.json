@@ -1,0 +1,38 @@
+{
+  "_comment": [
+    "Exact model revisions this deployment is known to work with.",
+    "Without these, a re-download silently pulls whatever upstream is current,",
+    "so a rebuilt machine can get different weights than the one that was tested.",
+    "Bump deliberately via ./update.sh, never by hand-editing during a fix."
+  ],
+  "recorded": "2026-08-05",
+  "models": {
+    "ACE-Step/Ace-Step1.5": {
+      "revision": "19671f406d603126926c1b7e2adc169acbcade22",
+      "target": "checkpoints_dir",
+      "note": "Bundle: vae, Qwen3-Embedding-0.6B, acestep-v15-turbo, acestep-5Hz-lm-1.7B"
+    },
+    "ACE-Step/acestep-5Hz-lm-0.6B": {
+      "revision": "148d8ea0225bdab342ee1ae3a354275ccd60ca80",
+      "target": "checkpoints_dir/acestep-5Hz-lm-0.6B",
+      "note": "The planning LM this hardware tier actually uses; the bundled 1.7B is never loaded here"
+    },
+    "prince-canuma/Kokoro-82M": {
+      "revision": "e02c9eada7ce7416798af36b190a8a2dd2ecd566",
+      "target": "hf_cache",
+      "note": "Speech. Fetched through mlx-audio's get_model_path"
+    },
+    "dhairyashil/FLUX.1-schnell-mflux-4bit": {
+      "revision": "0e0b247ac48b8bf86fd5b440813b7da5854e238b",
+      "target": "hf_cache",
+      "note": "Image. Ungated pre-quantized mirror — black-forest-labs' own repo is gated"
+    }
+  },
+  "upstream": {
+    "ACE-Step/ACE-Step-1.5": {
+      "commit": "6d467e4b5081ccb0abf1ec1bf4fdf9051a2d34b0",
+      "date": "2026-06-26",
+      "note": "Cloned to $ACESTEP_DIR. Its own .venv follows the repo's uv.lock."
+    }
+  }
+}

@@ -25,7 +25,7 @@ pkill -f "supervisor.py" 2>/dev/null || true
 pkill -f "acestep.api_server:app" 2>/dev/null || true
 pkill -f "acestep-api" 2>/dev/null || true
 
-"$TS_BIN" serve --https=443 off 2>/dev/null || true
-"$TS_BIN" serve --http="${SUPERVISOR_PORT}" off 2>/dev/null || true
+[[ -n "${TS_BIN:-}" ]] && "$TS_BIN" serve --https=443 off 2>/dev/null || true
+[[ -n "${TS_BIN:-}" ]] && "$TS_BIN" serve --http="${SUPERVISOR_PORT}" off 2>/dev/null || true
 
 echo "Stopped."

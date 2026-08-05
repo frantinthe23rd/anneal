@@ -155,10 +155,36 @@ Useful knobs:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
+| `AIMUSIC_ROOT` | `/Volumes/Storage/AIMusic` | Where models, venvs, logs and output live |
 | `ACESTEP_IDLE_TIMEOUT` | `600` | Seconds idle before the model is unloaded |
 | `ACESTEP_BACKEND_PORT` | `8011` | Where ACE-Step itself listens |
 | `SUPERVISOR_PORT` | `8001` | Public port |
 | `ACESTEP_LM_MODEL_PATH` | `acestep-5Hz-lm-0.6B` | Prompt/lyric planning LM |
+| `ANNEAL_MIN_FREE_MB` | `1200` | Refuse to load a heavy model below this much free RAM |
+| `UV_BIN`, `TS_BIN`, `TAILNET_HOST` | auto-detected | Override only if detection picks wrong |
+
+Tool paths and the tailnet hostname are resolved at startup rather than
+hardcoded, and Tailscale is optional — without it Anneal serves on loopback
+only. The OpenAPI `servers` block is generated per host, so `/openapi.json`
+always advertises the machine actually serving it.
+
+## Keeping it current
+
+Models and dependencies are pinned: `models.lock.json` records an exact
+revision per model, `gen-venv.lock.txt` pins the speech/image environment.
+Without pins, a re-download silently pulls whatever upstream is current, so a
+rebuilt machine can get different weights than the one that was tested.
+
+```bash
+./update.sh --check     # what has moved upstream (read-only, the default)
+./update.sh --models    # re-fetch at the pinned revisions, then verify
+./update.sh --deps      # rebuild gen-venv from the lockfile
+./update.sh --smoke     # generate on all three services and report
+```
+
+Updates are never automatic. To take a new revision, edit `models.lock.json`,
+run `--models`, then `--smoke` — and treat a smoke failure as a reason to roll
+the pin back.
 
 ## Security
 

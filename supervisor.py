@@ -52,6 +52,7 @@ LISTEN_PORT = int(os.environ.get("SUPERVISOR_PORT", "8001"))
 API_KEY = os.environ.get("ACESTEP_API_KEY", "")
 AIMUSIC_ROOT = os.environ.get("AIMUSIC_ROOT", "/Volumes/Storage/AIMusic")
 ACESTEP_DIR = os.environ.get("ACESTEP_DIR", os.path.join(AIMUSIC_ROOT, "ACE-Step-1.5"))
+TAILNET_HOST = os.environ.get("TAILNET_HOST", "")
 
 REAP_INTERVAL = 20.0
 PROXY_TIMEOUT = float(os.environ.get("PROXY_TIMEOUT", "1800"))
@@ -898,8 +899,17 @@ class Handler(BaseHTTPRequestHandler):
         if route in ("/openapi.json", "/openapi"):
             try:
                 with open(OPENAPI_PATH, "rb") as fh:
-                    self._send_bytes(fh.read(), "application/json")
-            except OSError as exc:
+                    spec = json.loads(fh.read().decode("utf-8"))
+                # Fill in this host's own URLs rather than shipping whichever
+                # machine the spec was written on.
+                servers = []
+                if TAILNET_HOST and TAILNET_HOST != "localhost":
+                    servers.append({"url": "https://%s" % TAILNET_HOST, "description": "Tailnet (TLS)"})
+                servers.append({"url": "http://127.0.0.1:%d" % LISTEN_PORT,
+                                "description": "On the host itself"})
+                spec["servers"] = servers
+                self._send_bytes(json.dumps(spec).encode(), "application/json")
+            except Exception as exc:
                 self._send_json({"code": 500, "error": "spec unavailable: %s" % exc}, 500)
             return
         if route in ("/", "/ui", "/ui/"):

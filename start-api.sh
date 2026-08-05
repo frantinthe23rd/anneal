@@ -52,7 +52,10 @@ for _ in $(seq 1 30); do
 done
 
 # Expose on the tailnet only (loopback -> tailscale). Never on the local LAN.
-if ! "$TS_BIN" serve status 2>/dev/null | grep -q "127.0.0.1:${SUPERVISOR_PORT}"; then
+# Tailscale is optional: without it Anneal simply stays loopback-only.
+if [[ -z "$TS_BIN" ]]; then
+    echo "Tailscale not found — serving on loopback only."
+elif ! "$TS_BIN" serve status 2>/dev/null | grep -q "127.0.0.1:${SUPERVISOR_PORT}"; then
     echo "Configuring tailscale serve..."
     "$TS_BIN" serve --bg --https=443 "http://127.0.0.1:${SUPERVISOR_PORT}" 2>/dev/null \
         || "$TS_BIN" serve --bg --http="${SUPERVISOR_PORT}" "http://127.0.0.1:${SUPERVISOR_PORT}"
@@ -60,7 +63,7 @@ fi
 
 echo
 echo "Local:   http://127.0.0.1:${SUPERVISOR_PORT}"
-echo "Tailnet: https://${TAILNET_HOST}"
+[[ -n "$TS_BIN" ]] && echo "Tailnet: https://${TAILNET_HOST}"
 echo "Status:  curl -s http://127.0.0.1:${SUPERVISOR_PORT}/supervisor/status"
 echo "Logs:    $LOG  and  $AIMUSIC_ROOT/api-server.log"
 echo
