@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Anneal">
+  <defs>
+    <linearGradient id="annealHeat" x1="10" y1="56" x2="54" y2="8" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffb03a"></stop>
+      <stop offset=".45" stop-color="#ff5f1f"></stop>
+      <stop offset="1" stop-color="#6d7f8c"></stop>
+    </linearGradient>
+  </defs>
+  <circle cx="32" cy="32" r="22" fill="none" stroke="url(#annealHeat)" stroke-width="9" stroke-linecap="round" stroke-dasharray="122 16.2" transform="rotate(-24 32 32)"></circle>
+  <circle cx="32" cy="32" r="5.5" fill="#ffb03a"></circle>
+</svg>

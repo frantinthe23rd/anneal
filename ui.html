@@ -557,6 +557,18 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
   background: var(--heat-1); vertical-align: -2px; animation: blink 1s steps(2) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 
+/* ------------------------------------------------------------------- mark
+   A broken ring cooling from heat to steel around a core that is still hot.
+   Two cuts, because one scaled file does not survive the range: the gradient
+   muddies below 32px, so the favicon is a separate flat-stroke drawing. The
+   rotation puts the gap at the upper right — at top or bottom it stops reading
+   as an opening and starts reading as a broken circle. */
+/* align-self, because .brand aligns on the baseline so the wordmark and the
+   hostname sit together — an image on that baseline would hang below it. */
+.brand .mark { display: block; width: 24px; height: 24px; flex: none; align-self: center; }
+.hero .heromark { display: block; width: clamp(96px, 14vw, 168px); height: auto;
+  margin: 0 0 18px -6px; animation: rise var(--t-slow) var(--ease) both; }
+
 /* ---------------------------------------------------------------- key gate */
 .gate { position: fixed; inset: 0; background: rgba(10,8,7,.9); display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 50; }
 .gate .box { width: 100%; max-width: 440px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 26px; }
@@ -571,6 +583,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 
 <div class="hero" id="hero">
  <div class="hin">
+  <img class="heromark" src="/assets/brand/anneal-mark.svg" width="168" height="168" alt="">
   <h1>Anneal</h1>
   <p class="lede">Music, speech, images and text — generated <b>entirely on this machine</b>.
      Nothing you write or make leaves it.</p>
@@ -637,6 +650,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 <div class="wrap">
   <header>
     <div class="brand">
+      <img class="mark" src="/assets/brand/anneal-mark.svg" width="24" height="24" alt="">
       <h1 id="brandHome" style="cursor:pointer" title="Front door">Anneal</h1>
       <small>local generation · <span id="hostname">—</span></small>
     </div>
