@@ -1504,7 +1504,11 @@ class Handler(BaseHTTPRequestHandler):
             ctype = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
                      ".webp": "image/webp", ".svg": "image/svg+xml",
                      ".js": "text/javascript; charset=utf-8",
-                     ".css": "text/css; charset=utf-8"}.get(
+                     ".css": "text/css; charset=utf-8",
+                     # KaTeX ships its own fonts; only woff2 is vendored, which
+                     # every browser that can run this UI supports.
+                     ".woff2": "font/woff2", ".woff": "font/woff",
+                     ".ttf": "font/ttf"}.get(
                 os.path.splitext(name)[1].lower(), "application/octet-stream")
             with open(path, "rb") as fh:
                 blob = fh.read()

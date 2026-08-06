@@ -776,10 +776,15 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .msg .body hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
 /* Not rendered maths — readable maths. Set apart so an equation still reads as
    one, in the face the rest of the interface uses for things the machine said. */
+/* KaTeX renders these; the wrapper only positions them and gives a display
+   equation somewhere to sit. .math without KaTeX falls back to plain text, so
+   the mono face stays as its default. */
 .msg .body .math { font-family: var(--mono); font-size: 13px; }
-.msg .body .math.block { display: block; margin: 10px 0; padding: 10px 12px;
+.msg .body .math.block { display: block; margin: 10px 0; padding: 12px;
   background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-sm);
-  text-align: center; white-space: pre-wrap; overflow-x: auto; color: var(--text); }
+  overflow-x: auto; color: var(--text); }
+.msg .body .katex { font-size: 1.05em; color: var(--text); }
+.msg .body .math.block .katex-display { margin: 0; }
 .msg .body img { max-width: 100%; border-radius: 7px; }
 /* The caret, so a streaming reply looks alive between tokens. */
 .msg .body .caret { display: inline-block; width: 7px; height: 15px; margin-left: 2px;
@@ -1638,8 +1643,10 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
      from a CDN, because the whole point of this page is that it fetches nothing
      from anywhere else. Rendering model output as HTML without a sanitiser is
      not something to hand-roll, so marked parses and DOMPurify cleans. -->
+<link rel="stylesheet" href="/assets/vendor/katex/katex.min.css">
 <script src="/assets/vendor/marked.min.js"></script>
 <script src="/assets/vendor/dompurify.min.js"></script>
+<script src="/assets/vendor/katex/katex.min.js"></script>
 <script>
 "use strict";
 
@@ -2895,8 +2902,19 @@ function renderMathIn(root) {
       if (m.index > 0) frag.appendChild(document.createTextNode(rest.slice(0, m.index)));
       const display = m[1] !== undefined || m[2] !== undefined;
       const body = m[1] !== undefined ? m[1] : (m[2] !== undefined ? m[2] : m[3]);
-      const span = el(display ? "div" : "span", display ? "math block" : "math",
-                      plainMath(body));
+      const span = el(display ? "div" : "span", display ? "math block" : "math");
+      if (typeof katex !== "undefined") {
+        try {
+          // trust:false is the default and is what makes the output safe to
+          // insert: KaTeX escapes its input and refuses \href and friends.
+          // throwOnError:false leaves an unparseable expression visible in red
+          // rather than throwing away the whole reply.
+          katex.render(body, span, { displayMode: display, throwOnError: false,
+                                     trust: false, strict: false, output: "html" });
+        } catch (_) { span.textContent = plainMath(body); }
+      } else {
+        span.textContent = plainMath(body);      // library missing: still readable
+      }
       frag.appendChild(span);
       rest = rest.slice(m.index + m[0].length);
     }
