@@ -774,6 +774,12 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .msg .body th, .msg .body td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; }
 .msg .body th { color: var(--muted); font-weight: 600; }
 .msg .body hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
+/* Not rendered maths — readable maths. Set apart so an equation still reads as
+   one, in the face the rest of the interface uses for things the machine said. */
+.msg .body .math { font-family: var(--mono); font-size: 13px; }
+.msg .body .math.block { display: block; margin: 10px 0; padding: 10px 12px;
+  background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-sm);
+  text-align: center; white-space: pre-wrap; overflow-x: auto; color: var(--text); }
 .msg .body img { max-width: 100%; border-radius: 7px; }
 /* The caret, so a streaming reply looks alive between tokens. */
 .msg .body .caret { display: inline-block; width: 7px; height: 15px; margin-left: 2px;
@@ -2803,7 +2809,100 @@ function renderMarkdown(node, src) {
     node.querySelectorAll("a[href]").forEach((a) => {
       a.target = "_blank"; a.rel = "noopener noreferrer";
     });
+    renderMathIn(node);
   } catch (_) { node.textContent = src; }
+}
+
+/* --------------------------------------------------------------- maths
+   The model answers questions about boilers and chemistry in LaTeX, and marked
+   has no idea what to do with it, so `$$\text{Methane} + ... \rightarrow$$`
+   arrived on screen exactly as written.
+
+   This is deliberately not a maths renderer. KaTeX is the right tool and costs
+   roughly 1.5 MB of JavaScript and fonts, which is disproportionate against a
+   62 KB vendor budget in a repo whose first rule is "small files only" — and it
+   would be carried by every page load to serve the occasional equation.
+
+   What this does instead is make the common case readable: strip the wrappers
+   that carry no meaning, substitute the symbols people actually use, and set
+   the result apart so it still reads as an equation. Anything it does not
+   recognise is left exactly as the model wrote it, which is no worse than now.
+   Genuinely complex maths — integrals, matrices, nested fractions — will still
+   look wrong, just less wrong. */
+const MATH_SYMBOLS = {
+  "\\rightarrow": "→", "\\to": "→", "\\leftarrow": "←", "\\Rightarrow": "⇒",
+  "\\leftrightarrow": "↔", "\\uparrow": "↑", "\\downarrow": "↓",
+  "\\times": "×", "\\cdot": "·", "\\div": "÷", "\\pm": "±", "\\mp": "∓",
+  "\\leq": "≤", "\\le": "≤", "\\geq": "≥", "\\ge": "≥", "\\neq": "≠",
+  "\\approx": "≈", "\\equiv": "≡", "\\propto": "∝", "\\infty": "∞",
+  "\\sum": "∑", "\\prod": "∏", "\\int": "∫", "\\sqrt": "√", "\\partial": "∂",
+  "\\degree": "°", "\\circ": "°", "\\percent": "%", "\\ldots": "…", "\\cdots": "…",
+  "\\alpha": "α", "\\beta": "β", "\\gamma": "γ", "\\delta": "δ", "\\Delta": "Δ",
+  "\\epsilon": "ε", "\\theta": "θ", "\\lambda": "λ", "\\mu": "μ", "\\pi": "π",
+  "\\rho": "ρ", "\\sigma": "σ", "\\tau": "τ", "\\phi": "φ", "\\omega": "ω",
+  "\\Omega": "Ω", "\\eta": "η", "\\kappa": "κ", "\\nu": "ν", "\\quad": "  ",
+  "\\qquad": "    ", "\\,": " ", "\;": " ", "\\!": "", "\\%": "%", "\\&": "&",
+};
+const SUP = { "0":"⁰","1":"¹","2":"²","3":"³","4":"⁴","5":"⁵","6":"⁶","7":"⁷",
+              "8":"⁸","9":"⁹","+":"⁺","-":"⁻","n":"ⁿ","i":"ⁱ" };
+const SUB = { "0":"₀","1":"₁","2":"₂","3":"₃","4":"₄","5":"₅","6":"₆","7":"₇",
+              "8":"₈","9":"₉","+":"₊","-":"₋","x":"ₓ","n":"ₙ" };
+
+function plainMath(src) {
+  let t = src;
+  // Wrappers that only tell LaTeX which font to use.
+  for (let i = 0; i < 4; i++) {
+    t = t.replace(/\\(?:text|mathrm|mathbf|mathit|textbf|textit|operatorname)\s*\{([^{}]*)\}/g, "$1");
+  }
+  t = t.replace(/\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, "($1)/($2)");
+  t = t.replace(/\\sqrt\s*\{([^{}]*)\}/g, "√($1)");
+  // Sub- and superscripts, where every character has a Unicode form.
+  t = t.replace(/\^\{([^{}]+)\}|\^(\w)/g, (m, a, b) => {
+    const body = a || b;
+    return [...body].every((c) => SUP[c]) ? [...body].map((c) => SUP[c]).join("") : "^" + body;
+  });
+  t = t.replace(/_\{([^{}]+)\}|_(\w)/g, (m, a, b) => {
+    const body = a || b;
+    return [...body].every((c) => SUB[c]) ? [...body].map((c) => SUB[c]).join("") : "_" + body;
+  });
+  // Longest names first, so \le does not eat the start of \leq.
+  Object.keys(MATH_SYMBOLS).sort((a, b) => b.length - a.length).forEach((k) => {
+    t = t.split(k).join(MATH_SYMBOLS[k]);
+  });
+  t = t.replace(/\\left|\\right/g, "").replace(/\\\\/g, "\n");
+  return t.replace(/[ \t]+/g, " ").trim();
+}
+
+/* Runs over the rendered nodes rather than the Markdown source, so code blocks
+   and inline code are untouched — a shell sample full of $VARIABLES is not
+   maths and must not be treated as any. Only $$…$$, \[…\] and \(…\) are
+   recognised; a single $ is far too common in prose and shell to claim. */
+const MATH_PATTERN = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)/;
+
+function renderMathIn(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => n.parentElement && n.parentElement.closest("code, pre")
+      ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+  });
+  const targets = [];
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    if (MATH_PATTERN.test(n.nodeValue)) targets.push(n);
+  }
+  targets.forEach((node) => {
+    const frag = document.createDocumentFragment();
+    let rest = node.nodeValue, m;
+    while ((m = rest.match(MATH_PATTERN))) {
+      if (m.index > 0) frag.appendChild(document.createTextNode(rest.slice(0, m.index)));
+      const display = m[1] !== undefined || m[2] !== undefined;
+      const body = m[1] !== undefined ? m[1] : (m[2] !== undefined ? m[2] : m[3]);
+      const span = el(display ? "div" : "span", display ? "math block" : "math",
+                      plainMath(body));
+      frag.appendChild(span);
+      rest = rest.slice(m.index + m[0].length);
+    }
+    if (rest) frag.appendChild(document.createTextNode(rest));
+    node.parentNode.replaceChild(frag, node);
+  });
 }
 
 /* A token arrives every few milliseconds and re-rendering the whole transcript
