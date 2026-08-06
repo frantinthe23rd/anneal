@@ -171,7 +171,7 @@ def _parse_size_mb(text):
     return value * _SIZE_UNITS.get(unit, 1.0)
 
 
-_page_sample = {"t": 0.0, "pageouts": 0}
+_page_sample = {"t": 0.0, "pageouts": 0, "pageins": 0}
 
 
 def _pressure_level():
@@ -218,12 +218,20 @@ def system_memory():
         free = (stats.get("Pages free", 0) + stats.get("Pages inactive", 0)) * page
         info["free_mb"] = int(free / (1024 * 1024))
 
-        # Pageout *rate* between calls — the flow, not the stock.
-        now, outs = time.time(), stats.get("Pageouts", 0)
-        prev_t, prev_outs = _page_sample["t"], _page_sample["pageouts"]
-        if prev_t and now > prev_t and outs >= prev_outs:
-            info["pageouts_per_sec"] = int((outs - prev_outs) / (now - prev_t))
-        _page_sample["t"], _page_sample["pageouts"] = now, outs
+        # Paging *rate* between calls — the flow, not the stock. Both
+        # directions: under load here pageouts stay near zero while pageins hit
+        # thousands per second, because the working set is being re-read from
+        # swap rather than newly written to it. Watching only pageouts would
+        # have missed the entire effect.
+        now = time.time()
+        outs, ins = stats.get("Pageouts", 0), stats.get("Pageins", 0)
+        prev_t = _page_sample["t"]
+        if prev_t and now > prev_t:
+            if outs >= _page_sample["pageouts"]:
+                info["pageouts_per_sec"] = int((outs - _page_sample["pageouts"]) / (now - prev_t))
+            if ins >= _page_sample["pageins"]:
+                info["pageins_per_sec"] = int((ins - _page_sample["pageins"]) / (now - prev_t))
+        _page_sample.update({"t": now, "pageouts": outs, "pageins": ins})
     except Exception:
         pass
 
@@ -238,8 +246,14 @@ def system_memory():
 
     level = _pressure_level()
     info["pressure_level"] = {1: "normal", 2: "warning", 4: "critical"}.get(level, "normal")
-    # Trust the kernel first; otherwise only flag genuinely sustained paging.
-    info["pressure"] = bool(level >= 2 or info.get("pageouts_per_sec", 0) > 2000)
+    # Trust the kernel first. The rate thresholds are a backstop for the case
+    # where it has not caught up yet; pagein is the direction that actually
+    # moves under a model load on this machine.
+    info["pressure"] = bool(
+        level >= 2
+        or info.get("pageins_per_sec", 0) > 5000
+        or info.get("pageouts_per_sec", 0) > 2000
+    )
     return info
 
 

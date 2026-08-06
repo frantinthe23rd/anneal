@@ -61,15 +61,26 @@ from 4 GB to 17 GB; stopping it hands all of that back. The cost is a ~3–4 min
 cold start for music (~30–60 s for images) after an idle period or an eviction.
 Speech and chat are light enough to stay resident alongside either.
 
-**A large swap file here is normal, not a problem.** This machine routinely runs
-a model whose footprint exceeds physical RAM. macOS pages it out once and then
-sits at roughly one pageout per second, with
-`kern.memorystatus_vm_pressure_level` reporting *normal* — and in use it is
-genuinely indistinguishable from having the memory. Anneal originally warned on
-swap *volume*, which meant warning during ordinary operation; a warning that
-fires when nothing is wrong just teaches you to ignore the one that matters. It
-now reports the kernel's own pressure level and the pageout *rate*, and only
-raises the host chip when one of those says something is actually wrong.
+**On swap.** Idle, a large swap file costs nothing: pageouts sit near one per
+second and the kernel reports *normal*. Under an actual music generation it is
+different — measured with `./monitor.py` across a 5-minute run:
+
+```
+peak pagein/s 9025   peak pageout/s 32   min free 1421M   worst pressure warning
+```
+
+Pageout stays near zero while **pagein** hits thousands per second: the working
+set is larger than RAM and is being continuously re-read from swap, not newly
+written to it. That is ~140 MB/s, which an Apple NVMe absorbs without the
+machine feeling any different — which is exactly why it *seems* free. But the
+kernel does report warning and occasionally critical, and the headroom is real:
+a second large model would not fit alongside it.
+
+So both things are true. It works fine, and it is genuinely tight. Anneal
+reports `pressure_level` from the kernel plus both paging rates, and only raises
+the host chip when the kernel says so — not merely because swap is large.
+
+Run `./monitor.py` during a generation to see it for yourself.
 
 **Measure with `phys_footprint`, never RSS.** MLX allocates through Metal, which
 `ps` does not attribute to the process — a backend genuinely holding 21 GB
