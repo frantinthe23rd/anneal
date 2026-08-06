@@ -491,7 +491,10 @@ async function httpError(res) {
 }
 
 /* ----------------------------------------------------------- forge status */
-const SERVICES = ["music", "speech", "image"];
+// Order matches the tabs. `text` backs both the Chat tab and the lyric writer,
+// so it needs a pill like the rest — it is a real backend holding real memory.
+const SERVICES = ["music", "speech", "text", "image"];
+const SERVICE_FOR_MODE = { music: "music", speech: "speech", image: "image", chat: "text" };
 let health = {};
 
 async function refreshHealth() {
@@ -520,9 +523,13 @@ function renderForge() {
   SERVICES.forEach((name) => {
     const s = health[name] || {};
     const state = s.state || (s.running ? "hot" : "cold");
-    const chip = el("div", "svc " + state + (busy && name === mode ? " working" : ""));
+    // Lyric writing runs on `text` from the Music tab, so track the service
+    // doing the work rather than the tab that started it.
+    const activeService = writing ? "text" : (chatting ? "text" : SERVICE_FOR_MODE[mode]);
+    const isWorking = (busy || writing || chatting) && name === activeService;
+    const chip = el("div", "svc " + state + (isWorking ? " working" : ""));
     chip.appendChild(el("span", "dot"));
-    chip.appendChild(el("span", "nm", name));
+    chip.appendChild(el("span", "nm", name === "text" ? "chat" : name));
 
     // Once hot, the size is the useful number; while heating, say so instead —
     // a part-loaded model's footprint is meaningless and looks like a fault.
@@ -530,10 +537,11 @@ function renderForge() {
     if (state === "hot" && s.memory_mb) detail = fmtMem(s.memory_mb);
     chip.appendChild(el("span", "st", detail));
 
+    const label = name === "text" ? "chat/lyrics (Gemma)" : name;
     chip.title = {
-      cold: `${name} is cold — the first request pays the full model load.`,
-      heating: `${name} is loading its weights. It can't generate yet.`,
-      hot: `${name} is loaded and ready${s.memory_mb ? " — holding " + fmtMem(s.memory_mb) : ""}. Unloads after ${s.idle_timeout_seconds}s idle.`,
+      cold: `${label} is cold — the first request pays the full model load.`,
+      heating: `${label} is loading its weights. It can't generate yet.`,
+      hot: `${label} is loaded and ready${s.memory_mb ? " — holding " + fmtMem(s.memory_mb) : ""}. Unloads after ${s.idle_timeout_seconds}s idle.`,
     }[state];
     box.appendChild(chip);
   });
@@ -974,6 +982,7 @@ async function writeLyrics() {
     "Two verses and a chorus is plenty. Output only the lyrics — no title, no commentary.";
 
   writing = new AbortController();
+  renderForge();
   btn.classList.add("on"); btn.textContent = "Stop";
   const before = box.value;
   box.value = "";
@@ -1025,6 +1034,7 @@ async function writeLyrics() {
   } finally {
     writing = null;
     btn.classList.remove("on"); btn.textContent = "Write for me";
+    renderForge();
   }
 }
 
@@ -1067,6 +1077,7 @@ async function runChat() {
   renderChat();
 
   chatting = new AbortController();
+  renderForge();
   const showThinking = $("cThink").checked;
   try {
     const res = await fetch("/v1/chat/completions", {
@@ -1117,7 +1128,8 @@ async function runChat() {
     renderChat();
   } finally {
     chatting = null;
-    $("go").textContent = "Forge";
+    $("go").textContent = mode === "chat" ? "Send" : "Forge";
+    renderForge();
   }
 }
 

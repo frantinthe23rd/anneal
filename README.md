@@ -105,10 +105,13 @@ still asks for the key. Using the tailnet address on the host itself avoids
 that.
 
 - **Music / Speech / Image** tabs, prompt box, and the options that matter per mode.
-- **Forge strip** in the header shows each model as **cold**, **heating** or
-  **hot**, with its true footprint once loaded — updated from `/health`, which
-  never wakes anything. "Heating" matters: the process answers long before the
-  weights are in, and reporting that as ready was actively misleading.
+- **Forge strip** in the header shows all four models — music, speech, chat and
+  image — as **cold**, **heating** or **hot**, with the true footprint once
+  loaded. Updated from `/health`, which never wakes anything. "Heating" matters:
+  the process answers long before the weights are in, and reporting that as
+  ready was actively misleading. The pill pulses for whichever service is
+  actually working, which is not always the tab you're on — the lyric writer
+  runs on the chat model from the Music tab.
 - A **host** chip appears when the machine is short on memory or swapping hard,
   which on 16 GB is the usual reason a job crawls or dies.
 - Cold-start warnings appear *before* you commit to a slow request, so a 4-minute
