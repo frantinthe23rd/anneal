@@ -27,7 +27,10 @@ and `outputs.py` are durability and the library. Backends: `speech_server.py`,
 ```
 
 **`ui.html` is read from disk per request — UI changes need no restart.** Any
-change to `supervisor.py`, `services.py` or `builder.py` does. Forgetting this
+change to `supervisor.py`, `services.py` or `builder.py` does. `assets/` is
+served by the gateway (backdrop, favicon, and the two vendored browser
+libraries in `assets/vendor/`) so the page fetches nothing externally; adding a
+new file type there means touching the content-type map in `supervisor.py`. Forgetting this
 has repeatedly produced "my fix didn't work" when the old module was still
 loaded; if behaviour doesn't match the code, check the process start time first.
 

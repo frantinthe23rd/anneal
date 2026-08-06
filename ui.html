@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Anneal</title>
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="mask-icon" href="/assets/favicon.svg" color="#ff5f1f">
+<meta name="theme-color" content="#100d0c">
+<meta name="description" content="Local, on-demand generation — music, speech, images and text on one machine, usable by hand or over its API.">
 <style>
 /* ---------------------------------------------------------------- palette
    Committed dark. A forge is dark; the heat is the only light source, so the
@@ -14,6 +18,7 @@
   --surface-2: #221d1a;
   --line:      #302825;
   --text:      #ece4dc;
+  --read:      #d2c6ba;   /* long-form body copy: a step back from --text */
   --muted:     #948477;
   --faint:     #6b5d53;
 
@@ -59,19 +64,25 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 }
 
 /* ------------------------------------------------------------------ hero */
+/* The front door scrolls: there is more to say here than fits a short window,
+   and a scrim baked into the background rather than an ::after overlay means
+   the type stays readable however far down the plate you are. */
 .hero {
-  position: fixed; inset: 0; z-index: 40; display: flex; flex-direction: column;
-  justify-content: center; padding: 6vh 7vw; overflow: hidden;
-  background: #0b0908 url("/assets/hero.jpg") center/cover no-repeat;
+  position: fixed; inset: 0; z-index: 40; display: block; padding: 6vh 7vw;
+  overflow-y: auto; overscroll-behavior: contain;
+  background-color: #0b0908;
+  background-image:
+    linear-gradient(105deg, rgba(11,9,8,.58) 0%, rgba(11,9,8,.80) 42%, rgba(11,9,8,.95) 100%),
+    url("/assets/hero.jpg");
+  background-size: cover, cover; background-position: center, center;
+  background-repeat: no-repeat, no-repeat;
   opacity: 1; transition: opacity var(--t-slow) var(--ease), transform var(--t-slow) var(--ease);
 }
-/* Scrim so type stays readable over the brightest part of the plate. */
-.hero::after {
-  content: ""; position: absolute; inset: 0; pointer-events: none;
-  background: linear-gradient(105deg, rgba(11,9,8,.55) 0%, rgba(11,9,8,.78) 42%, rgba(11,9,8,.94) 100%);
-}
 .hero.gone { opacity: 0; transform: scale(1.03); pointer-events: none; }
-.hero > * { position: relative; z-index: 1; }
+/* min-height rather than centring the container: with tall content, centring a
+   flex child puts its top out of reach of the scrollbar. */
+.hero .hin { position: relative; z-index: 1; min-height: 100%;
+  display: flex; flex-direction: column; justify-content: center; }
 .hero h1 {
   margin: 0; font-size: clamp(38px, 7vw, 76px); font-weight: 600; letter-spacing: .16em;
   text-transform: uppercase; line-height: 1;
@@ -100,10 +111,24 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   background: rgba(34,29,26,.85); }
 .hero .card .k { display: block; font-size: 15px; font-weight: 600; margin-bottom: 4px; }
 .hero .card .d { color: var(--muted); font-size: 12.5px; line-height: 1.45; }
-.hero .foot { margin-top: 30px; color: var(--faint); font-size: 12px; display: flex; gap: 16px;
-  flex-wrap: wrap; animation: rise var(--t-slow) var(--ease) both .28s; }
+/* Two ways in. The API half is not an afterthought — it is why this exists —
+   so it gets equal weight on the page rather than a link in the footer. */
+.hero .ways { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 30px; max-width: 900px;
+  animation: rise var(--t-slow) var(--ease) both .26s; }
+.hero .way { flex: 1 1 320px; padding: 2px 0 2px 15px; border-left: 2px solid rgba(255,95,31,.45); }
+.hero .way .k { display: block; font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--heat-2); margin-bottom: 6px; }
+.hero .way .d { color: var(--muted); font-size: 13px; line-height: 1.6; }
+.hero .way .d b { color: var(--text); font-weight: 600; }
+.hero .way .d a { color: var(--muted); text-decoration: underline; text-underline-offset: 2px;
+  text-decoration-color: rgba(255,95,31,.5); }
+.hero .way .d a:hover { color: var(--heat-2); }
+.hero .foot { margin-top: 32px; color: var(--faint); font-size: 12px; display: flex; gap: 16px;
+  flex-wrap: wrap; align-items: baseline; animation: rise var(--t-slow) var(--ease) both .32s; }
 .hero .foot a { color: var(--faint); }
 .hero .foot a:hover { color: var(--heat-2); }
+.hero .foot .by { margin-left: auto; }
+@media (max-width: 700px) { .hero .foot .by { margin-left: 0; } }
 @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
 
 .wrap { animation: fade var(--t-med) var(--ease) both; }
@@ -161,9 +186,10 @@ header {
 .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
 
 /* ---------------------------------------------------------------- tabs */
-.tabs { display: flex; padding: 5px; gap: 4px; border-bottom: 1px solid var(--line); }
+.modebar { margin-bottom: 16px; }
+.tabs { display: flex; padding: 5px; gap: 4px; }
 .tab {
-  flex: 1; padding: 9px 6px; border: 0; background: transparent; color: var(--muted);
+  flex: 1; padding: 10px 6px; border: 0; background: transparent; color: var(--muted);
   border-radius: 7px; font-size: 13px; letter-spacing: .04em; transition: background .15s, color .15s;
 }
 .tab:hover { color: var(--text); }
@@ -262,7 +288,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .empty svg { opacity: .3; margin-bottom: 14px; }
 .empty p { margin: 0; font-size: 13.5px; }
 
-.items { padding: 14px; display: flex; flex-direction: column; gap: 14px; max-height: calc(100vh - 210px); overflow-y: auto; }
+.items { padding: 14px; display: flex; flex-direction: column; gap: 14px; max-height: calc(100vh - 260px); overflow-y: auto; }
 .item { background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px; padding: 14px; }
 .item.pending { border-style: dashed; }
 .item .top { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
@@ -287,6 +313,9 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .msg .who { display: block; color: var(--muted); font-size: 10.5px; letter-spacing: .1em;
   text-transform: uppercase; margin-bottom: 6px; }
 .msg .body { white-space: pre-wrap; word-break: break-word; font-size: 14px; }
+/* Rendered Markdown brings its own block structure — pre-wrap on top of it
+   turns every source newline into a visible blank line. */
+.msg .body.md { white-space: normal; }
 .msg .think { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line);
   color: var(--faint); font-size: 12.5px; white-space: pre-wrap; }
 .album { background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
@@ -354,6 +383,160 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
   max-height: 220px; overflow-y: auto; }
 .item .err { color: #f0a49c; font-size: 12.5px; font-family: var(--mono); word-break: break-word; }
 
+/* ---------------------------------------------------------------- subnav
+   Studio is the application; the other three are reading. Same underline the
+   mode tabs use, so "which page am I on" and "which mode am I in" look like
+   the same kind of answer. */
+.subnav { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin: -8px 0 22px; }
+.subnav button {
+  border: 0; background: transparent; color: var(--muted); padding: 7px 13px;
+  border-radius: 8px; font-size: 13px; letter-spacing: .03em;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.subnav button:hover { color: var(--text); background: var(--surface); }
+.subnav button.on { color: var(--text); background: var(--surface);
+  box-shadow: inset 0 -2px 0 var(--heat-1); }
+.subnav .rule { flex: 1; height: 1px; margin: 0 6px;
+  background: linear-gradient(90deg, var(--line), transparent); }
+
+/* ------------------------------------------------------------- doc pages
+   Long-form. Same materials as the rest — surface, line, heat — at reading
+   width, with the front door's plate reused as a banner so a page you arrive
+   at from the header still feels like the same place. */
+.doc { max-width: 880px; animation: panel var(--t-med) var(--ease) both; }
+.doc .banner {
+  position: relative; overflow: hidden; padding: 34px 32px; margin-bottom: 30px;
+  border: 1px solid var(--line); border-radius: 12px;
+  background-color: #0b0908;
+  background-image:
+    linear-gradient(100deg, rgba(11,9,8,.62) 0%, rgba(11,9,8,.86) 55%, rgba(11,9,8,.96) 100%),
+    url("/assets/hero.jpg");
+  background-size: cover, cover; background-position: center, center 40%;
+  background-repeat: no-repeat, no-repeat;
+}
+.eyebrow { color: var(--heat-2); font-size: 11px; letter-spacing: .18em; text-transform: uppercase; }
+.doc .banner h2 {
+  margin: 10px 0 0; font-size: clamp(26px, 4.4vw, 40px); font-weight: 600; letter-spacing: .05em;
+  line-height: 1.05; text-transform: uppercase;
+  background: linear-gradient(96deg, var(--heat-2), var(--heat-1) 62%, #b8431a);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.doc .banner p { margin: 14px 0 0; max-width: 54ch; font-size: 15px; color: var(--text); }
+.doc section { margin: 0 0 34px; }
+.doc h3 {
+  margin: 0 0 12px; font-size: 12px; letter-spacing: .13em; text-transform: uppercase;
+  color: var(--muted); font-weight: 600; padding-bottom: 9px;
+  border-bottom: 1px solid var(--line);
+}
+.doc h4 { margin: 22px 0 8px; font-size: 14.5px; font-weight: 600; color: var(--text); }
+.doc p { margin: 0 0 13px; color: var(--read); font-size: 14.5px; line-height: 1.65; }
+.doc ul, .doc ol { margin: 0 0 13px; padding-left: 20px; color: var(--read);
+  font-size: 14.5px; line-height: 1.65; }
+.doc li { margin-bottom: 6px; }
+.doc li::marker { color: var(--faint); }
+.doc b, .doc strong { color: var(--text); font-weight: 600; }
+.doc a { color: var(--heat-2); text-decoration: none; border-bottom: 1px solid rgba(255,176,58,.3); }
+.doc a:hover { border-bottom-color: var(--heat-2); }
+.doc code { font-family: var(--mono); font-size: 12.5px; color: var(--heat-2);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+.doc .cb { position: relative; margin: 0 0 14px; }
+.doc pre { margin: 0; padding: 14px 15px; background: var(--bg); border: 1px solid var(--line);
+  border-radius: 9px; overflow-x: auto; font-family: var(--mono); font-size: 12.5px;
+  line-height: 1.55; color: var(--muted); }
+.doc pre code { background: none; border: 0; padding: 0; color: inherit; font-size: inherit; }
+.cbcopy { position: absolute; top: 8px; right: 8px; opacity: 0; border: 1px solid var(--line);
+  background: var(--surface); color: var(--muted); border-radius: 6px; padding: 3px 9px; font-size: 11px;
+  transition: opacity var(--t-fast), color var(--t-fast), border-color var(--t-fast); }
+.doc .cb:hover .cbcopy, .cbcopy:focus-visible { opacity: 1; }
+.cbcopy:hover { color: var(--heat-2); border-color: rgba(255,95,31,.45); }
+.doc table { width: 100%; border-collapse: collapse; margin: 0 0 14px; font-size: 13.5px; }
+.doc th, .doc td { text-align: left; padding: 8px 12px 8px 0; border-bottom: 1px solid var(--line);
+  vertical-align: top; color: var(--read); }
+.doc th { color: var(--muted); font-size: 11px; letter-spacing: .09em; text-transform: uppercase;
+  font-weight: 600; }
+.doc td code { white-space: nowrap; }
+.doc .tw { overflow-x: auto; }
+/* Callout: the thing that costs time if you don't know it. */
+.note { border-left: 2px solid var(--heat-1); background: rgba(255,95,31,.05);
+  border-radius: 0 8px 8px 0; padding: 12px 16px; margin: 0 0 16px; }
+.note p:last-child { margin-bottom: 0; }
+.note .k { display: block; color: var(--heat-2); font-size: 11px; letter-spacing: .14em;
+  text-transform: uppercase; margin-bottom: 5px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); gap: 12px;
+  margin: 0 0 16px; }
+.tile { border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2);
+  padding: 15px 16px; }
+.tile .k { display: block; font-size: 14px; font-weight: 600; margin-bottom: 5px; }
+.tile .d { color: var(--muted); font-size: 12.5px; line-height: 1.55; }
+.tile .d b { color: var(--text); }
+/* Credit rows: name, what it does, licence. */
+.credit { display: grid; grid-template-columns: minmax(140px, 220px) 1fr max-content; gap: 4px 18px;
+  padding: 11px 0; border-bottom: 1px solid var(--line); align-items: baseline; font-size: 13.5px; }
+.credit .n { color: var(--text); font-weight: 600; }
+.credit .w { color: var(--muted); font-size: 13px; }
+.credit .l { color: var(--faint); font-family: var(--mono); font-size: 11.5px; white-space: nowrap; }
+@media (max-width: 640px) { .credit { grid-template-columns: 1fr; } .credit .l { margin-top: 2px; } }
+
+/* ---------------------------------------------------------------- footer */
+.sitefoot { margin-top: 46px; padding-top: 18px; border-top: 1px solid var(--line);
+  display: flex; gap: 8px 20px; flex-wrap: wrap; align-items: baseline;
+  color: var(--faint); font-size: 12px; }
+.sitefoot b { color: var(--muted); font-weight: 600; }
+.sitefoot nav { margin-left: auto; display: flex; gap: 16px; flex-wrap: wrap; }
+.sitefoot a { color: var(--faint); text-decoration: none; }
+.sitefoot a:hover { color: var(--heat-2); }
+.sitefoot button { border: 0; background: none; color: var(--faint); font-size: 12px; padding: 0; }
+.sitefoot button:hover { color: var(--heat-2); }
+@media (max-width: 700px) { .sitefoot nav { margin-left: 0; } }
+
+/* ------------------------------------------------------------------ chat
+   A conversation is not a form with an output panel: the transcript is the
+   page and the composer sits under it, where every chat interface has taught
+   people to look. */
+.chatview { display: flex; flex-direction: column; gap: 12px; }
+.chatview .log { display: flex; flex-direction: column; min-height: 0; }
+.chatview .loghead { display: flex; align-items: center; gap: 12px; padding: 13px 18px;
+  border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.chatview .loghead h2 { margin: 0; font-size: 12px; letter-spacing: .11em; text-transform: uppercase;
+  color: var(--muted); font-weight: 600; }
+.chatview .loghead .sp { margin-left: auto; }
+#chatitems { max-height: none; height: clamp(300px, calc(100vh - 400px), 900px); overflow-y: auto; }
+.composer { padding: 12px; }
+.composer textarea { min-height: 58px; max-height: 260px; resize: none; overflow-y: auto; }
+.composer .row { margin-top: 10px; gap: 12px; flex-wrap: wrap; }
+.composer .send { margin: 0 0 0 auto; width: auto; padding: 10px 22px; }
+.composer .hint { margin: 0; }
+.composer .check { font-size: 12.5px; }
+/* Markdown, rendered. Kept close to the transcript's own scale so a reply with
+   a heading in it doesn't shout. */
+.msg .body h1, .msg .body h2, .msg .body h3, .msg .body h4 {
+  margin: 14px 0 7px; font-size: 14.5px; font-weight: 650; letter-spacing: .01em; }
+.msg .body h1:first-child, .msg .body h2:first-child, .msg .body h3:first-child { margin-top: 0; }
+.msg .body p { margin: 0 0 10px; }
+.msg .body > *:last-child { margin-bottom: 0; }
+.msg .body ul, .msg .body ol { margin: 0 0 10px; padding-left: 22px; }
+.msg .body li { margin-bottom: 4px; }
+.msg .body li::marker { color: var(--faint); }
+.msg .body code { font-family: var(--mono); font-size: 12.5px; color: var(--heat-2);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; }
+.msg .body pre { margin: 0 0 10px; padding: 12px 13px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; }
+.msg .body pre code { border: 0; padding: 0; background: none; color: var(--muted);
+  font-size: 12.5px; line-height: 1.5; }
+.msg .body blockquote { margin: 0 0 10px; padding-left: 13px; border-left: 2px solid var(--line);
+  color: var(--muted); }
+.msg .body a { color: var(--heat-2); }
+.msg .body table { border-collapse: collapse; margin: 0 0 10px; font-size: 13px; display: block;
+  overflow-x: auto; }
+.msg .body th, .msg .body td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; }
+.msg .body th { color: var(--muted); font-weight: 600; }
+.msg .body hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
+.msg .body img { max-width: 100%; border-radius: 7px; }
+/* The caret, so a streaming reply looks alive between tokens. */
+.msg .body .caret { display: inline-block; width: 7px; height: 15px; margin-left: 2px;
+  background: var(--heat-1); vertical-align: -2px; animation: blink 1s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
 /* ---------------------------------------------------------------- key gate */
 .gate { position: fixed; inset: 0; background: rgba(10,8,7,.9); display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 50; }
 .gate .box { width: 100%; max-width: 440px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 26px; }
@@ -367,26 +550,28 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 <body>
 
 <div class="hero" id="hero">
+ <div class="hin">
   <h1>Anneal</h1>
   <p class="lede">Music, speech, images and text — generated <b>entirely on this machine</b>.
      Nothing you write or make leaves it.</p>
-  <p class="sub">Models heat up when you ask and cool down when you stop, because on 16 GB
-     that is the only way they all fit.</p>
+  <p class="sub">Four models share 16 GB by taking turns: each one heats up when you ask for it
+     and cools down when you stop, which is the only way they all fit. The strip below is the
+     truth about what is warm right now.</p>
 
   <div class="strip" id="heroStrip"></div>
 
   <div class="cards">
     <div class="card" data-go="press">
       <span class="k">Press</span>
-      <span class="d">One brief becomes a single or an album — lyrics, music and cover.</span>
+      <span class="d">One brief becomes a single or an album — title, lyrics, music and cover.</span>
     </div>
     <div class="card" data-go="music">
       <span class="k">Music</span>
-      <span class="d">A track from a description, with or without vocals.</span>
+      <span class="d">A track from a description, with or without vocals. Up to ten minutes.</span>
     </div>
     <div class="card" data-go="speech">
       <span class="k">Speech</span>
-      <span class="d">28 voices, about a second a sentence.</span>
+      <span class="d">28 voices, about a second a sentence. Fast enough to use in a loop.</span>
     </div>
     <div class="card" data-go="image">
       <span class="k">Image</span>
@@ -394,16 +579,39 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
     </div>
     <div class="card" data-go="chat">
       <span class="k">Chat</span>
-      <span class="d">A local language model, streamed.</span>
+      <span class="d">A local language model, streamed — and the thing that writes the lyrics.</span>
+    </div>
+  </div>
+
+  <div class="ways">
+    <div class="way">
+      <span class="k">By hand</span>
+      <span class="d">Pick a mode, write a line, press Forge. The interface tells you what a
+        request will cost before you commit to it — a cold music model is minutes, not seconds —
+        and everything you make is kept, with the settings that produced it.
+        <a href="#" data-page-link="guide">Read the guide</a>.</span>
+    </div>
+    <div class="way">
+      <span class="k">By API, or by agent</span>
+      <span class="d">One HTTP gateway with an OpenAPI spec and an <b>MCP server</b>, so a build
+        script — or a coding agent like Claude Code — can score a game, voice a demo or draw its
+        own artwork without a hosted service in the loop. That was the original point;
+        <b>Press</b> came out of how well the music worked.
+        <a href="#" data-page-link="api">See the API</a>.</span>
     </div>
   </div>
 
   <div class="foot">
+    <a href="#" data-page-link="guide">Guide</a>
+    <a href="#" data-page-link="api">API</a>
+    <a href="#" data-page-link="about">About</a>
     <a href="#" id="heroLib">Library</a>
-    <a href="/docs" target="_blank">API</a>
+    <a href="/docs" target="_blank">OpenAPI</a>
     <a href="#" id="heroSet">Settings</a>
     <span id="heroWho"></span>
+    <span class="by">Built by Jon Moseley</span>
   </div>
+ </div>
 </div>
 
 <div class="wrap">
@@ -415,21 +623,34 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
     <div class="forge" id="forge"></div>
     <span class="who" id="whoami" hidden></span>
     <button class="iconbtn" id="btnSettings" title="Settings">Settings</button>
-    <button class="iconbtn" id="btnDocs" title="OpenAPI documentation">API</button>
+    <button class="iconbtn" id="btnDocs" title="Swagger UI over this server's OpenAPI spec">OpenAPI</button>
     <button class="iconbtn" id="btnKey" title="Set an API key (only needed off the tailnet)">Key</button>
   </header>
 
-  <div class="cols">
+  <nav class="subnav" id="subnav">
+    <button data-page="studio" class="on">Studio</button>
+    <button data-page="guide">Guide</button>
+    <button data-page="api">API</button>
+    <button data-page="about">About</button>
+    <span class="rule"></span>
+  </nav>
+
+  <!-- The mode is a top-level choice, not part of the controls column: Chat
+       replaces that column entirely, and a tab bar you can't get back to is
+       a trap. -->
+  <div class="panel modebar" id="modebar">
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" data-mode="music"  aria-selected="true">Music</button>
+      <button class="tab" role="tab" data-mode="speech" aria-selected="false">Speech</button>
+      <button class="tab" role="tab" data-mode="image"  aria-selected="false">Image</button>
+      <button class="tab" role="tab" data-mode="chat"   aria-selected="false">Chat</button>
+      <button class="tab" role="tab" data-mode="press"  aria-selected="false">Press</button>
+    </div>
+  </div>
+
+  <div class="cols" id="cols">
     <!-- ------------------------------------------------------ controls -->
     <div class="panel">
-      <div class="tabs" role="tablist">
-        <button class="tab" role="tab" data-mode="music"  aria-selected="true">Music</button>
-        <button class="tab" role="tab" data-mode="speech" aria-selected="false">Speech</button>
-        <button class="tab" role="tab" data-mode="image"  aria-selected="false">Image</button>
-        <button class="tab" role="tab" data-mode="chat"   aria-selected="false">Chat</button>
-        <button class="tab" role="tab" data-mode="press"  aria-selected="false">Press</button>
-      </div>
-
       <div class="pad">
         <!-- MUSIC -->
         <section data-panel="music">
@@ -542,21 +763,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
           <div class="hint">Schnell is distilled for 4 steps — more mostly costs time. Smaller sizes are proportionally faster.</div>
         </section>
 
-        <!-- CHAT -->
-        <section data-panel="chat" class="hidden">
-          <label class="f" for="cInput">Message</label>
-          <textarea id="cInput" placeholder="Ask anything — it runs on the local Gemma model."></textarea>
-          <div class="field">
-            <label class="check"><input type="checkbox" id="cThink">
-              Show reasoning — slower, but you see how it got there</label>
-            <div class="hint">Gemma 4 reasons before answering. Off by default: with it on, short
-              replies can spend their whole budget thinking.</div>
-          </div>
-          <div class="field row">
-            <button class="iconbtn" id="cClear">New conversation</button>
-            <span class="hint" id="cTurns" style="margin:0"></span>
-          </div>
-        </section>
+        <!-- CHAT lives in its own full-width layout below, not in this column. -->
 
         <!-- PRESS -->
         <section data-panel="press" class="hidden">
@@ -623,7 +830,6 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
       </div>
       <div class="items hidden" id="albums" style="padding:14px 14px 0"></div>
       <div class="items hidden" id="libitems"></div>
-      <div class="items hidden" id="chatitems"></div>
       <div id="empty" class="empty">
         <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
           <path d="M3 15h13l3-4h2M5 15v4h9v-4M7 11l2-6h4l-1 6"/>
@@ -633,6 +839,467 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
       <div class="items hidden" id="items"></div>
     </div>
   </div>
+
+  <!-- ------------------------------------------------------------ chat -->
+  <div class="chatview hidden" id="chatview">
+    <div class="panel log">
+      <div class="loghead">
+        <h2>Conversation</h2>
+        <span class="hint" id="cTurns" style="margin:0"></span>
+        <span class="sp"></span>
+        <label class="check" title="Gemma reasons before answering. With this on, a short reply can spend its whole budget thinking.">
+          <input type="checkbox" id="cThink"> Show reasoning</label>
+        <button class="iconbtn" id="cClear">New conversation</button>
+      </div>
+      <div class="items" id="chatitems"></div>
+    </div>
+    <div class="panel composer">
+      <textarea id="cInput" rows="2"
+        placeholder="Ask anything — it runs on the local Gemma model, and nothing you type leaves this machine."></textarea>
+      <div class="row">
+        <span class="hint">Enter sends · Shift+Enter for a new line · replies render as Markdown</span>
+        <button class="go send" id="cSend">Send</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ----------------------------------------------------------- guide -->
+  <div class="doc hidden" id="pageGuide">
+    <div class="banner">
+      <span class="eyebrow">Instructions</span>
+      <h2>Using Anneal</h2>
+      <p>Five modes, one machine, and one rule underneath all of it: only one large model
+         can be in memory at a time. Everything below follows from that.</p>
+    </div>
+
+    <section>
+      <h3>Start here — what the strip is telling you</h3>
+      <p>The pills in the header are the four models: <b>music</b>, <b>speech</b>, <b>chat</b> and
+         <b>image</b>. Each is <b>cold</b> (not loaded, no memory), <b>heating</b> (starting — the
+         process answers long before the weights are in) or <b>hot</b>, with its real memory
+         footprint once loaded.</p>
+      <p>Music and image are heavy and mutually exclusive: asking for an image while the music
+         model is loaded <b>evicts</b> it, and the next music request pays the load again. Speech
+         and chat are small enough to sit alongside either.</p>
+      <div class="tw"><table>
+        <tr><th>Request</th><th>Cold</th><th>Already hot</th></tr>
+        <tr><td>Music, draft tier</td><td>3–4 min load, then ~70 s</td><td>~70 s for 30 s of audio</td></tr>
+        <tr><td>Music, high tier</td><td>3–4 min load, then ~3 min</td><td>~3 min</td></tr>
+        <tr><td>Image</td><td>30–60 s load, then seconds</td><td>seconds</td></tr>
+        <tr><td>Speech</td><td>a few seconds</td><td>about a second a sentence</td></tr>
+        <tr><td>Chat</td><td>~20 s</td><td>streams immediately</td></tr>
+      </table></div>
+      <p>Anneal warns you <em>before</em> a slow request rather than after, and each model unloads
+         itself once it has been idle for a while — ten minutes for music, five for chat. A <b>host</b>
+         pill appears when the machine is genuinely short of memory, which on 16 GB is the usual
+         reason a job crawls.</p>
+      <div class="note">
+        <span class="k">If a request is refused</span>
+        <p>A <code>409</code> means the other heavy model is mid-job. Anneal offers to stop it and
+           retry rather than just failing — take the offer, or wait for the job to finish.</p>
+      </div>
+    </section>
+
+    <section>
+      <h3>Press — a brief becomes a record</h3>
+      <p>Write what you want the record to be: <em>“a short winter album about leaving a coastal
+         town, folk with strings”</em>. Press plans a title, an artist name and a tracklist with
+         varied lengths, writes lyrics for each track, generates the music, and paints a cover.</p>
+      <ul>
+        <li><b>Tracks</b> 1–8. One track is a single and takes a few minutes; eight is most of an
+            hour. The stages are deliberately ordered — all the writing, then all the music, then
+            the cover — so each heavy model loads exactly once however many tracks you ask for.</li>
+        <li><b>Typical length</b> is a target, not a rule: the planner varies around it, with
+            shorter openers and longer centrepieces.</li>
+        <li><b>Instrumental</b> skips the lyric stage entirely.</li>
+        <li><b>Cover art</b> is the only stage that needs the image model, so it runs last.</li>
+      </ul>
+      <p>A press outlives the browser. Close the tab and it keeps going; the record appears in the
+         Library as something you can play through, with a <b>Download</b> that returns the whole
+         thing as a zip — audio, cover and tracklist. The masters are FLAC, so asking for MP3
+         transcodes from the original rather than from another lossy copy.</p>
+      <p>If the gateway restarts mid-press, the record is marked <b>interrupted</b> rather than left
+         claiming to work. <b>Resume</b> keeps the finished tracks and redoes only what is missing.</p>
+    </section>
+
+    <section>
+      <h3>Music</h3>
+      <p>Describe the track as you would to a session player: genre, instruments, mood, production.
+         <em>“warm lo-fi hip hop with rhodes piano and vinyl crackle”</em> works; <em>“good song”</em>
+         does not.</p>
+      <ul>
+        <li><b>Vocals.</b> Instrumental by default. Choose <b>Write lyrics</b> and either type them or
+            press <b>Write for me</b>, which drafts from your style prompt using the chat model and
+            streams into the box. Click again to stop; your own text comes back if it fails.</li>
+        <li><b>Section tags</b> matter: <code>[verse]</code>, <code>[chorus]</code>,
+            <code>[bridge]</code>. They are what the model uses to build structure.</li>
+        <li><b>Takes</b> generates several variations from one request — cheaper than several
+            requests, because the model is already loaded.</li>
+        <li><b>Model.</b> <code>draft</code> is distilled for speed (8 steps). <code>high</code> is the
+            fine-tuned model at 50 steps: roughly twice the time, more high-frequency detail.
+            Whether it sounds better is a judgement for your ears. <b>Switching tiers restarts the
+            backend</b>, so the next request pays a cold load.</li>
+        <li><b>Planning pass</b> runs a small language model first to decide sections, key and
+            arrangement. About 30 s slower, usually better structured. Off, the model improvises
+            the whole take in one go.</li>
+        <li><b>BPM and key</b> are optional. Left blank, the planner picks them from your
+            description.</li>
+      </ul>
+      <div class="note">
+        <span class="k">Two things that surprise people</span>
+        <p><b>The bpm and key in a result are intent, not measurement.</b> They are what the planner
+           asked for, not an analysis of the audio — it can ask for 300 bpm on a take that plainly
+           sits near 100. Set them explicitly if you need them to mean something.</p>
+        <p><b>Generation is not deterministic</b>, even with a fixed seed, because the planner samples
+           at temperature. Two identical requests give two different tracks. Comparing takes tells
+           you about the takes, not about the settings.</p>
+      </div>
+    </section>
+
+    <section>
+      <h3>Speech, image and chat</h3>
+      <h4>Speech</h4>
+      <p>28 voices. The prefix is the accent and gender — <code>a</code> American, <code>b</code>
+         British, then <code>f</code> female or <code>m</code> male, so <code>bf_emma</code> is a
+         British woman and <code>am_michael</code> an American man. Speed runs 0.5×–2×. It is fast
+         enough to use in a loop, which is the point of it.</p>
+      <h4>Image</h4>
+      <p>FLUX schnell is distilled for four steps; more steps mostly cost time. Smaller sizes are
+         proportionally faster, so draft at 512 and commit at 1024 or above. The backdrop on the
+         front door was made here.</p>
+      <h4>Chat</h4>
+      <p>A plain conversation with the local Gemma model, streamed, with the transcript kept in your
+         browser rather than on the server. Replies render as Markdown. <b>Show reasoning</b> is off
+         by default: with it on, a short answer can spend its whole budget thinking before it says
+         anything. Enter sends, Shift+Enter starts a new line, and <b>New conversation</b> forgets
+         everything above.</p>
+    </section>
+
+    <section>
+      <h3>The Library</h3>
+      <p>Everything generated is saved on the server, whoever asked for it — the UI, a curl command
+         or an agent — under <code>outputs/</code>, named from the prompt and paired with a JSON
+         sidecar holding the settings that produced it. Sidecars rather than a database, so the
+         metadata travels with the file: copy the directory anywhere and it stays self-describing.</p>
+      <ul>
+        <li><b>Details</b> shows exactly what produced a file: every submitted parameter, the full
+            prompt and lyrics, which checkpoints ran, and the planned bpm and key labelled as
+            planned.</li>
+        <li><b>Reuse</b> loads those settings back into the form, so a good result becomes a
+            starting point.</li>
+        <li>Browsing the Library is served straight off disk and <b>wakes no model</b>.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h3>Small things worth knowing</h3>
+      <ul>
+        <li><b>Cmd/Ctrl+Enter</b> submits from any field in the studio.</li>
+        <li><b>Settings</b> holds your defaults for new work, a read-only view of the server's state,
+            and the API key. It shows rather than edits the server's configuration: a web page
+            should not be rewriting the gateway's environment.</li>
+        <li>Over the tailnet you are already signed in and never see a key prompt. On
+            <code>127.0.0.1</code> there is no identity to read, so it asks once.</li>
+        <li>The interface respects <b>prefers-reduced-motion</b> — every transition is switched off
+            in one place.</li>
+        <li>Nothing here calls out to the internet. The page's images, fonts and scripts all come
+            from this server.</li>
+      </ul>
+    </section>
+  </div>
+
+  <!-- ------------------------------------------------------------- api -->
+  <div class="doc hidden" id="pageApi">
+    <div class="banner">
+      <span class="eyebrow">For developers and agents</span>
+      <h2>The API</h2>
+      <p>Anneal is a service first. This interface is one client of it — everything you can do
+         here, a build script, a Makefile or a coding agent can do over HTTP.</p>
+    </div>
+
+    <section>
+      <h3>Why it works this way</h3>
+      <p>The original problem was not “I would like to make music”. It was that the things I was
+         building with coding agents kept needing assets that code cannot produce: a game with no
+         soundtrack, a demo with no voiceover, a UI with placeholder art. Hosted services can fill
+         that gap at the cost of an account, a key, a per-request bill and sending the work off the
+         machine.</p>
+      <p>So Anneal was an API before it was an interface: something a build could call to get a
+         piece of music, a line of speech or a piece of artwork back, on hardware already sitting on
+         the desk. <b>Press</b> exists because the music turned out to be the part that worked
+         best — good enough that “one call, one finished record” was worth building properly.</p>
+    </section>
+
+    <section>
+      <h3>Getting in</h3>
+      <p>This server answers at <code class="origin">__ORIGIN__</code>. Two ways to authenticate:</p>
+      <ul>
+        <li><b>Tailnet identity.</b> Over Tailscale, the proxy stamps who you are onto every request
+            and Anneal trusts it, because the only route to the port is that proxy. No key, no
+            login — this is how the browser is already signed in.</li>
+        <li><b>Bearer key</b> — <code>Authorization: Bearer $ANNEAL_KEY</code> — for programmatic
+            clients and for loopback, which carries no identity. The key lives in
+            <code>env.local.sh</code> on the host.</li>
+      </ul>
+      <p>Public without either: <code>/health</code>, <code>/supervisor/status</code>,
+         <code>/supervisor/auth</code>, <code>/docs</code>, <code>/openapi.json</code> and this page.
+         Everything else needs one of the two.</p>
+      <p>Every response has the same envelope. Check both — an HTTP 200 can still carry
+         <code>code: 500</code>.</p>
+      <div class="cb"><pre>{ "data": …, "code": 200, "error": null, "timestamp": 1785881567698 }</pre></div>
+    </section>
+
+    <section>
+      <h3>Music is a job, not a call</h3>
+      <p>Generation takes minutes, so it is submit-and-poll. Speech and images are ordinary
+         synchronous calls.</p>
+      <div class="cb"><pre data-origin>curl -X POST "__ORIGIN__/release_task" \
+  -H "Authorization: Bearer $ANNEAL_KEY" -H 'Content-Type: application/json' \
+  -d '{"prompt": "warm indie pop ballad, brushed drums",
+       "lyrics": "[verse]\nStreetlights blur into the rain",
+       "audio_duration": 45, "quality": "draft", "audio_format": "flac"}'
+# -> {"data": {"task_id": "42f580bc-…"}, "code": 200}
+
+curl -X POST "__ORIGIN__/query_result" \
+  -H "Authorization: Bearer $ANNEAL_KEY" -H 'Content-Type: application/json' \
+  -d '{"task_id_list": ["42f580bc-…"]}'
+# status 0 = queued or running, 1 = done, 2 = failed</pre></div>
+      <p>Poll every 3–5 seconds; there is no webhook. <code>result</code> is a JSON-encoded
+         <em>string</em> — parse it a second time — and decodes to a list, one entry per take. Each
+         entry's <code>file</code> field is already a complete request path including its query
+         string: append it to the base URL <b>as-is</b>, do not encode it again.</p>
+      <div class="note">
+        <span class="k">The two failure modes to code for</span>
+        <p>A <code>502</code> while polling means the backend was restarting — the poll failed, not
+           the job. <b>Retry the poll, never resubmit</b>, or you queue duplicate work behind the
+           original. A <code>409</code> on submit means the other heavy model is loaded; wait, or
+           stop it explicitly via <code>/supervisor/stop</code>.</p>
+      </div>
+    </section>
+
+    <section>
+      <h3>One call for a whole record</h3>
+      <div class="cb"><pre data-origin>curl -X POST "__ORIGIN__/v1/press" \
+  -H "Authorization: Bearer $ANNEAL_KEY" -H 'Content-Type: application/json' \
+  -d '{"prompt": "a short winter album about leaving a coastal town, folk with strings",
+       "tracks": 4, "duration": 120, "quality": "draft", "art": true}'
+# -> {"data": {"id": "…", "state": "planning"}}
+
+curl "__ORIGIN__/v1/press?id=…" -H "Authorization: Bearer $ANNEAL_KEY"
+curl -o record.zip "__ORIGIN__/v1/press/download?id=…&format=mp3&bitrate=320k" \
+  -H "Authorization: Bearer $ANNEAL_KEY"</pre></div>
+      <p>State runs planning → writing → recording → artwork → done. A press survives a gateway
+         restart: anything left mid-flight is marked <code>interrupted</code>, and
+         <code>POST /v1/press/resume</code> finishes it without redoing completed tracks.</p>
+    </section>
+
+    <section>
+      <h3>Speech and images, synchronously</h3>
+      <div class="cb"><pre data-origin>curl -X POST "__ORIGIN__/v1/audio/speech" \
+  -H "Authorization: Bearer $ANNEAL_KEY" -H 'Content-Type: application/json' \
+  -d '{"input": "Build finished.", "voice": "bf_emma", "response_format": "mp3"}' -o out.mp3
+
+curl -X POST "__ORIGIN__/v1/images/generations" \
+  -H "Authorization: Bearer $ANNEAL_KEY" -H 'Content-Type: application/json' \
+  -d '{"prompt": "a lighthouse in a storm, oil painting", "size": "1024x1024",
+       "response_format": "path"}'</pre></div>
+      <p>Ask for <code>path</code> rather than <code>b64_json</code> when the caller is on the same
+         machine or an agent: a megabyte of base64 in a response is a poor use of anyone's
+         context.</p>
+    </section>
+
+    <section>
+      <h3>Endpoints</h3>
+      <div class="tw"><table>
+        <tr><th>Method</th><th>Path</th><th>What it does</th></tr>
+        <tr><td><code>POST</code></td><td><code>/release_task</code></td><td>Submit a music job, get a task id</td></tr>
+        <tr><td><code>POST</code></td><td><code>/query_result</code></td><td>Poll one or more task ids</td></tr>
+        <tr><td><code>GET</code></td><td><code>/v1/audio</code></td><td>Download a generated take</td></tr>
+        <tr><td><code>POST</code></td><td><code>/v1/audio/speech</code></td><td>Speech, returns audio</td></tr>
+        <tr><td><code>GET</code></td><td><code>/v1/voices</code></td><td>Voice list (wakes the speech model)</td></tr>
+        <tr><td><code>POST</code></td><td><code>/v1/images/generations</code></td><td>Image, as a path or base64</td></tr>
+        <tr><td><code>POST</code></td><td><code>/v1/chat/completions</code></td><td>OpenAI-shaped chat, streaming</td></tr>
+        <tr><td><code>POST</code></td><td><code>/v1/text</code></td><td>One-shot completion</td></tr>
+        <tr><td><code>POST GET DELETE</code></td><td><code>/v1/press</code></td><td>Start, poll or remove a press</td></tr>
+        <tr><td><code>GET</code></td><td><code>/v1/press/download</code></td><td>The whole record as a zip</td></tr>
+        <tr><td><code>POST</code></td><td><code>/v1/press/resume</code></td><td>Finish an interrupted press</td></tr>
+        <tr><td><code>GET DELETE</code></td><td><code>/v1/outputs</code></td><td>The library, served off disk</td></tr>
+        <tr><td><code>GET</code></td><td><code>/v1/music/tiers</code></td><td>Which music model is loaded</td></tr>
+        <tr><td><code>GET</code></td><td><code>/health</code></td><td>What is hot, and host memory. Wakes nothing</td></tr>
+        <tr><td><code>POST</code></td><td><code>/supervisor/start</code> · <code>/stop</code></td><td>Pre-warm or unload deliberately</td></tr>
+      </table></div>
+      <p>The full spec, with every parameter and schema, is at
+         <a href="/openapi.json" target="_blank">/openapi.json</a> and browsable at
+         <a href="/docs" target="_blank">/docs</a>. The <code>servers</code> block is generated per
+         host, so it always advertises the machine actually serving it.</p>
+    </section>
+
+    <section>
+      <h3>As an MCP server</h3>
+      <p>Anneal ships an MCP server so an agent — Claude Code, or anything else that speaks MCP —
+         can use it as tools rather than as an HTTP API it has to be taught. It is stdlib-only, so
+         it needs no environment of its own.</p>
+      <div class="cb"><pre data-origin>{
+  "mcpServers": {
+    "anneal": {
+      "command": "/Users/jon/dev/AIMusic/mcp_server.py",
+      "env": { "ANNEAL_URL": "__ORIGIN__", "ANNEAL_KEY": "sk-aimusic-…" }
+    }
+  }
+}</pre></div>
+      <p>Tools: <code>service_status</code>, <code>prewarm</code>, <code>unload_models</code>,
+         <code>generate_music</code>, <code>check_music_job</code>, <code>generate_speech</code>,
+         <code>generate_image</code>.</p>
+      <p>Two choices in there are deliberate, and both are about agents rather than about music.
+         <b>Music submits and returns a job id</b> instead of blocking for minutes, with the tool
+         descriptions telling the agent not to resubmit a slow job. <b>Binary comes back as a file
+         path</b>, not base64, because a 1.3 MB PNG is about 1.7 MB of text in a tool result. The
+         cold-start cost is written into the tool descriptions for the same reason: an agent that
+         does not know a call takes four minutes will conclude it has hung.</p>
+    </section>
+
+    <section>
+      <h3>Going further</h3>
+      <p><code>INTEGRATION.md</code> in the repository covers what a spec cannot: cold-start
+         handling, the exact polling contract, reference clients in Python and TypeScript, expected
+         timings, and every failure mode worth handling.</p>
+    </section>
+  </div>
+
+  <!-- ----------------------------------------------------------- about -->
+  <div class="doc hidden" id="pageAbout">
+    <div class="banner">
+      <span class="eyebrow">About</span>
+      <h2>What this is</h2>
+      <p>A single machine that makes music, speech, images and text on demand, for anyone on the
+         tailnet and for anything that can make an HTTP request. Built by Jon Moseley.</p>
+    </div>
+
+    <section>
+      <h3>The idea</h3>
+      <p>Anneal started as plumbing. I was building things with coding agents, and the gap in what
+         they could produce was never the code — it was everything around it. A game with no music.
+         A demo with no voiceover. An interface with grey boxes where the artwork should be. All of
+         that is available from hosted services, at the cost of an account, a key, a bill per
+         request and your work leaving the building.</p>
+      <p>The concept was simple enough: put the generative models on hardware I already own, behind
+         one address, and let the development workflow call them directly. A build step that wants a
+         soundtrack asks for a soundtrack. An agent that wants a title card makes one. Nothing is
+         metered and nothing is uploaded.</p>
+      <p>The music was the part that worked far better than expected. What began as “a track from a
+         prompt” turned into <b>Press</b>: one brief becomes a title, an artist name, a tracklist,
+         lyrics, the finished audio and a cover, in a single call. That is the piece I did not plan
+         and use most.</p>
+      <p>The interface came last, and it exists for a reason the API cannot cover: judging a
+         generated take by reading JSON is miserable. You need to hear it, look at the cover, and
+         see what settings produced it. Both front doors talk to the same gateway — the browser has
+         no privileged path.</p>
+    </section>
+
+    <section>
+      <h3>Why “Anneal”</h3>
+      <p>Annealing is heating metal and letting it cool slowly, so it settles into a better state
+         than it started in. It is also, almost exactly, what this has to do with its models: 16 GB
+         of unified memory cannot hold them all, so each one is heated up on demand and allowed to
+         cool when the work stops. That constraint shapes everything — the ordering of Press's
+         stages, the eviction rules, the warnings before a slow request.</p>
+      <p>The palette follows the same idea. A forge is dark and the heat is the only light source,
+         so the orange is reserved for things that are genuinely hot or genuinely happening.
+         Nothing decorative is that colour. The plate behind the front door and this page was
+         generated by Anneal's own image model.</p>
+    </section>
+
+    <section>
+      <h3>Honesty about the machine</h3>
+      <p>It runs on a Mac mini M4 with 16 GB. That is genuinely tight for these models, and the
+         project's rule has been to measure rather than assert: paging rates during a real
+         generation, the kernel's own pressure level, actual memory footprints via
+         <code>phys_footprint</code> rather than the RSS figure that reports a 21 GB model as
+         120 MB.</p>
+      <p>The same applies to output. A spectral measurement moving in the direction you hoped is not
+         evidence a track improved — noise is broadband, and it moves those numbers too. Garbled
+         audio has shipped from here on exactly that reasoning. Numbers can catch catastrophe;
+         only listening can tell you it got better.</p>
+    </section>
+
+    <section>
+      <h3>Built on</h3>
+      <p>Anneal is a gateway and some glue. The hard parts are other people's work, running
+         locally and unmodified except for two documented patches to ACE-Step's non-turbo paths.</p>
+
+      <h4>Models</h4>
+      <div class="credit"><span class="n">ACE-Step 1.5</span>
+        <span class="w">Music: the diffusion transformer, the 5 Hz planning LM and the audio VAE.
+          Bundles Qwen3-Embedding-0.6B (Apache-2.0) as its text encoder.</span>
+        <span class="l">MIT</span></div>
+      <div class="credit"><span class="n">Kokoro-82M</span>
+        <span class="w">Speech, 28 voices. By hexgrad; MLX conversion by Prince Canuma.</span>
+        <span class="l">Apache-2.0</span></div>
+      <div class="credit"><span class="n">FLUX.1-schnell</span>
+        <span class="w">Images. By Black Forest Labs, run here as a 4-bit mflux quantisation.</span>
+        <span class="l">Apache-2.0</span></div>
+      <div class="credit"><span class="n">Gemma 4 E4B</span>
+        <span class="w">Text and lyrics. By Google DeepMind; 4-bit MLX conversion by the
+          mlx-community.</span>
+        <span class="l">Gemma Terms of Use</span></div>
+
+      <h4>Runtimes and libraries</h4>
+      <div class="credit"><span class="n">MLX</span>
+        <span class="w">Apple's array framework for Apple silicon. Everything but ACE-Step runs on
+          it.</span><span class="l">MIT</span></div>
+      <div class="credit"><span class="n">mlx-lm</span>
+        <span class="w">Serves the text model with an OpenAI-compatible API.</span>
+        <span class="l">MIT</span></div>
+      <div class="credit"><span class="n">mlx-audio</span>
+        <span class="w">Kokoro on MLX, by Prince Canuma. With misaki (Apache-2.0) for
+          grapheme-to-phoneme.</span><span class="l">MIT</span></div>
+      <div class="credit"><span class="n">mflux</span>
+        <span class="w">FLUX on MLX, by Filip Strand.</span><span class="l">MIT</span></div>
+      <div class="credit"><span class="n">PyTorch</span>
+        <span class="w">ACE-Step's own runtime, including the non-turbo DiT path.</span>
+        <span class="l">BSD-3-Clause</span></div>
+      <div class="credit"><span class="n">FFmpeg</span>
+        <span class="w">Transcoding for downloads and speech formats.</span>
+        <span class="l">LGPL / GPL</span></div>
+      <div class="credit"><span class="n">Tailscale</span>
+        <span class="w">Reach and identity: TLS termination and the caller's login, without exposing
+          a port.</span><span class="l">BSD-3-Clause</span></div>
+      <div class="credit"><span class="n">marked · DOMPurify</span>
+        <span class="w">Markdown rendering and sanitising for chat replies, vendored into
+          <code>assets/vendor/</code> so the page still fetches nothing externally.</span>
+        <span class="l">MIT · Apache-2.0</span></div>
+      <div class="credit"><span class="n">Swagger UI</span>
+        <span class="w">Renders the OpenAPI spec at <code>/docs</code> — the one page here that
+          loads anything from a CDN.</span><span class="l">Apache-2.0</span></div>
+      <div class="credit"><span class="n">uv · Hugging Face Hub</span>
+        <span class="w">Environment building and weight distribution, pinned to exact revisions.</span>
+        <span class="l">Apache-2.0 / MIT</span></div>
+      <p class="hint" style="margin-top:14px">The gateway itself is Python's standard library —
+         no web framework. Licences are as published by each project at the time of writing;
+         confirm upstream terms before shipping generated output commercially.</p>
+    </section>
+
+    <section>
+      <h3>Credits</h3>
+      <p>Anneal — the gateway, Press, the MCP server and this interface — is designed and built by
+         <b>Jon Moseley</b>. The models and libraries above are the work of their respective
+         authors, used under the licences shown and running unmodified on local hardware.</p>
+      <p>Generated output is yours to use, subject to those upstream model licences. The music model
+         will happily imitate a described style: don't name a specific living artist in a prompt and
+         then publish the result commercially.</p>
+    </section>
+  </div>
+
+  <footer class="sitefoot">
+    <span>Anneal — local generation, built by <b>Jon Moseley</b>.</span>
+    <nav>
+      <a href="#" data-page-link="guide">Guide</a>
+      <a href="#" data-page-link="api">API</a>
+      <a href="#" data-page-link="about">About</a>
+      <a href="/openapi.json" target="_blank">Spec</a>
+      <button id="footHome">Front door</button>
+    </nav>
+  </footer>
 </div>
 
 <!-- ------------------------------------------------------------- key gate -->
@@ -648,6 +1315,12 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
   </div>
 </div>
 
+<!-- Markdown for chat replies. Vendored into assets/vendor/ rather than pulled
+     from a CDN, because the whole point of this page is that it fetches nothing
+     from anywhere else. Rendering model output as HTML without a sanitiser is
+     not something to hand-roll, so marked parses and DOMPurify cleans. -->
+<script src="/assets/vendor/marked.min.js"></script>
+<script src="/assets/vendor/dompurify.min.js"></script>
 <script>
 "use strict";
 
@@ -1647,39 +2320,86 @@ async function writeLyrics() {
 let chatLog = [];          // {role, content, reasoning}
 let chatting = null;
 
+/* The model answers in Markdown, so render it. marked does the parsing and
+   DOMPurify does the trusting — a local model is still an untrusted source of
+   HTML, and it can be talked into emitting a tag by whatever you paste at it.
+   If either library failed to load we fall back to plain text rather than
+   inserting anything unsanitised. */
+const MD_OK = typeof marked !== "undefined" && typeof DOMPurify !== "undefined";
+if (MD_OK) marked.setOptions({ breaks: true, gfm: true });
+
+function renderMarkdown(node, src) {
+  if (!MD_OK) { node.textContent = src; return; }
+  try {
+    node.innerHTML = DOMPurify.sanitize(marked.parse(src),
+      { ADD_ATTR: ["target"], FORBID_TAGS: ["style", "form", "input", "button"] });
+    node.classList.add("md");
+    node.querySelectorAll("a[href]").forEach((a) => {
+      a.target = "_blank"; a.rel = "noopener noreferrer";
+    });
+  } catch (_) { node.textContent = src; }
+}
+
+/* A token arrives every few milliseconds and re-rendering the whole transcript
+   on each one means re-parsing every reply in the conversation. Coalesce to one
+   render a frame, and cache the parsed HTML of messages that have stopped
+   changing — only the one still streaming is re-parsed. */
+let chatFrame = null;
+function scheduleChatRender() {
+  if (chatFrame) return;
+  chatFrame = requestAnimationFrame(() => { chatFrame = null; renderChat(); });
+}
+
 function renderChat() {
   const box = $("chatitems");
+  // Only stick to the bottom if you were already there — otherwise scrolling
+  // back to read something gets yanked away by the next token.
+  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
   box.textContent = "";
   $("cTurns").textContent = chatLog.length ? Math.ceil(chatLog.length / 2) + " turn(s)" : "";
   if (!chatLog.length) {
-    box.appendChild(el("div", "empty", "Nothing yet — ask something."));
+    const e = el("div", "empty");
+    e.appendChild(el("p", null, "Nothing yet — ask something."));
+    box.appendChild(e);
     return;
   }
   chatLog.forEach((m) => {
     const wrap = el("div", "msg" + (m.role === "user" ? " user" : ""));
     wrap.appendChild(el("span", "who", m.role === "user" ? "you" : "gemma"));
-    wrap.appendChild(el("div", "body", m.content || (m.pending ? "…" : "")));
+    const body = el("div", "body");
+    if (m.role === "user") body.textContent = m.content;          // never parsed
+    else if (m.html) { body.innerHTML = m.html; body.classList.add("md"); }
+    else if (m.content) {
+      renderMarkdown(body, m.content);
+      if (!m.pending) m.html = body.innerHTML;                    // settled: cache it
+    }
+    if (m.pending) body.appendChild(el("span", "caret"));
+    wrap.appendChild(body);
     if (m.reasoning) {
       const t = el("div", "think", m.reasoning);
       wrap.appendChild(t);
     }
     box.appendChild(wrap);
   });
-  box.scrollTop = box.scrollHeight;
+  if (atBottom) box.scrollTop = box.scrollHeight;
 }
 
 async function runChat() {
   if (chatting) { chatting.abort(); return; }
   const text = $("cInput").value.trim();
-  if (!text) { setStatus("Type a message first.", "warn"); return; }
+  // The status panel belongs to the studio column, which chat replaces — so an
+  // empty message just puts the cursor back rather than warning into thin air.
+  if (!text) { $("cInput").focus(); return; }
 
   chatLog.push({ role: "user", content: text });
   const reply = { role: "assistant", content: "", reasoning: "", pending: true };
   chatLog.push(reply);
   $("cInput").value = "";
+  autoGrow($("cInput"));
   renderChat();
 
   chatting = new AbortController();
+  $("cSend").textContent = "Stop";
   renderForge();
   const showThinking = $("cThink").checked;
   try {
@@ -1714,8 +2434,8 @@ async function runChat() {
           const d = JSON.parse(p).choices[0].delta || {};
           if (d.content) reply.content += d.content;
           if (d.reasoning) reply.reasoning += d.reasoning;
-          reply.pending = false;
-          renderChat();
+          // Stays `pending` until the stream ends, so the caret keeps running.
+          scheduleChatRender();
         } catch (_) { /* partial JSON across chunk boundaries */ }
       }
     }
@@ -1727,13 +2447,24 @@ async function runChat() {
     renderChat();
   } catch (e) {
     reply.pending = false;
-    reply.content = e.name === "AbortError" ? "(stopped)" : "Failed: " + e.message;
+    // Stopping keeps what had already arrived — it was on screen a moment ago,
+    // and throwing it away to say "(stopped)" is a worse trade than it sounds.
+    if (e.name === "AbortError") reply.content = reply.content.trim()
+      ? reply.content + "\n\n*(stopped)*" : "*(stopped)*";
+    else reply.content = "Failed: " + e.message;
     renderChat();
   } finally {
     chatting = null;
+    $("cSend").textContent = "Send";
     $("go").textContent = mode === "chat" ? "Send" : "Forge";
     renderForge();
   }
+}
+
+/* A composer that grows with the message, up to the cap set in CSS. */
+function autoGrow(t) {
+  t.style.height = "auto";
+  t.style.height = Math.min(t.scrollHeight, 260) + "px";
 }
 
 /* ------------------------------------------------------------------ press
@@ -1798,8 +2529,53 @@ function enterApp(tab) {
 function showHero() {
   const hero = $("hero");
   hero.style.display = "";
+  hero.scrollTop = 0;
   requestAnimationFrame(() => hero.classList.remove("gone"));
   renderHeroStrip();
+}
+
+/* ------------------------------------------------------------------ pages
+   Studio is the application; Guide, API and About are reading. They live in
+   the same document because the whole interface is one file served from disk,
+   and a deep link (#guide) has to work for anyone you send it to. */
+const DOC_PAGES = { guide: "pageGuide", api: "pageApi", about: "pageAbout" };
+let currentPage = "studio";
+
+function showPage(name, { link = true } = {}) {
+  if (name !== "studio" && !DOC_PAGES[name]) name = "studio";
+  currentPage = name;
+  const studio = name === "studio";
+  $("modebar").classList.toggle("hidden", !studio);
+  $("cols").classList.toggle("hidden", !studio || mode === "chat");
+  $("chatview").classList.toggle("hidden", !studio || mode !== "chat");
+  Object.entries(DOC_PAGES).forEach(([k, id]) => $(id).classList.toggle("hidden", k !== name));
+  document.querySelectorAll("#subnav button").forEach((b) =>
+    b.classList.toggle("on", b.dataset.page === name));
+  if (link) history.replaceState(null, "", studio ? location.pathname : "#" + name);
+  window.scrollTo({ top: 0, behavior: "auto" });
+  if (!studio) decorateCode();
+}
+
+function goPage(name) {
+  if ($("hero").style.display !== "none") enterApp();
+  showPage(name);
+}
+
+/* Copy buttons on the code samples, added once, the first time a page with
+   code is opened. */
+function decorateCode() {
+  document.querySelectorAll(".doc .cb").forEach((cb) => {
+    if (cb.querySelector(".cbcopy")) return;
+    const pre = cb.querySelector("pre");
+    if (!pre) return;
+    const b = el("button", "cbcopy", "Copy");
+    b.onclick = async () => {
+      try { await navigator.clipboard.writeText(pre.textContent); b.textContent = "Copied"; }
+      catch (_) { b.textContent = "Select it instead"; }
+      setTimeout(() => { b.textContent = "Copy"; }, 1600);
+    };
+    cb.appendChild(b);
+  });
 }
 
 function renderHeroStrip() {
@@ -1967,17 +2743,14 @@ document.querySelectorAll(".tab").forEach((tab) => {
     mode = tab.dataset.mode;
     document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", String(t === tab)));
     document.querySelectorAll("[data-panel]").forEach((p) => p.classList.toggle("hidden", p.dataset.panel !== mode));
-    // Chat has its own transcript column and its own verb.
+    // Chat is not a form with an output panel — it swaps the whole layout for
+    // a transcript with the composer underneath it.
     const isChat = mode === "chat";
-    if (mode === "press") $("go").textContent = "Press";
-    $("chatitems").classList.toggle("hidden", !isChat);
-    $("btnLibrary").hidden = isChat;
-    $("btnClear").hidden = isChat;
-    $("outTitle").textContent = isChat ? "Conversation" : "Output";
-    $("go").textContent = isChat ? "Send" : (mode === "press" ? "Press" : "Forge");
-    if (isChat) { $("items").classList.add("hidden"); $("empty").classList.add("hidden"); renderChat(); }
-    else { setLibrary(false); }
+    $("go").textContent = mode === "press" ? "Press" : "Forge";
+    if (isChat) { renderChat(); $("cInput").focus(); }
+    else setLibrary(false);
     hideStatus();
+    showPage("studio");          // also swaps .cols for the chat view
     renderForge();
   };
 });
@@ -2000,10 +2773,29 @@ document.querySelectorAll(".hero .card").forEach((c) => {
 $("heroLib").onclick = (e) => { e.preventDefault(); enterApp("music"); setLibrary(true); };
 $("heroSet").onclick = (e) => { e.preventDefault(); showSettings(); };
 $("brandHome").onclick = showHero;
+$("footHome").onclick = showHero;
 $("btnSettings").onclick = showSettings;
-$("cClear").onclick = () => { chatLog = []; renderChat(); };
-$("cInput") && $("cInput").addEventListener("keydown", (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); runChat(); }
+
+document.querySelectorAll("#subnav button").forEach((b) => {
+  b.onclick = () => showPage(b.dataset.page);
+});
+document.querySelectorAll("[data-page-link]").forEach((a) => {
+  a.onclick = (e) => { e.preventDefault(); goPage(a.dataset.pageLink); };
+});
+
+/* ------------------------------------------------------------------- chat */
+$("cClear").onclick = () => { chatLog = []; renderChat(); $("cInput").focus(); };
+$("cSend").onclick = runChat;
+$("cInput").addEventListener("input", () => autoGrow($("cInput")));
+$("cInput").addEventListener("keydown", (e) => {
+  // Enter sends, Shift+Enter is a newline — what every chat interface has
+  // taught people to expect. Cmd/Ctrl+Enter still works out of habit.
+  if (e.key !== "Enter") return;
+  if (e.shiftKey) return;
+  if (e.isComposing) return;          // mid-IME composition, not a submission
+  e.preventDefault();
+  e.stopPropagation();                // don't also hit the global Cmd+Enter handler
+  runChat();
 });
 document.querySelectorAll("#libbar button").forEach((b) => {
   b.onclick = () => {
@@ -2017,9 +2809,12 @@ $("btnClear").onclick = () => {
   results = []; renderResults();
 };
 
-// Cmd/Ctrl+Enter submits from any field.
+// Cmd/Ctrl+Enter submits from any field — but not while you are reading a page
+// that has no form on it.
 document.addEventListener("keydown", (e) => {
-  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); run(); }
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && currentPage === "studio") {
+    e.preventDefault(); run();
+  }
 });
 
 /* -------------------------------------------------------------------- boot */
@@ -2107,11 +2902,30 @@ async function boot() {
 
   if (!authVia && !apiKey) { openGate(); return; }
   $("hostname").textContent = location.host;
+  fillOrigin();
   fillVoices(VOICES, DEFAULT_VOICE);
   loadTiers();
   loadPrefs();
+
+  // A deep link to a reading page skips the front door: someone sent it to you
+  // to be read, not to be introduced to.
+  const hash = (location.hash || "").replace(/^#\/?/, "");
+  if (DOC_PAGES[hash]) {
+    $("hero").classList.add("gone");
+    $("hero").style.display = "none";
+    showPage(hash, { link: false });
+  }
+
   await refreshHealth();
   setInterval(async () => { await refreshHealth(); maybeRefreshVoices(); }, 5000);
+}
+
+/* The API page quotes this server's own address rather than a hostname baked
+   into the file, so the samples can be copied and run as they stand. */
+function fillOrigin() {
+  document.querySelectorAll(".doc [data-origin], .doc .origin").forEach((n) => {
+    n.textContent = n.textContent.replace(/__ORIGIN__/g, location.origin);
+  });
 }
 
 renderResults();

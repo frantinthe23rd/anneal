@@ -1480,18 +1480,26 @@ class Handler(BaseHTTPRequestHandler):
             }, "code": 200, "error": None})
             return
         if route.startswith("/assets/"):
-            # Locally generated artwork, served from the repo. Kept as files
-            # rather than inlined so ui.html stays readable, and served by us so
-            # the page still makes no external requests.
-            # basename() strips any directory component, so traversal cannot
-            # escape the assets directory.
-            name = os.path.basename(route)
-            path = os.path.join(HERE, "assets", name)
-            if not name or not os.path.isfile(path):
+            # Locally generated artwork and the two vendored browser libraries,
+            # served from the repo. Kept as files rather than inlined so
+            # ui.html stays readable, and served by us so the page still makes
+            # no external requests.
+            #
+            # Subdirectories are allowed (assets/vendor/), so basename() is no
+            # longer enough: resolve the path and require that it really lands
+            # inside the assets directory.
+            root = os.path.realpath(os.path.join(HERE, "assets"))
+            rel = urllib.parse.unquote(route[len("/assets/"):])
+            path = os.path.realpath(os.path.join(root, rel))
+            if not rel or not (path == root or path.startswith(root + os.sep)) \
+                    or not os.path.isfile(path):
                 self._send_json({"code": 404, "error": "no such asset"}, 404)
                 return
+            name = os.path.basename(path)
             ctype = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
-                     ".webp": "image/webp", ".svg": "image/svg+xml"}.get(
+                     ".webp": "image/webp", ".svg": "image/svg+xml",
+                     ".js": "text/javascript; charset=utf-8",
+                     ".css": "text/css; charset=utf-8"}.get(
                 os.path.splitext(name)[1].lower(), "application/octet-stream")
             with open(path, "rb") as fh:
                 blob = fh.read()
