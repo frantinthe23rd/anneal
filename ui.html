@@ -9,30 +9,123 @@
 <meta name="theme-color" content="#100d0c">
 <meta name="description" content="Local, on-demand generation — music, speech, images and text on one machine, usable by hand or over its API.">
 <style>
-/* ---------------------------------------------------------------- palette
-   Committed dark. A forge is dark; the heat is the only light source, so the
-   accent is reserved for things that are actually hot or actually happening. */
+/* Anneal design tokens — dark is the default, light is full parity.
+   From brand/tokens.css in the design scheme; keep the two in step. A forge is
+   dark and the heat is the only light source, so the accent is reserved for
+   things that are actually hot or actually happening. */
+
 :root {
+  color-scheme: dark;
+
+  /* surfaces + text */
   --bg:        #100d0c;
   --surface:   #1a1614;
   --surface-2: #221d1a;
   --line:      #302825;
+  --line-2:    #3d332e;   /* hairline on surface-2 */
   --text:      #ece4dc;
-  --read:      #d2c6ba;   /* long-form body copy: a step back from --text */
   --muted:     #948477;
   --faint:     #6b5d53;
+  /* Long-form body copy on the Guide/API/About pages: a step back from --text.
+     Not in the scheme's tokens.css — those pages postdate it — so it is added
+     to both themes here and belongs in the next revision of that file. */
+  --read:      #d2c6ba;
 
-  --heat-1:  #ff5f1f;   /* forge orange */
-  --heat-2:  #ffb03a;   /* yellow heat  */
-  --cold:    #6d7f8c;   /* cold steel   */
+  /* heat — reserved for hot / active / happening */
+  --heat-1:  #ff5f1f;
+  --heat-2:  #ffb03a;
+  --heat-ink: #21120a;    /* text on a heat fill */
+  --heat-wash: rgba(255,95,31,.09);
+  --heat-edge: rgba(255,95,31,.42);
+
+  /* steel — idle, structural, informational */
+  --cold:    #6d7f8c;
   --quench:  #7fb3c4;
-  --bad:     #e0574a;
-  --good:    #7fbf6a;
+  --quench-wash: rgba(127,179,196,.10);
 
-  --radius: 10px;
+  --bad:     #e0574a;
+  --bad-ink: #f0a49c;
+  --bad-wash: rgba(224,87,74,.09);
+  --good:    #7fbf6a;
+  --good-wash: rgba(127,191,106,.10);
+
+  /* type */
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
+
+  /* 4px grid */
+  --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
+  --s-5: 20px; --s-6: 24px; --s-8: 32px; --s-10: 40px;
+
+  --radius:   10px;   /* panels */
+  --radius-sm: 8px;   /* inputs, buttons */
+  --radius-xs: 6px;   /* chips, tabs */
+  --pill:    999px;
+
+  --t-fast: .16s; --t-med: .28s; --t-slow: .5s;
+  --ease: cubic-bezier(.4,0,.2,1);
+
+  /* depth — flat is the exception now, not the rule */
+  --sh-1: 0 2px 4px -1px rgba(0,0,0,.3), inset 0 1px 0 rgba(255,255,255,.06);          /* chips, quiet buttons */
+  --sh-2: 0 6px 16px -6px rgba(0,0,0,.6), 0 1px 3px rgba(0,0,0,.4),
+          inset 0 1px 0 rgba(255,255,255,.05);                                         /* cards, status blocks */
+  --sh-3: 0 18px 50px -18px rgba(0,0,0,.7), 0 3px 8px rgba(0,0,0,.35),
+          inset 0 1px 0 rgba(255,255,255,.05);                                         /* panels, sheets */
+  --sh-inset: inset 0 2px 5px rgba(0,0,0,.4);                                          /* fields, wells, tab strip */
+  --sh-press: inset 0 2px 5px rgba(0,0,0,.28);                                         /* busy, held */
+  /* Surfaces are a shallow vertical gradient, not a flat fill — 2–3% top to bottom. */
+  --fill-surface:   linear-gradient(180deg,#1f1b18,#171312);
+  --fill-surface-2: linear-gradient(180deg,#262019,#201b18);
+  /* the primary button carries its own heat glow */
+  --sh-hot: inset 0 1px 0 rgba(255,255,255,.3), inset 0 -1px 0 rgba(0,0,0,.22),
+            0 2px 4px rgba(0,0,0,.45), 0 8px 20px -6px rgba(255,95,31,.4);
+
+  --ring: 2px solid var(--heat-1);
+  --ring-offset: 2px;
 }
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg:        #f6f2ed;
+  --surface:   #fffdfa;
+  --surface-2: #f0eae2;
+  --line:      #e1d7cb;
+  --line-2:    #d6cabc;
+  --text:      #241d18;
+  --muted:     #6b5d53;
+  --faint:     #8d7f74;
+  --read:      #443a32;
+
+  --heat-1:  #d94a10;   /* darkened so it passes on white */
+  --heat-2:  #9a5205;   /* amber as TEXT needs this, not #ffb03a */
+  --heat-ink: #fff6ee;
+  --heat-wash: rgba(217,74,16,.08);
+  --heat-edge: rgba(217,74,16,.38);
+
+  --cold:    #5c6d79;
+  --quench:  #2f7691;
+  --quench-wash: rgba(47,118,145,.09);
+
+  --bad:     #b8342a;
+  --bad-ink: #8f2a22;
+  --bad-wash: rgba(184,52,42,.08);
+  --good:    #3d7a2e;
+  --good-wash: rgba(61,122,46,.09);
+
+  --sh-1: 0 2px 4px -1px rgba(52,40,30,.16), inset 0 1px 0 #fff;
+  --sh-2: 0 8px 20px -8px rgba(52,40,30,.26), 0 1px 3px rgba(52,40,30,.1), inset 0 1px 0 #fff;
+  --sh-3: 0 10px 26px -10px rgba(52,40,30,.28), 0 2px 4px rgba(52,40,30,.1), inset 0 1px 0 #fff;
+  --sh-inset: inset 0 2px 5px rgba(90,70,55,.16);
+  --sh-press: inset 0 2px 5px rgba(90,70,55,.16);
+  --fill-surface:   linear-gradient(180deg,#fffefc,#faf5ef);
+  --fill-surface-2: linear-gradient(180deg,#f6f1ea,#eae2d8);
+  --sh-hot: inset 0 1px 0 rgba(255,255,255,.32), inset 0 -1px 0 rgba(0,0,0,.18),
+            0 2px 4px rgba(80,40,20,.28), 0 8px 18px -6px rgba(217,74,16,.35);
+}
+
+/* The heat bloom is dark-mode only — on light it reads as a stain. */
+:root[data-theme="light"] body::before { display: none; }
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -55,9 +148,9 @@ button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .45; }
 :focus-visible { outline: 2px solid var(--heat-1); outline-offset: 2px; }
 
-/* Motion is opt-out, not opt-in. Everything below animates through these two
-   variables so a single media query can switch the whole interface to still. */
-:root { --t-fast: .16s; --t-med: .28s; --t-slow: .5s; --ease: cubic-bezier(.4,0,.2,1); }
+/* Motion is opt-out, not opt-in. Everything animates through the three timing
+   variables above, so a single media query switches the whole interface to
+   still. (The variables themselves now live in the token block.) */
 @media (prefers-reduced-motion: reduce) {
   :root { --t-fast: 0s; --t-med: 0s; --t-slow: 0s; }
   * { animation-duration: .001s !important; animation-iteration-count: 1 !important; }
