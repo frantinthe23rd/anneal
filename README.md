@@ -217,6 +217,18 @@ Measured on the same prompt and seed, high is ~2× the generation time, 7.2 dB
 more energy above 12 kHz and a 23% larger lossless file. **Whether that is
 better is a judgement for your ears** — see the note on verification below.
 
+### `metas` is intent, not measurement
+
+`bpm`, `keyscale` and `timesignature` in a result are what the planning LM asked
+the DiT for — not an analysis of the audio. The LM can ask for something the
+output plainly is not (300 bpm for an indie folk ballad, on a take that measures
+nearer 100), and the audio can still be fine. Sidecars record these as
+`bpm_planned` / `key_scale_planned` with a `metadata_source` note, and the UI
+labels them "(planned)".
+
+Set `bpm` and `key_scale` explicitly on the request if you want them to mean
+something.
+
 ### Verifying generated audio
 
 An earlier "improvement" here was garbled noise shipped on the strength of a

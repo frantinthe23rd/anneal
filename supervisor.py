@@ -855,8 +855,14 @@ class Handler(BaseHTTPRequestHandler):
             path = outputs.save_copy("music", src, {
                 "prompt": prompt or take.get("prompt", ""),
                 "lyrics": payload.get("lyrics"),
-                "bpm": meta.get("bpm"), "duration": meta.get("duration"),
-                "key_scale": meta.get("keyscale"), "seed": take.get("seed_value"),
+                # These come from the planning LM — what it asked the DiT for,
+                # not an analysis of the audio produced. The LM can emit values
+                # plainly at odds with the result (300 bpm for a folk ballad),
+                # so they are labelled rather than presented as fact.
+                "bpm_planned": meta.get("bpm"),
+                "key_scale_planned": meta.get("keyscale"),
+                "metadata_source": "planning-lm (requested, not measured)",
+                "duration": meta.get("duration"), "seed": take.get("seed_value"),
                 "service": "music", "task_id": task_id,
             })
             if path:

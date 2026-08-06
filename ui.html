@@ -724,7 +724,10 @@ async function runMusic() {
         addResult({
           kind: "music", prompt, audio: url,
           filename: slug(prompt) + ext,
-          meta: [m.duration ? Math.round(m.duration) + "s" : null, m.bpm ? m.bpm + " bpm" : null, m.keyscale].filter(Boolean).join(" · "),
+          // bpm/key are the planning LM's request, not an analysis of the
+          // audio — it can ask for something the result plainly is not.
+          meta: [m.duration ? Math.round(m.duration) + "s" : null,
+                 m.bpm ? m.bpm + " bpm (planned)" : null, m.keyscale].filter(Boolean).join(" · "),
           took: fmtElapsed(),
         });
       }
@@ -860,7 +863,8 @@ function renderLibrary() {
     foot.appendChild(del);
     const bits = [fmtBytes(it.bytes)];
     const m = it.meta || {};
-    if (m.bpm) bits.push(m.bpm + " bpm");
+    if (m.bpm_planned) bits.push(m.bpm_planned + " bpm (planned)");
+    else if (m.bpm) bits.push(m.bpm + " bpm");
     if (m.voice) bits.push(m.voice);
     if (m.size) bits.push(m.size);
     foot.appendChild(el("span", "sp", bits.join(" · ")));
