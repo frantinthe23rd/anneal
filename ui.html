@@ -214,6 +214,48 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .msg .body { white-space: pre-wrap; word-break: break-word; font-size: 14px; }
 .msg .think { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line);
   color: var(--faint); font-size: 12.5px; white-space: pre-wrap; }
+.album { background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.album > .hd { display: flex; gap: 14px; padding: 14px; cursor: pointer; align-items: center; }
+.album > .hd:hover { background: rgba(255,95,31,.04); }
+.album .art { width: 74px; height: 74px; border-radius: 7px; object-fit: cover; flex: none;
+  background: var(--bg); border: 1px solid var(--line); }
+.album .art.ph { display: flex; align-items: center; justify-content: center; color: var(--faint); font-size: 22px; }
+.album .meta { min-width: 0; flex: 1; }
+.album .ttl { font-size: 15px; font-weight: 600; }
+.album .art-name { color: var(--heat-2); font-size: 12.5px; letter-spacing: .04em; }
+.album .sub { color: var(--faint); font-size: 12px; margin-top: 3px; }
+.album .chev { color: var(--faint); font-size: 12px; }
+.album .body { display: none; padding: 0 14px 14px; }
+.album.open .body { display: block; }
+.album ol { margin: 0; padding: 0; list-style: none; }
+.album li { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--line); }
+.album li .no { color: var(--faint); font-family: var(--mono); font-size: 11.5px; width: 20px; }
+.album li .nm { flex: 1; min-width: 0; font-size: 13.5px; }
+.album li .dur { color: var(--faint); font-family: var(--mono); font-size: 11.5px; }
+.album li audio { height: 30px; }
+.album .player { display: flex; align-items: center; gap: 8px; padding: 9px 0; border-top: 1px solid var(--line); }
+.album .player button { border: 1px solid var(--line); background: var(--surface); color: var(--text);
+  border-radius: 7px; padding: 5px 11px; font-size: 13px; line-height: 1; }
+.album .player button:hover:not(:disabled) { border-color: var(--heat-1); color: var(--heat-2); }
+.album .player .now { flex: 1; min-width: 0; color: var(--muted); font-size: 12.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.album .player .tm { color: var(--faint); font-family: var(--mono); font-size: 11.5px; }
+.album li.cur { background: rgba(255,95,31,.07); }
+.album li.cur .nm { color: var(--heat-2); }
+.album li .nm { cursor: pointer; }
+.album li a.dl { color: var(--faint); font-size: 11.5px; text-decoration: none; }
+.album li a.dl:hover { color: var(--heat-2); }
+.album .acts { display: flex; gap: 14px; padding-top: 10px; margin-top: 4px; border-top: 1px solid var(--line); }
+.album .acts button, .album .acts a { background: none; border: 0; padding: 0; color: var(--muted);
+  font-size: 12px; text-decoration: none; }
+.album .acts button:hover, .album .acts a:hover { color: var(--heat-2); }
+.lightbox { position: fixed; inset: 0; background: rgba(8,6,5,.92); z-index: 60; display: flex;
+  align-items: center; justify-content: center; flex-direction: column; gap: 14px; padding: 24px; }
+.lightbox img { max-width: min(92vw, 1100px); max-height: 78vh; border-radius: 10px; }
+.lightbox .cap { color: var(--muted); font-size: 13px; text-align: center; }
+.lightbox .cap a { color: var(--heat-2); }
+.album .concept { color: var(--muted); font-size: 12.5px; font-style: italic; padding: 8px 0 4px; }
+.album .prog { color: var(--heat-2); font-size: 12px; padding: 6px 0; }
 .det { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); display: none; }
 .det.open { display: block; }
 .det dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; }
@@ -256,6 +298,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
         <button class="tab" role="tab" data-mode="speech" aria-selected="false">Speech</button>
         <button class="tab" role="tab" data-mode="image"  aria-selected="false">Image</button>
         <button class="tab" role="tab" data-mode="chat"   aria-selected="false">Chat</button>
+        <button class="tab" role="tab" data-mode="press"  aria-selected="false">Press</button>
       </div>
 
       <div class="pad">
@@ -386,6 +429,41 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
           </div>
         </section>
 
+        <!-- PRESS -->
+        <section data-panel="press" class="hidden">
+          <label class="f" for="pPrompt">The brief</label>
+          <textarea id="pPrompt" placeholder="a short winter album about leaving a coastal town, folk with strings"></textarea>
+          <div class="hint">One brief becomes a title, an artist name, a tracklist, lyrics, the music
+            and a cover. A single takes a few minutes; an album takes tens.</div>
+
+          <div class="field grid2">
+            <div>
+              <label class="f" for="pTracks">Tracks</label>
+              <input type="number" id="pTracks" value="1" min="1" max="8">
+            </div>
+            <div>
+              <label class="f" for="pDur">Typical length (s)</label>
+              <input type="number" id="pDur" value="90" min="20" max="600" step="10">
+            </div>
+          </div>
+          <div class="hint">On an album the planner varies lengths around this — openers and
+            interludes shorter, centrepieces longer.</div>
+
+          <div class="field grid2">
+            <div>
+              <label class="f" for="pQuality">Model</label>
+              <select id="pQuality"><option value="draft">Draft — fast</option><option value="high">High — slower</option></select>
+            </div>
+            <div>
+              <label class="f">&nbsp;</label>
+              <label class="check"><input type="checkbox" id="pArt" checked> Cover art</label>
+            </div>
+          </div>
+          <div class="field">
+            <label class="check"><input type="checkbox" id="pInst"> Instrumental — skip lyrics</label>
+          </div>
+        </section>
+
         <button class="go" id="go">Forge</button>
 
         <div class="status" id="status">
@@ -414,6 +492,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
         <button data-k="images">Images</button>
         <span class="sp" id="libCount"></span>
       </div>
+      <div class="items hidden" id="albums" style="padding:14px 14px 0"></div>
       <div class="items hidden" id="libitems"></div>
       <div class="items hidden" id="chatitems"></div>
       <div id="empty" class="empty">
@@ -667,6 +746,7 @@ function coldWarning(service) {
 /* ------------------------------------------------------------------ submit */
 async function run() {
   if (mode === "chat") return runChat();
+  if (mode === "press") return runPress();
   if (busy) return;
   busy = true;
   $("go").disabled = true;
@@ -848,6 +928,257 @@ function fmtWhen(sec) {
 }
 const fmtBytes = (b) => b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.round(b / 1024) + " KB";
 
+/* Bulk creations are shown as a record, not as loose files: cover, title,
+   artist and tracklist in one drawer. Built from /v1/press rather than by
+   correlating sidecars, so an in-progress press appears immediately and fills
+   in as it goes. */
+let presses = [];
+
+async function loadPresses() {
+  try {
+    presses = ((await api("/v1/press")).data || {}).presses || [];
+  } catch (_) { presses = []; }
+  renderPresses();
+}
+
+const fmtDur = (s) => Math.floor(s / 60) + ":" + String(Math.round(s % 60)).padStart(2, "0");
+
+/* Full-size artwork. Fetched through the API so auth applies; click anywhere or
+   press Escape to dismiss. */
+async function showArtwork(path, caption) {
+  const box = el("div", "lightbox");
+  box.appendChild(el("div", "cap", "Loading…"));
+  document.body.appendChild(box);
+  const close = () => { box.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  box.onclick = close;
+  document.addEventListener("keydown", onKey);
+  try {
+    const blob = await api("/v1/outputs/file?path=" + encodeURIComponent(path), { raw: true });
+    const url = URL.createObjectURL(blob); blobUrls.push(url);
+    box.textContent = "";
+    const img = document.createElement("img"); img.src = url; img.alt = caption || "cover";
+    box.appendChild(img);
+    const cap = el("div", "cap");
+    cap.appendChild(document.createTextNode((caption || "") + "  "));
+    const dl = document.createElement("a");
+    dl.href = url; dl.download = slug(caption || "cover") + ".png"; dl.textContent = "Download";
+    dl.onclick = (e) => e.stopPropagation();
+    cap.appendChild(dl);
+    box.appendChild(cap);
+  } catch (e) {
+    box.textContent = ""; box.appendChild(el("div", "cap", "Could not load artwork: " + e.message));
+  }
+}
+
+function buildPressDetails(p, plan) {
+  const det = el("div", "det");
+  const dl = document.createElement("dl");
+  const row = (k, v) => {
+    if (v === undefined || v === null || v === "") return;
+    dl.appendChild(el("dt", null, k)); dl.appendChild(el("dd", null, String(v)));
+  };
+  const r = p.request || {};
+  row("artist", plan.artist);
+  row("tracks", (p.tracks || []).length);
+  row("total", fmtDur((p.tracks || []).reduce((a, t) => a + (t.duration || 0), 0)));
+  row("tier", r.quality);
+  row("typical length", r.duration && r.duration + "s");
+  row("instrumental", r.instrumental ? "yes" : "no");
+  row("when", new Date(p.created * 1000).toLocaleString());
+  row("press id", p.id);
+  det.appendChild(dl);
+  if (r.prompt) {
+    det.appendChild(el("dt", null, "brief"));
+    const pre = document.createElement("pre"); pre.textContent = r.prompt; det.appendChild(pre);
+  }
+  const withLyrics = (p.tracks || []).filter((t) => t.lyrics);
+  if (withLyrics.length) {
+    det.appendChild(el("dt", null, "lyrics"));
+    const pre = document.createElement("pre");
+    pre.textContent = withLyrics.map((t) => t.n + ". " + t.title + "\n" + t.lyrics).join("\n\n");
+    det.appendChild(pre);
+  }
+  return det;
+}
+
+/* A small album player: play/pause, skip, click a row to jump, and auto-advance
+   so a record plays through rather than a track at a time. */
+function buildPlayer(p, plan) {
+  const frag = document.createDocumentFragment();
+  const tracks = (p.tracks || []).filter((t) => t.file);
+  const audio = document.createElement("audio");
+  const cache = {};
+  let cur = -1;
+
+  const bar = el("div", "player");
+  const prev = el("button", null, "⏮");
+  const toggle = el("button", null, "▶");
+  const next = el("button", null, "⏭");
+  const now = el("div", "now", tracks.length ? "Ready — " + tracks.length + " track(s)" : "No audio yet");
+  const time = el("div", "tm", "");
+  [prev, toggle, next].forEach((b) => { if (!tracks.length) b.disabled = true; });
+  bar.append(prev, toggle, next, now, time);
+  frag.appendChild(bar);
+
+  const ol = document.createElement("ol");
+  const rows = [];
+  (p.tracks || []).forEach((t) => {
+    const li = document.createElement("li");
+    li.appendChild(el("span", "no", String(t.n)));
+    const nm = el("span", "nm", t.title + (t.state === "done" ? "" : "  (" + t.state + ")"));
+    li.appendChild(nm);
+    li.appendChild(el("span", "dur", fmtDur(t.duration || 0)));
+    if (t.file) {
+      const idx = tracks.indexOf(t);
+      nm.onclick = (e) => { e.stopPropagation(); play(idx); };
+      const dl = document.createElement("a");
+      dl.className = "dl"; dl.textContent = "download"; dl.href = "#";
+      dl.onclick = async (e) => {
+        e.preventDefault(); e.stopPropagation();
+        dl.textContent = "…";
+        try {
+          const url = await blobFor(idx);
+          const a = document.createElement("a");
+          a.href = url; a.download = String(t.n).padStart(2, "0") + " " + slug(t.title) + ".flac";
+          a.click(); dl.textContent = "download";
+        } catch (_) { dl.textContent = "retry"; }
+      };
+      li.appendChild(dl);
+      rows[idx] = li;
+    }
+    ol.appendChild(li);
+  });
+  frag.appendChild(ol);
+
+  async function blobFor(i) {
+    if (!cache[i]) {
+      const blob = await api(tracks[i].file, { raw: true });
+      cache[i] = URL.createObjectURL(blob);
+      blobUrls.push(cache[i]);
+    }
+    return cache[i];
+  }
+
+  async function play(i) {
+    if (i < 0 || i >= tracks.length) return;
+    if (i !== cur) {
+      now.textContent = "Loading — " + tracks[i].title;
+      try { audio.src = await blobFor(i); } catch (e) { now.textContent = "Failed: " + e.message; return; }
+      cur = i;
+      rows.forEach((r, n) => r && r.classList.toggle("cur", n === i));
+      now.textContent = tracks[i].n + ". " + tracks[i].title;
+    }
+    audio.play();
+  }
+
+  toggle.onclick = (e) => {
+    e.stopPropagation();
+    if (audio.paused) play(cur < 0 ? 0 : cur); else audio.pause();
+  };
+  prev.onclick = (e) => { e.stopPropagation(); play(cur <= 0 ? 0 : cur - 1); };
+  next.onclick = (e) => { e.stopPropagation(); play(cur + 1); };
+  audio.onplay = () => { toggle.textContent = "⏸"; };
+  audio.onpause = () => { toggle.textContent = "▶"; };
+  // Auto-advance: a record should play through on its own.
+  audio.onended = () => { if (cur + 1 < tracks.length) play(cur + 1); else toggle.textContent = "▶"; };
+  audio.ontimeupdate = () => {
+    if (!audio.duration) return;
+    time.textContent = fmtDur(audio.currentTime) + " / " + fmtDur(audio.duration);
+  };
+  return frag;
+}
+
+function renderPresses() {
+  const box = $("albums");
+  box.textContent = "";
+  const show = presses.filter((p) => libKind === "" || libKind === "music");
+  box.classList.toggle("hidden", show.length === 0);
+  show.forEach((p) => {
+    const plan = p.plan || {};
+    const wrap = el("div", "album");
+
+    const hd = el("div", "hd");
+    const coverPath = p.cover && p.cover.path;
+    if (coverPath) {
+      const img = document.createElement("img");
+      img.className = "art"; img.alt = plan.title || "cover"; img.loading = "lazy";
+      // Fetched through the API so the auth header applies.
+      api("/v1/outputs/file?path=" + encodeURIComponent(coverPath), { raw: true })
+        .then((b) => { const u = URL.createObjectURL(b); blobUrls.push(u); img.src = u; })
+        .catch(() => {});
+      img.style.cursor = "zoom-in";
+      img.title = "View full size";
+      img.onclick = (e) => {
+        e.stopPropagation();            // don't also toggle the drawer
+        showArtwork(coverPath, (plan.title || "") + (plan.artist ? " — " + plan.artist : ""));
+      };
+      hd.appendChild(img);
+    } else {
+      hd.appendChild(el("div", "art ph", p.state === "done" ? "♪" : "…"));
+    }
+
+    const meta = el("div", "meta");
+    meta.appendChild(el("div", "ttl", plan.title || "Planning…"));
+    if (plan.artist) meta.appendChild(el("div", "art-name", plan.artist));
+    const done = (p.tracks || []).filter((t) => t.state === "done").length;
+    const total = (p.tracks || []).reduce((a, t) => a + (t.duration || 0), 0);
+    meta.appendChild(el("div", "sub",
+      (p.tracks || []).length + " track(s)" + (total ? " · " + fmtDur(total) : "") +
+      " · " + new Date(p.created * 1000).toLocaleDateString() +
+      (p.state === "done" ? "" : " · " + p.state)));
+    hd.appendChild(meta);
+    hd.appendChild(el("div", "chev", "▾"));
+    hd.onclick = () => wrap.classList.toggle("open");
+    wrap.appendChild(hd);
+
+    const body = el("div", "body");
+    if (plan.concept) body.appendChild(el("div", "concept", plan.concept));
+    if (p.state !== "done" && p.state !== "failed" && p.state !== "cancelled") {
+      body.appendChild(el("div", "prog", p.stage || p.state));
+    }
+    if (p.error) body.appendChild(el("div", "err", p.error));
+
+    body.appendChild(buildPlayer(p, plan));
+
+    const acts = el("div", "acts");
+    const det = buildPressDetails(p, plan);
+    const info = el("button", null, "Details");
+    info.onclick = (e) => {
+      e.stopPropagation();
+      det.classList.toggle("open");
+      info.textContent = det.classList.contains("open") ? "Hide" : "Details";
+    };
+    acts.appendChild(info);
+
+    const reuse = el("button", null, "Reuse brief");
+    reuse.onclick = (e) => {
+      e.stopPropagation();
+      const r = p.request || {};
+      document.querySelector('.tab[data-mode="press"]').click();
+      $("pPrompt").value = r.prompt || "";
+      if (r.tracks) $("pTracks").value = r.tracks;
+      if (r.duration) $("pDur").value = r.duration;
+      if (r.quality) $("pQuality").value = r.quality;
+      $("pArt").checked = r.art !== false;
+      $("pInst").checked = !!r.instrumental;
+      setLibrary(false);
+      setStatus("Brief loaded — adjust and press again.", "");
+    };
+    acts.appendChild(reuse);
+
+    if (coverPath) {
+      const cov = el("button", null, "Cover");
+      cov.onclick = (e) => { e.stopPropagation(); showArtwork(coverPath, plan.title || ""); };
+      acts.appendChild(cov);
+    }
+    body.appendChild(acts);
+    body.appendChild(det);
+    wrap.appendChild(body);
+    box.appendChild(wrap);
+  });
+}
+
 async function loadLibrary() {
   try {
     const d = (await api("/v1/outputs?limit=300" + (libKind ? "&kind=" + libKind : ""))).data;
@@ -858,6 +1189,7 @@ async function loadLibrary() {
     $("libCount").textContent = "could not load: " + e.message;
   }
   renderLibrary();
+  loadPresses();
 }
 
 function renderLibrary() {
@@ -1024,6 +1356,7 @@ function setLibrary(on) {
   $("btnLibrary").textContent = on ? "Session" : "Library";
   $("libbar").classList.toggle("hidden", !on);
   $("libitems").classList.toggle("hidden", !on);
+  if (!on) $("albums").classList.add("hidden");
   $("btnClear").hidden = on;
   if (on) { $("items").classList.add("hidden"); $("empty").classList.add("hidden"); loadLibrary(); }
   else { renderResults(); }
@@ -1201,6 +1534,52 @@ async function runChat() {
   }
 }
 
+/* ------------------------------------------------------------------ press
+   Fire and follow. The job outlives the page, so this only starts it and then
+   polls; closing the tab does not cancel anything. */
+let pressPoll = null;
+
+async function runPress() {
+  const prompt = $("pPrompt").value.trim();
+  if (!prompt) { setStatus("Describe the record first.", "warn"); return; }
+  try {
+    const d = (await api("/v1/press", { method: "POST", body: {
+      prompt,
+      tracks: Number($("pTracks").value) || 1,
+      duration: Number($("pDur").value) || 90,
+      quality: $("pQuality").value,
+      art: $("pArt").checked,
+      instrumental: $("pInst").checked,
+    }})).data;
+    setLibrary(true);                       // the record appears there as it builds
+    followPress(d.press_id);
+  } catch (e) {
+    setStatus("Could not start: " + e.message, "err");
+  }
+}
+
+function followPress(id) {
+  if (pressPoll) clearInterval(pressPoll);
+  const tick = async () => {
+    try {
+      const p = (await api("/v1/press?id=" + id)).data;
+      setStatus(p.stage || p.state, p.state === "failed" ? "err" : "", { bar: true });
+      await loadPresses();
+      // Open the record being built so progress is visible without hunting.
+      const first = document.querySelector("#albums .album");
+      if (first) first.classList.add("open");
+      if (["done", "failed", "cancelled"].includes(p.state)) {
+        clearInterval(pressPoll); pressPoll = null;
+        setStatus(p.state === "done" ? p.stage : (p.error || p.state),
+                  p.state === "done" ? "" : "err");
+        loadLibrary();
+      }
+    } catch (_) { /* keep polling; a failed poll is not a failed job */ }
+  };
+  tick();
+  pressPoll = setInterval(tick, 8000);
+}
+
 /* ------------------------------------------------------------------ utils */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const slug = (s) => (s.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase().slice(0, 48) || "anneal");
@@ -1230,11 +1609,12 @@ document.querySelectorAll(".tab").forEach((tab) => {
     document.querySelectorAll("[data-panel]").forEach((p) => p.classList.toggle("hidden", p.dataset.panel !== mode));
     // Chat has its own transcript column and its own verb.
     const isChat = mode === "chat";
+    if (mode === "press") $("go").textContent = "Press";
     $("chatitems").classList.toggle("hidden", !isChat);
     $("btnLibrary").hidden = isChat;
     $("btnClear").hidden = isChat;
     $("outTitle").textContent = isChat ? "Conversation" : "Output";
-    $("go").textContent = isChat ? "Send" : "Forge";
+    $("go").textContent = isChat ? "Send" : (mode === "press" ? "Press" : "Forge");
     if (isChat) { $("items").classList.add("hidden"); $("empty").classList.add("hidden"); renderChat(); }
     else { setLibrary(false); }
     hideStatus();

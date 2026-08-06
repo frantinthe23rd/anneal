@@ -28,6 +28,11 @@ the spec itself is served locally. Say so if you want it vendored.
 | Image | FLUX.1-schnell 4-bit via [mflux](https://github.com/filipstrand/mflux) | Apache-2.0 | Up to ~1536px |
 | Text | Gemma 4 e4b 4-bit via [mlx-lm](https://github.com/ml-explore/mlx-lm) | Apache-2.0 | Chat completions, streaming |
 
+**Press** chains all four: one brief becomes a title, an artist name, a
+tracklist with varied lengths, lyrics, the music and a cover.
+`POST /v1/press {"prompt": "...", "tracks": 4}`, then poll `/v1/press?id=`.
+Results appear in the Library as a record you can play through.
+
 **Using it by hand?** Open the web UI at **`/`** — prompt window, output view,
 and a forge strip showing which models are hot.
 
@@ -100,6 +105,20 @@ wake a model.
 
 Adding a fourth modality means adding an entry to `services.py` — the supervisor
 is generic.
+
+**Press** (`builder.py`) chains them. Stage order is the design: doing
+lyrics→music→art *per track* would evict and reload a multi-gigabyte model
+between every step. Running every text stage, then every music stage, then the
+cover means each heavy model loads exactly once whatever the track count:
+
+```
+plan (text) → lyrics ×N (text) → music ×N (music) → cover (image)
+```
+
+It calls the gateway's own endpoints on loopback rather than the services
+directly, so it inherits tier switching, admission control, the durable job
+queue and library persistence for free. State is in sqlite, because a five-track
+album is twenty minutes of work that must survive a restart or a closed browser.
 
 ## Where things live
 

@@ -47,6 +47,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from services import SERVICES, MUSIC_TIERS, DEFAULT_MUSIC_TIER, resolve  # noqa: E402
 from jobstore import JobStore  # noqa: E402
 import outputs  # noqa: E402
+from builder import Press, PressStore  # noqa: E402
 
 LISTEN_HOST = os.environ.get("SUPERVISOR_HOST", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("SUPERVISOR_PORT", "8001"))
@@ -520,6 +521,69 @@ _issued_lock = threading.Lock()
 MAX_TRACKED_JOBS = 5000
 
 JOBS = JobStore(os.path.join(AIMUSIC_ROOT, "jobs.db"))
+PRESSES = PressStore(os.path.join(AIMUSIC_ROOT, "presses.db"))
+
+
+def _local_json(path, payload=None, method=None, timeout=1800):
+    """Call our own gateway on loopback.
+
+    Press goes back through the front door rather than reaching into the
+    services directly, so it inherits tier switching, admission control, the
+    durable job queue and library persistence without duplicating any of it.
+    """
+    body = json.dumps(payload).encode() if payload is not None else None
+    conn = http.client.HTTPConnection("127.0.0.1", LISTEN_PORT, timeout=timeout)
+    try:
+        headers = {"Content-Type": "application/json"}
+        if API_KEY:
+            headers["Authorization"] = "Bearer %s" % API_KEY
+        conn.request(method or ("POST" if body else "GET"), path, body=body, headers=headers)
+        resp = conn.getresponse()
+        raw = resp.read()
+        if resp.status >= 400:
+            raise RuntimeError("%s -> %d %s" % (path, resp.status, raw[:200].decode("utf-8", "replace")))
+        return json.loads(raw.decode("utf-8"))
+    finally:
+        conn.close()
+
+
+def press_text(prompt, max_tokens=900):
+    d = _local_json("/v1/text", {"prompt": prompt, "max_tokens": max_tokens,
+                                 "temperature": 0.9, "thinking": False})
+    return ((d or {}).get("data") or {}).get("text", "")
+
+
+def press_music(payload):
+    """Submit and wait. Poll rather than block so a stalled backend surfaces."""
+    task_id = ((_local_json("/release_task", payload) or {}).get("data") or {}).get("task_id")
+    if not task_id:
+        raise RuntimeError("no task_id returned")
+    deadline = time.time() + 2400
+    while time.time() < deadline:
+        time.sleep(6)
+        try:
+            rows = (_local_json("/query_result", {"task_id_list": [task_id]}) or {}).get("data") or []
+        except Exception:
+            continue                      # transient; never resubmit
+        row = next((r for r in rows if r.get("task_id") == task_id), None)
+        if not row:
+            continue
+        if row.get("status") == 2:
+            raise RuntimeError(str(row.get("result"))[:200])
+        if row.get("status") == 1:
+            return json.loads(row["result"]) if isinstance(row.get("result"), str) else []
+    raise RuntimeError("timed out waiting for track")
+
+
+def press_image(prompt, size):
+    d = _local_json("/v1/images/generations",
+                    {"prompt": prompt, "size": size, "steps": 4, "n": 1,
+                     "response_format": "path"})
+    items = (d or {}).get("data") or []
+    return items[0] if items else None
+
+
+PRESS = Press(PRESSES, press_text, press_music, press_image, log=log)
 
 
 def replay_pending_music_jobs():
@@ -1323,6 +1387,19 @@ class Handler(BaseHTTPRequestHandler):
         if route in ("/docs", "/docs/"):
             self._send_bytes(DOCS_HTML.encode(), "text/html; charset=utf-8")
             return
+        if route == "/v1/press":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            pid = (q.get("id") or [""])[0]
+            data = PRESSES.get(pid) if pid else {"presses": PRESSES.recent()}
+            if pid and data is None:
+                self._send_json({"code": 404, "error": "no such press"}, 404)
+                return
+            self._send_json({"data": data, "code": 200, "error": None})
+            return
+
         if route == "/v1/outputs":
             if not self._authorized():
                 self._send_json({"code": 401, "error": "unauthorized"}, 401)
@@ -1387,6 +1464,33 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         route = urllib.parse.urlparse(self.path).path
+
+        if route == "/v1/press":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            payload, _ = self._body()
+            if not (payload.get("prompt") or "").strip():
+                self._send_json({"code": 400, "error": "'prompt' is required"}, 400)
+                return
+            pid = PRESSES.create(payload)
+            # Runs for minutes to tens of minutes, so it cannot be a blocking
+            # request; the caller polls GET /v1/press?id=.
+            threading.Thread(target=PRESS.run, args=(pid,), daemon=True).start()
+            self._send_json({"data": {"press_id": pid, "state": "planning",
+                                      "poll": "/v1/press?id=" + pid},
+                             "code": 200, "error": None})
+            return
+
+        if route == "/v1/press/cancel":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            payload, _ = self._body()
+            pid = payload.get("id") or payload.get("press_id")
+            PRESS.cancel(pid)
+            self._send_json({"data": {"cancelled": pid}, "code": 200, "error": None})
+            return
 
         if route == "/v1/text":
             # A deliberately small contract: prompt in, text out. The
@@ -1456,6 +1560,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         route = urllib.parse.urlparse(self.path).path
+        if route == "/v1/press":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            pid = (q.get("id") or [""])[0]
+            data = PRESSES.get(pid) if pid else {"presses": PRESSES.recent()}
+            if pid and data is None:
+                self._send_json({"code": 404, "error": "no such press"}, 404)
+                return
+            self._send_json({"data": data, "code": 200, "error": None})
+            return
+
         if route == "/v1/outputs":
             if not self._authorized():
                 self._send_json({"code": 401, "error": "unauthorized"}, 401)

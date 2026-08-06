@@ -140,7 +140,15 @@ SERVICES = {
 }
 
 
+# Routes the gateway answers itself. They must never resolve to a backend, or
+# the proxy would try to forward them and 404.
+GATEWAY_ROUTES = ("/v1/press", "/v1/outputs", "/v1/music/tiers", "/supervisor", "/health")
+
+
 def resolve(path: str):
+    for own in GATEWAY_ROUTES:
+        if path == own or path.startswith(own + "/"):
+            return None
     """Return the service name owning `path`, by longest matching prefix."""
     best_name, best_len = None, -1
     for name, spec in SERVICES.items():
