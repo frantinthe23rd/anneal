@@ -9,11 +9,12 @@ Named for what it does to its models: heat one up on demand, let it cool and
 release the memory when idle. On 16 GB that isn't an optimisation, it's the only
 way they all fit.
 
-Built by **Jon Moseley**. It began as an API with no interface at all — somewhere
-a build script or a coding agent could ask for the assets code can't produce: a
-soundtrack, a voiceover, a title card. The music turned out to be the part that
-worked best, which is where **Press** came from. The UI came last, because
-judging a generated take by reading JSON is miserable.
+Concept, product direction and design by **Jon Moseley**; built with **Claude
+Code**, which is also what it was built to serve. It began as an API with no
+interface at all — somewhere a build script or a coding agent could ask for the
+assets code can't produce: a soundtrack, a voiceover, a title card. The music
+turned out to be the part that worked best, which is where **Press** came from.
+The UI came last, because judging a generated take by reading JSON is miserable.
 
 **Everything runs locally.** No inference request leaves the machine. `env.sh`
 sets `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` at run time, so the model
@@ -484,10 +485,10 @@ anyone's context.
 
 ## Credits
 
-Anneal — the gateway, Press, the MCP server and the interface — is designed and
-built by **Jon Moseley**. The hard parts are other people's work, running
-locally and unmodified apart from two documented patches to ACE-Step's non-turbo
-paths (`patches/apply_patches.py`).
+Concept, product direction and design: **Jon Moseley**. Built with **Claude
+Code** — the tools that made it are the tools it feeds. The hard parts are other
+people's work, running locally and unmodified apart from two documented patches
+to ACE-Step's non-turbo paths (`patches/apply_patches.py`).
 
 | Model | For | Licence |
 | --- | --- | --- |
@@ -511,3 +512,26 @@ paths (`patches/apply_patches.py`).
 The gateway itself is Python's standard library — no web framework. Licences are
 as published upstream at the time of writing; confirm them before shipping
 generated output commercially.
+
+## Licence
+
+Anneal's own code is **MIT** — see [LICENSE](LICENSE). © 2026 Jon Moseley.
+
+Three things that licence does *not* cover, because they aren't Anneal's to
+license:
+
+- **The models.** They keep their own terms (see Credits above). Gemma's weights
+  in particular are under Google's Gemma Terms of Use, not an OSI licence.
+- **Generated output.** Yours, subject to those upstream model terms.
+- **The upstream ACE-Step checkout**, which lives outside this repo under its own
+  MIT licence.
+
+MIT asks one thing in return: keep the copyright and permission notice in copies
+and substantial portions. That is the only attribution it can require — it does
+not oblige anyone to credit Anneal in a UI, a README or a product page. If that
+matters to you downstream, ask rather than assume.
+
+Built for **local, personal use on a private network**. It binds to loopback and
+reaches the tailnet through `tailscale serve`; it is not hardened for public
+exposure, and [#13](https://github.com/frantinthe23rd/anneal/issues/13) tracks
+what would need doing first.
