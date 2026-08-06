@@ -169,6 +169,14 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .outhead h2 { margin: 0; font-size: 12px; letter-spacing: .11em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
 .outhead .n { margin-left: auto; color: var(--faint); font-family: var(--mono); font-size: 12px; }
 
+.libbar { display: flex; gap: 6px; padding: 10px 14px 0; flex-wrap: wrap; }
+.libbar button { border: 1px solid var(--line); background: var(--surface-2); color: var(--muted);
+  border-radius: 999px; padding: 5px 12px; font-size: 12px; }
+.libbar button.on { border-color: rgba(255,95,31,.45); color: var(--heat-2); background: rgba(255,95,31,.08); }
+.libbar .sp { margin-left: auto; color: var(--faint); font-size: 12px; align-self: center; }
+.item .when { color: var(--faint); font-family: var(--mono); font-size: 11px; }
+.item .del { color: var(--faint); }
+.item .del:hover { color: var(--bad) !important; }
 .empty { padding: 64px 24px; text-align: center; color: var(--faint); }
 .empty svg { opacity: .3; margin-bottom: 14px; }
 .empty p { margin: 0; font-size: 13.5px; }
@@ -329,10 +337,19 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
     <!-- -------------------------------------------------------- output -->
     <div class="panel">
       <div class="outhead">
-        <h2>Output</h2>
+        <h2 id="outTitle">Output</h2>
         <span class="n" id="outCount"></span>
+        <button class="iconbtn" id="btnLibrary" title="Everything saved on the server">Library</button>
         <button class="iconbtn" id="btnClear">Clear</button>
       </div>
+      <div class="libbar hidden" id="libbar">
+        <button data-k="" class="on">All</button>
+        <button data-k="music">Music</button>
+        <button data-k="speech">Speech</button>
+        <button data-k="images">Images</button>
+        <span class="sp" id="libCount"></span>
+      </div>
+      <div class="items hidden" id="libitems"></div>
       <div id="empty" class="empty">
         <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
           <path d="M3 15h13l3-4h2M5 15v4h9v-4M7 11l2-6h4l-1 6"/>
@@ -597,6 +614,7 @@ async function run() {
     $("go").textContent = "Forge";
     stopElapsed();
     refreshHealth();
+    if (libView) loadLibrary();
   }
 }
 
@@ -711,6 +729,108 @@ async function runImage() {
   hideStatus();
 }
 
+/* ---------------------------------------------------------------- library
+   Everything the server has kept. Served straight off disk, so browsing it
+   never wakes a model. */
+let libView = false, libKind = "", libItems = [];
+
+function fmtWhen(sec) {
+  const d = new Date(sec * 1000);
+  const today = new Date();
+  const sameDay = d.toDateString() === today.toDateString();
+  return sameDay
+    ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString([], { day: "numeric", month: "short" }) + " " +
+      d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+const fmtBytes = (b) => b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.round(b / 1024) + " KB";
+
+async function loadLibrary() {
+  try {
+    const d = (await api("/v1/outputs?limit=300" + (libKind ? "&kind=" + libKind : ""))).data;
+    libItems = d.items || [];
+    $("libCount").textContent = d.total + " saved";
+  } catch (e) {
+    libItems = [];
+    $("libCount").textContent = "could not load: " + e.message;
+  }
+  renderLibrary();
+}
+
+function renderLibrary() {
+  const box = $("libitems");
+  box.textContent = "";
+  if (!libItems.length) {
+    box.appendChild(el("div", "empty", "Nothing saved in this category yet."));
+    return;
+  }
+  libItems.forEach((it) => {
+    const item = el("div", "item");
+    const top = el("div", "top");
+    top.appendChild(el("span", "kind", it.kind));
+    top.appendChild(el("div", "pr", it.prompt || it.name));
+    top.appendChild(el("div", "when", fmtWhen(it.created)));
+    item.appendChild(top);
+
+    // Media is fetched lazily on click: listing 300 items shouldn't pull
+    // hundreds of megabytes through the browser.
+    const holder = el("div");
+    const open = el("button", null, it.kind === "images" ? "Show image" : "Play");
+    open.className = "iconbtn";
+    open.onclick = async () => {
+      open.disabled = true; open.textContent = "Loading…";
+      try {
+        const blob = await api(it.url, { raw: true });
+        const url = URL.createObjectURL(blob); blobUrls.push(url);
+        holder.textContent = "";
+        if (it.kind === "images") {
+          const img = document.createElement("img"); img.src = url; img.alt = it.prompt;
+          holder.appendChild(img);
+        } else {
+          const a = document.createElement("audio"); a.controls = true; a.src = url; a.autoplay = true;
+          holder.appendChild(a);
+        }
+        open.remove();
+      } catch (e) { open.disabled = false; open.textContent = "Failed — retry"; }
+    };
+    holder.appendChild(open);
+    item.appendChild(holder);
+
+    const foot = el("div", "foot");
+    const dl = document.createElement("a");
+    dl.href = it.url; dl.download = it.name; dl.textContent = "Download";
+    foot.appendChild(dl);
+    const del = el("button", "del", "Delete");
+    del.onclick = async () => {
+      if (!confirm("Delete " + it.name + "?")) return;
+      try {
+        await api("/v1/outputs?path=" + encodeURIComponent(it.path), { method: "DELETE" });
+        loadLibrary();
+      } catch (e) { alert("Delete failed: " + e.message); }
+    };
+    foot.appendChild(del);
+    const bits = [fmtBytes(it.bytes)];
+    const m = it.meta || {};
+    if (m.bpm) bits.push(m.bpm + " bpm");
+    if (m.voice) bits.push(m.voice);
+    if (m.size) bits.push(m.size);
+    foot.appendChild(el("span", "sp", bits.join(" · ")));
+    item.appendChild(foot);
+    box.appendChild(item);
+  });
+}
+
+function setLibrary(on) {
+  libView = on;
+  $("outTitle").textContent = on ? "Library" : "Output";
+  $("btnLibrary").textContent = on ? "Session" : "Library";
+  $("libbar").classList.toggle("hidden", !on);
+  $("libitems").classList.toggle("hidden", !on);
+  $("btnClear").hidden = on;
+  if (on) { $("items").classList.add("hidden"); $("empty").classList.add("hidden"); loadLibrary(); }
+  else { renderResults(); }
+}
+
 /* ------------------------------------------------------------------ utils */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const slug = (s) => (s.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase().slice(0, 48) || "anneal");
@@ -753,6 +873,14 @@ document.querySelectorAll("#mVocal button").forEach((b) => {
   };
 });
 $("go").onclick = run;
+$("btnLibrary").onclick = () => setLibrary(!libView);
+document.querySelectorAll("#libbar button").forEach((b) => {
+  b.onclick = () => {
+    libKind = b.dataset.k;
+    document.querySelectorAll("#libbar button").forEach((x) => x.classList.toggle("on", x === b));
+    loadLibrary();
+  };
+});
 $("btnClear").onclick = () => {
   blobUrls.forEach(URL.revokeObjectURL); blobUrls = [];
   results = []; renderResults();

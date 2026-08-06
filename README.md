@@ -72,7 +72,7 @@ Everything bulky is on the **Storage SSD**; the internal disk holds only these s
 | `/Volumes/Storage/AIMusic/hf-cache` | Kokoro + FLUX weights (~9.4 GB) |
 | `/Volumes/Storage/AIMusic/gen-venv` | venv for speech + image (mlx-audio, mflux) |
 | `/Volumes/Storage/AIMusic/uv-cache`, `uv-python` | wheel cache + Python 3.12 (~3.2 GB) |
-| `/Volumes/Storage/AIMusic/outputs` | generated audio and `images/` |
+| `/Volumes/Storage/AIMusic/outputs/{music,speech,images}` | **everything generated**, prompt-named, with JSON sidecars |
 | `/Volumes/Storage/AIMusic/supervisor.log` | supervisor lifecycle log |
 | `/Volumes/Storage/AIMusic/api-server.log` | ACE-Step server log |
 | `/Volumes/Storage/AIMusic/speech-server.log`, `image-server.log` | backend logs |
@@ -103,6 +103,8 @@ that.
 - A `409` (the other heavy model is mid-job) offers to stop it and retry rather
   than just failing.
 - Results stack newest-first with inline playback or preview and a download link.
+- **Library** switches to everything the server has kept — filter by kind, play
+  or preview, download, delete. Served off disk, so browsing wakes no model.
 - `Cmd/Ctrl+Enter` submits.
 
 Dark by design — the accent colour is reserved for things that are genuinely hot
@@ -127,6 +129,20 @@ source ./env.sh
 ```
 
 Audio lands in `/Volumes/Storage/AIMusic/outputs` (`--out` to change).
+
+**Everything generated is saved server-side regardless of client**, under
+`outputs/{music,speech,images}/`, named from the prompt and paired with a JSON
+sidecar holding the parameters that produced it:
+
+```
+outputs/music/2026-08-06T11-39-53_bright-acoustic-folk-with-mandolin_28db5d.mp3
+outputs/music/2026-08-06T11-39-53_bright-acoustic-folk-with-mandolin_28db5d.mp3.json
+```
+
+Sidecars rather than a database, so the metadata travels with the file — copy
+the directory anywhere and it stays self-describing. Music is *copied* out of
+ACE-Step's temp cache, which the backend prunes, and the API's `file` URL is
+rewritten to the durable copy.
 
 Speech and images:
 

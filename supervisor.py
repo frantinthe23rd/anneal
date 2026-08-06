@@ -46,6 +46,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from services import SERVICES, resolve  # noqa: E402
 from jobstore import JobStore  # noqa: E402
+import outputs  # noqa: E402
 
 LISTEN_HOST = os.environ.get("SUPERVISOR_HOST", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("SUPERVISOR_PORT", "8001"))
@@ -762,6 +763,72 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(chunk)
         return True
 
+    # -- persistence ------------------------------------------------------
+    def _persist_output(self, route, request_body, response_body, content_type):
+        """Keep a durable, named copy of whatever a service just produced.
+
+        Best-effort by design: a storage problem must never turn a successful
+        generation into a failed request.
+        """
+        try:
+            req = {}
+            if request_body:
+                try:
+                    req = json.loads(request_body.decode("utf-8"))
+                except Exception:
+                    req = {}
+
+            if route.startswith("/v1/audio/speech") or route.startswith("/v1/speech"):
+                if not isinstance(response_body, bytes) or b"json" in content_type.encode():
+                    return
+                ext = {"mp3": ".mp3", "wav": ".wav", "flac": ".flac",
+                       "opus": ".opus", "aac": ".aac"}.get(
+                    (req.get("response_format") or "wav").lower(), ".wav")
+                outputs.save_bytes("speech", response_body, ext, {
+                    "prompt": req.get("input") or req.get("text") or "",
+                    "voice": req.get("voice"), "speed": req.get("speed"),
+                    "service": "speech",
+                })
+
+            elif route.startswith("/v1/images"):
+                payload = json.loads(response_body.decode("utf-8"))
+                for item in payload.get("data") or []:
+                    # The image service already writes into outputs/images, so
+                    # this only needs to attach the metadata.
+                    outputs.adopt("images", item.get("path"), {
+                        "prompt": req.get("prompt", ""), "seed": item.get("seed"),
+                        "size": req.get("size"), "steps": req.get("steps"),
+                        "seconds": item.get("seconds"), "service": "image",
+                    })
+        except Exception as exc:
+            log("persist failed for %s: %r" % (route, exc))
+
+    def _persist_music_takes(self, task_id, takes):
+        """Copy finished music out of the backend's prunable temp cache."""
+        payload = JOBS.payload_for(task_id) or {}
+        prompt = payload.get("prompt", "")
+        saved = []
+        for take in takes:
+            file_url = take.get("file") or ""
+            params = urllib.parse.parse_qs(urllib.parse.urlparse(file_url).query)
+            src = (params.get("path") or [""])[0]
+            if not src:
+                continue
+            meta = take.get("metas") or {}
+            path = outputs.save_copy("music", src, {
+                "prompt": prompt or take.get("prompt", ""),
+                "lyrics": payload.get("lyrics"),
+                "bpm": meta.get("bpm"), "duration": meta.get("duration"),
+                "key_scale": meta.get("keyscale"), "seed": take.get("seed_value"),
+                "service": "music", "task_id": task_id,
+            })
+            if path:
+                # Point the caller at the durable copy rather than the temp file
+                # the backend is free to prune.
+                take["file"] = "/v1/audio?path=" + urllib.parse.quote(path, safe="")
+                saved.append(path)
+        return saved
+
     # -- job tracking -----------------------------------------------------
     def _track_music_jobs(self, route, request_body, response_body):
         """Remember issued task_ids, and flag ones that no longer exist."""
@@ -836,6 +903,14 @@ class Handler(BaseHTTPRequestHandler):
                 # A terminal state means it never needs replaying again.
                 if row.get("status") in (1, 2):
                     JOBS.complete(original, "done" if row.get("status") == 1 else "failed")
+                if row.get("status") == 1 and isinstance(row.get("result"), str):
+                    try:
+                        takes = json.loads(row["result"])
+                        if self._persist_music_takes(original, takes):
+                            row["result"] = json.dumps(takes)
+                            changed = True
+                    except Exception as exc:
+                        log("persist music failed: %r" % exc)
             return json.dumps(payload).encode() if changed else response_body
         except Exception:
             return response_body
@@ -915,6 +990,8 @@ class Handler(BaseHTTPRequestHandler):
 
                 if resp.status == 200:
                     payload = self._track_music_jobs(route, body, payload)
+                    self._persist_output(route, body, payload,
+                                         resp.getheader("Content-Type") or "")
 
                 self.send_response(resp.status)
                 for key, value in resp.getheaders():
@@ -994,6 +1071,29 @@ class Handler(BaseHTTPRequestHandler):
         if route in ("/docs", "/docs/"):
             self._send_bytes(DOCS_HTML.encode(), "text/html; charset=utf-8")
             return
+        if route == "/v1/outputs":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            try:
+                limit = min(int((q.get("limit") or ["200"])[0]), 1000)
+                offset = max(int((q.get("offset") or ["0"])[0]), 0)
+            except ValueError:
+                limit, offset = 200, 0
+            data = outputs.listing((q.get("kind") or [None])[0], limit, offset)
+            self._send_json({"data": data, "code": 200, "error": None})
+            return
+
+        if route == "/v1/outputs/file":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            if self._serve_file_from_disk([os.path.realpath(outputs.root())]):
+                return          # off disk, so browsing the library wakes nothing
+            self._send_json({"code": 404, "error": "no such output"}, 404)
+            return
+
         if route == "/v1/images/file":
             if not self._authorized():
                 self._send_json({"code": 401, "error": "unauthorized"}, 401)
@@ -1072,6 +1172,19 @@ class Handler(BaseHTTPRequestHandler):
         self._proxy("PUT")
 
     def do_DELETE(self):
+        route = urllib.parse.urlparse(self.path).path
+        if route == "/v1/outputs":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            path = (q.get("path") or [""])[0]
+            ok = outputs.delete(path) if path else False
+            self._send_json({"data": {"deleted": ok, "path": path},
+                             "code": 200 if ok else 404,
+                             "error": None if ok else "not found or outside outputs/"},
+                            200 if ok else 404)
+            return
         self._proxy("DELETE")
 
 

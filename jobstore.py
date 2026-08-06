@@ -120,6 +120,16 @@ class JobStore:
                 self.abandon(task_id)
         return out
 
+    def payload_for(self, task_id):
+        """The original request body, for naming and metadata."""
+        rows = self._exec("SELECT payload FROM jobs WHERE task_id = ?", (task_id,), fetch=True)
+        if not rows:
+            return None
+        try:
+            return json.loads(rows[0][0])
+        except ValueError:
+            return None
+
     def stats(self):
         rows = self._exec("SELECT state, COUNT(*) FROM jobs GROUP BY state", fetch=True) or []
         return {state: count for state, count in rows}

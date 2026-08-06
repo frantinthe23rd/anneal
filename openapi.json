@@ -36,6 +36,10 @@
     {
       "name": "supervisor",
       "description": "Model lifecycle: what is loaded, pre-warm, unload."
+    },
+    {
+      "name": "library",
+      "description": "Everything generated, kept on disk and browsable. Never wakes a model."
     }
   ],
   "paths": {
@@ -549,6 +553,139 @@
         "responses": {
           "200": {
             "description": "Stopped"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/v1/outputs": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "List saved outputs",
+        "description": "Everything the server has kept, newest first. Reads the filesystem — no model is woken.\n\nEach item carries the prompt and the parameters that produced it, from a JSON sidecar written alongside the file.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "music",
+                "speech",
+                "images"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 200,
+              "maximum": 1000
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Saved outputs",
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "total": 7,
+                    "items": [
+                      {
+                        "path": "/Volumes/Storage/AIMusic/outputs/music/2026-08-06T11-39-53_bright-acoustic-folk_28db5d.mp3",
+                        "name": "2026-08-06T11-39-53_bright-acoustic-folk_28db5d.mp3",
+                        "kind": "music",
+                        "bytes": 321069,
+                        "created": 1786012793.98,
+                        "prompt": "bright acoustic folk with mandolin",
+                        "meta": {
+                          "bpm": 70,
+                          "duration": 20.0,
+                          "key_scale": "C minor",
+                          "seed": "1984467799"
+                        },
+                        "url": "/v1/outputs/file?path=..."
+                      }
+                    ]
+                  },
+                  "code": 200
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Delete a saved output",
+        "description": "Removes the file and its sidecar. Refuses anything outside the outputs directory.",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "Not found, or outside outputs/"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/v1/outputs/file": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Download a saved output",
+        "description": "Serves any kind — audio or image — straight off disk. Never wakes a model.",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "File bytes"
+          },
+          "404": {
+            "description": "Not found"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
