@@ -139,8 +139,7 @@
             0 2px 4px rgba(80,40,20,.28), 0 8px 18px -6px rgba(217,74,16,.35);
 }
 
-/* The heat bloom is dark-mode only — on light it reads as a stain. */
-:root[data-theme="light"] body::before { display: none; }
+/* The hearth is dark-mode only — on light it reads as a stain. See .hearth. */
 
 /* ------------------------------------------------------------- dark plates
    The front door and the doc banners are photographs with a scrim over them.
@@ -180,12 +179,44 @@ body {
   font: 15px/1.5 var(--sans);
   -webkit-font-smoothing: antialiased;
 }
-/* Faint heat bloom from the bottom, like light off a hearth. */
-body::before {
-  content: ""; position: fixed; inset: auto 0 0 0; height: 45vh; pointer-events: none;
-  background: radial-gradient(60% 100% at 50% 100%, rgba(255,95,31,.07), transparent 70%);
-  z-index: 0;
-}
+/* ------------------------------------------------------------------ hearth
+   The page heats while a job is in flight: slow rings rise out of a hearth
+   along the bottom edge and fade before they reach the content, over an ember
+   that breathes. It runs only while something is generating and stops when the
+   queue empties, which makes it a status indicator rather than decoration —
+   and is why it replaced the bloom that used to burn permanently.
+   Two composited layers, no per-frame JS. Dark theme only. */
+.hearth { position: fixed; inset: 0; z-index: 0;
+  pointer-events: none; opacity: 0;
+  transition: opacity .9s var(--ease); }
+.hearth.on { opacity: 1; transition-duration: .6s; }
+
+.hearth i, .hearth b {
+  position: absolute; inset: -30% -15% -25% -15%;
+  mask-image: linear-gradient(to top,
+    rgba(0,0,0,.95), transparent 74%);
+  animation: ripple 7s linear infinite; }
+.hearth i { background: repeating-radial-gradient(
+  ellipse 118% 58% at 50% 106%,
+  rgba(255,95,31,.17) 0 2px, transparent 2px 30px); }
+.hearth b { animation-delay: 3.5s;
+  background: repeating-radial-gradient(
+  ellipse 118% 58% at 50% 106%,
+  rgba(255,176,58,.13) 0 2px, transparent 2px 30px); }
+.hearth u { position: absolute; inset: auto 0 -16% 0;
+  height: 48%; animation: ember 5.5s ease-in-out infinite;
+  background: radial-gradient(52% 100% at 50% 100%,
+    rgba(255,95,31,.24), transparent 72%); }
+
+@keyframes ripple { 0% { transform: scale(.88); opacity: 0 }
+  18% { opacity: 1 } 100% { transform: scale(1.62); opacity: 0 } }
+@keyframes ember { 0%,100% { opacity: .45 } 50% { opacity: 1 } }
+
+@media (prefers-reduced-motion: reduce) {
+  .hearth i, .hearth b { display: none }
+  .hearth u { animation: none; opacity: .8 } }
+
+:root[data-theme="light"] .hearth { display: none; }
 
 button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
@@ -223,7 +254,29 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 /* min-height rather than centring the container: with tall content, centring a
    flex child puts its top out of reach of the scrollbar. */
 .hero .hin { position: relative; z-index: 1; min-height: 100%; padding: 6vh 7vw;
-  display: flex; flex-direction: column; justify-content: center; }
+  display: flex; flex-direction: column; }
+/* The first screen carries one idea and one button. Everything else is below
+   the fold and arrives as you scroll to it, so arriving here is not a wall. */
+.hero .hlead { min-height: calc(100vh - 12vh); display: flex; flex-direction: column;
+  justify-content: center; }
+.hero .hcta { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; margin-top: 30px;
+  animation: rise var(--t-slow) var(--ease) both .24s; }
+.hero .go.start { width: auto; margin: 0; padding: 14px 30px; font-size: 13.5px; }
+.hero .hcta a { color: var(--muted); font-size: 13.5px; }
+.hero .hcta a:hover { color: var(--text); }
+.hero .hscroll { display: flex; align-items: center; gap: 9px; margin: 6vh 0 4vh;
+  color: var(--faint); font-size: 11.5px; letter-spacing: .16em; text-transform: uppercase;
+  animation: rise var(--t-slow) var(--ease) both .4s; }
+.hero .hscroll svg { animation: nudge 2.4s ease-in-out infinite; }
+@keyframes nudge { 0%,100% { transform: none; } 50% { transform: translateY(4px); } }
+/* Revealed on scroll rather than all at once. */
+.reveal { opacity: 0; transform: translateY(20px);
+  transition: opacity .55s var(--ease), transform .55s var(--ease); }
+.reveal.in { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  .reveal { opacity: 1; transform: none; }
+  .hero .hscroll svg { animation: none; }
+}
 .hero h1 {
   margin: 0; font-size: clamp(38px, 7vw, 76px); font-weight: 600; letter-spacing: .16em;
   text-transform: uppercase; line-height: 1;
@@ -235,13 +288,12 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   margin: 16px 0 0; max-width: 40ch; color: var(--text); font-size: clamp(15px, 1.7vw, 19px);
   line-height: 1.5; animation: rise var(--t-slow) var(--ease) both .06s;
 }
-.hero .lede b { color: var(--quench); font-weight: 600; }
+.hero .lede b { color: var(--text); font-weight: 650; }
 .hero .sub { margin-top: 8px; max-width: 62ch; color: var(--muted); font-size: 13.5px;
   animation: rise var(--t-slow) var(--ease) both .1s; }
 .hero .strip { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 26px;
   animation: rise var(--t-slow) var(--ease) both .16s; }
-.hero .cards { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 30px;
-  animation: rise var(--t-slow) var(--ease) both .22s; }
+.hero .cards { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 0; }
 .hero .card {
   flex: 1 1 168px; max-width: 230px; text-align: left; padding: 15px 16px;
   border: 1px solid var(--line); border-radius: 11px; background: rgba(26,22,20,.72);
@@ -254,8 +306,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .hero .card .d { color: var(--muted); font-size: 12.5px; line-height: 1.45; }
 /* Two ways in. The API half is not an afterthought — it is why this exists —
    so it gets equal weight on the page rather than a link in the footer. */
-.hero .ways { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 30px; max-width: 900px;
-  animation: rise var(--t-slow) var(--ease) both .26s; }
+.hero .ways { display: flex; gap: 18px; flex-wrap: wrap; margin-top: 7vh; max-width: 900px; }
 .hero .way { flex: 1 1 320px; padding: 2px 0 2px 15px; border-left: 2px solid var(--quench); }
 .hero .way .k { display: block; font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
   color: var(--quench); margin-bottom: 6px; }
@@ -264,8 +315,9 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .hero .way .d a { color: var(--muted); text-decoration: underline; text-underline-offset: 2px;
   text-decoration-color: var(--quench); }
 .hero .way .d a:hover { color: var(--text); }
-.hero .foot { margin-top: 32px; color: var(--faint); font-size: 12px; display: flex; gap: 16px;
-  flex-wrap: wrap; align-items: baseline; animation: rise var(--t-slow) var(--ease) both .32s; }
+.hero .foot { margin-top: 7vh; padding-top: 20px; border-top: 1px solid var(--line);
+  color: var(--faint); font-size: 12px; display: flex; gap: 16px;
+  flex-wrap: wrap; align-items: baseline; }
 .hero .foot a { color: var(--faint); }
 .hero .foot a:hover { color: var(--text); }
 .hero .foot .by { margin-left: auto; }
@@ -461,8 +513,9 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .item .when { color: var(--faint); font-family: var(--mono); font-size: 11px; }
 .item .del { color: var(--faint); }
 .item .del:hover { color: var(--bad) !important; }
-.empty { padding: 64px 24px; text-align: center; color: var(--faint); }
-.empty svg { opacity: .3; margin-bottom: 14px; }
+.empty { padding: 64px 24px; text-align: center; color: var(--faint);
+  border-radius: var(--radius); box-shadow: var(--sh-inset); margin: 14px; }
+.empty svg { opacity: .3; margin-bottom: 14px; color: var(--muted); }
 .empty p { margin: 0; font-size: 13.5px; }
 
 /* No inner scroller. Capping these at viewport height meant an opened album
@@ -748,19 +801,31 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 </head>
 <body>
 
+<div class="hearth" id="hearth" aria-hidden="true"><i></i><b></b><u></u></div>
+
 <div class="hero" id="hero">
  <div class="hin">
-  <img class="heromark" src="/assets/brand/anneal-mark.svg" width="168" height="168" alt="">
-  <h1>Anneal</h1>
-  <p class="lede">Music, speech, images and text — generated <b>entirely on this machine</b>.
-     Nothing you write or make leaves it.</p>
-  <p class="sub">Four models share one machine by taking turns: each heats up when you ask for it
-     and cools down when you stop, which is the only way they all fit. The strip below is the
-     truth about what is warm right now.</p>
+  <div class="hlead">
+    <img class="heromark" src="/assets/brand/anneal-mark.svg" width="168" height="168" alt="">
+    <h1>Anneal</h1>
+    <p class="lede">Music, speech, images and text — generated <b>entirely on this machine</b>.
+       Nothing you write or make leaves it.</p>
 
-  <div class="strip" id="heroStrip"></div>
+    <div class="strip" id="heroStrip"></div>
 
-  <div class="cards">
+    <div class="hcta">
+      <button class="go start" id="btnStart">Start now</button>
+      <a href="#" data-page-link="guide">How it works</a>
+    </div>
+  </div>
+
+  <div class="hscroll" aria-hidden="true">
+    <span>What it makes</span>
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg>
+  </div>
+
+  <div class="cards reveal">
     <div class="card" data-go="press">
       <span class="k">Press</span>
       <span class="d">One brief becomes a single or an album — title, lyrics, music and cover.</span>
@@ -783,7 +848,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
     </div>
   </div>
 
-  <div class="ways">
+  <div class="ways reveal">
     <div class="way">
       <span class="k">By hand</span>
       <span class="d">Pick a mode, write a line, press Forge. The interface tells you what a
@@ -801,7 +866,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
     </div>
   </div>
 
-  <div class="foot">
+  <div class="foot reveal">
     <a href="#" data-page-link="guide">Guide</a>
     <a href="#" data-page-link="api">API</a>
     <a href="#" data-page-link="about">About</a>
@@ -1064,13 +1129,16 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
       <div class="items hidden" id="albums" style="padding:14px 14px 0"></div>
       <div class="items hidden" id="libitems"></div>
       <div id="empty" class="empty">
-        <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
-          <path d="M3 15h13l3-4h2M5 15v4h9v-4M7 11l2-6h4l-1 6"/>
+        <!-- The mono cut of the mark, inlined so currentColor resolves against
+             the page rather than the file. -->
+        <svg width="40" height="40" viewBox="0 0 64 64" aria-hidden="true">
+          <circle cx="32" cy="32" r="22" fill="none" stroke="currentColor" stroke-width="9"
+                  stroke-linecap="round" stroke-dasharray="122 16.2" transform="rotate(-24 32 32)"/>
+          <circle cx="32" cy="32" r="5.5" fill="currentColor"/>
         </svg>
-        <p>Nothing forged yet.</p>
-        <p class="hint" style="margin-top:8px">Describe what you want, then press Forge.
-           Everything you make is kept — <b>Library</b> has all of it, with the settings
-           that produced each one.</p>
+        <p id="emptyLine">No tracks yet. Describe one and press Forge.</p>
+        <p class="hint" style="margin-top:8px">Everything you make is kept — <b>Library</b>
+           has all of it, with the settings that produced each one.</p>
       </div>
       <div class="items hidden" id="items"></div>
     </div>
@@ -1687,6 +1755,12 @@ function renderForge() {
     box.appendChild(chip);
   });
 
+  // The page heats while anything is generating, and cools when the last job
+  // lands. renderForge already runs on every state change and is the only place
+  // that knows about all four kinds of work at once.
+  const working = !!(busy || writing || chatting || pressPoll);
+  $("hearth").classList.toggle("on", working);
+
   // Surface host thrashing: on 16 GB it is the usual reason a job dies or crawls.
   const sys = health.__system || {};
   let warn = $("sysWarn");
@@ -1732,12 +1806,42 @@ function setStatus(msg, kind = "", { bar = false, actions = [], pct = null } = {
 }
 function hideStatus() { $("status").className = "status"; stopElapsed(); }
 
-function startElapsed() {
+/* Roughly how long each kind of request takes once the model is loaded. A
+   five-minute album behind an indeterminate bar reads as hung, so the status
+   line carries an expectation as well as an elapsed time — and says "over" as
+   soon as it is, rather than quietly counting past it. */
+const EXPECT = { music: 70, speech: 6, image: 25, press: 240, chat: 20 };
+
+function expectedFor(kind) {
+  if (kind === "music") {
+    const tier = $("mQuality") && $("mQuality").value;
+    const dur = Number($("mDur") && $("mDur").value) || 30;
+    const base = tier === "high" ? 180 : 70;
+    return Math.round(base * Math.max(1, dur / 30) * (Number($("mTakes").value) || 1));
+  }
+  if (kind === "press") {
+    const n = Number($("pTracks") && $("pTracks").value) || 1;
+    return 120 + n * 150;
+  }
+  return EXPECT[kind] || null;
+}
+
+function fmtShort(s) {
+  return s < 60 ? s + "s" : Math.floor(s / 60) + "m" + (s % 60 ? " " + (s % 60) + "s" : "");
+}
+
+function startElapsed(expect) {
   startedAt = Date.now();
   stopElapsed();
+  // A cold model adds minutes that the per-request estimate knows nothing about.
+  const svc = SERVICE_FOR_MODE[mode];
+  const cold = svc && health[svc] && (health[svc].state || "cold") !== "hot";
+  const total = expect ? expect + (cold ? (svc === "music" ? 210 : 45) : 0) : null;
   elapsedTimer = setInterval(() => {
     const s = Math.round((Date.now() - startedAt) / 1000);
-    $("statusEl").textContent = s < 60 ? s + "s" : Math.floor(s / 60) + "m " + (s % 60) + "s";
+    let t = fmtShort(s);
+    if (total) t += s < total ? " · ~" + fmtShort(total - s) + " left" : " · over estimate";
+    $("statusEl").textContent = t;
   }, 500);
 }
 function stopElapsed() { if (elapsedTimer) clearInterval(elapsedTimer); elapsedTimer = null; $("statusEl").textContent = ""; }
@@ -1795,6 +1899,19 @@ function renderResults() {
 }
 
 /* ---------------------------------------------------------- cold-start hint */
+/* The empty state names the next action for the tab you are on, rather than
+   telling everyone the same thing about forging. */
+const EMPTY_LINE = {
+  music:  "No tracks yet. Describe one and press Forge.",
+  speech: "Nothing spoken yet. Write a line and press Forge.",
+  image:  "No images yet. Describe one and press Forge.",
+  press:  "No records yet. Write a brief and press Press.",
+};
+function setEmptyLine(m) {
+  const n = $("emptyLine");
+  if (n) n.textContent = EMPTY_LINE[m] || EMPTY_LINE.music;
+}
+
 function coldWarning(service) {
   const s = health[service];
   if (s && s.running) return null;
@@ -1813,7 +1930,7 @@ async function run() {
   $("go").classList.add("busy");
   $("go").textContent = "Working…";
   renderForge();
-  startElapsed();
+  startElapsed(expectedFor(mode));
 
   try {
     if (mode === "music") await runMusic();
@@ -2883,9 +3000,17 @@ function followPress(id) {
 /* ------------------------------------------------------------- front door
    A landing state, so arriving at Anneal says what it is and what is warm
    before dropping you into a form. */
+/* The hero is a fixed, scrolling overlay, so while it is up the document
+   behind it must not scroll too — otherwise the window shows two scrollbars,
+   one of which moves nothing you can see. */
+function lockScroll(on) {
+  document.documentElement.style.overflow = on ? "hidden" : "";
+}
+
 function enterApp(tab) {
   const hero = $("hero");
   hero.classList.add("gone");
+  lockScroll(false);
   setTimeout(() => { hero.style.display = "none"; }, 500);
   if (tab) {
     const btn = document.querySelector('.tab[data-mode="' + tab + '"]');
@@ -2897,8 +3022,30 @@ function showHero() {
   const hero = $("hero");
   hero.style.display = "";
   hero.scrollTop = 0;
+  lockScroll(true);
   requestAnimationFrame(() => hero.classList.remove("gone"));
   renderHeroStrip();
+  revealOnScroll();
+}
+
+/* Features arrive as you reach them rather than all at once. Observed rather
+   than tied to a scroll handler, so it costs nothing while idle; and if the
+   browser has no IntersectionObserver everything is simply shown. */
+let revealObserver = null;
+function revealOnScroll() {
+  const items = document.querySelectorAll(".hero .reveal");
+  if (!("IntersectionObserver" in window)) {
+    items.forEach((n) => n.classList.add("in"));
+    return;
+  }
+  if (!revealObserver) {
+    revealObserver = new IntersectionObserver((entries) => {
+      entries.forEach((en) => {
+        if (en.isIntersecting) { en.target.classList.add("in"); revealObserver.unobserve(en.target); }
+      });
+    }, { root: $("hero"), threshold: .18 });
+  }
+  items.forEach((n) => { if (!n.classList.contains("in")) revealObserver.observe(n); });
 }
 
 /* ------------------------------------------------------------------ theme
@@ -3155,6 +3302,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
     // a transcript with the composer underneath it.
     const isChat = mode === "chat";
     $("go").textContent = mode === "press" ? "Press" : "Forge";
+    setEmptyLine(mode);
     if (isChat) { renderChat(); $("cInput").focus(); }
     else setLibrary(false);
     hideStatus();
@@ -3182,6 +3330,7 @@ document.querySelectorAll(".hero .card").forEach((c) => {
 $("heroLib").onclick = (e) => { e.preventDefault(); enterApp("music"); setLibrary(true); };
 $("heroSet").onclick = (e) => { e.preventDefault(); showSettings(); };
 $("brandHome").onclick = showHero;
+$("btnStart").onclick = () => enterApp("music");
 $("footHome").onclick = showHero;
 $("btnSettings").onclick = showSettings;
 $("btnTheme").onclick = toggleTheme;
@@ -3219,6 +3368,40 @@ $("btnClear").onclick = () => {
   blobUrls.forEach(URL.revokeObjectURL); blobUrls = [];
   results = []; renderResults();
 };
+
+/* role="tablist" promises arrow-key movement, so honour it: left/right (and
+   up/down) move between modes, Home and End jump to the ends. */
+document.querySelectorAll(".tabs").forEach((strip) => {
+  strip.addEventListener("keydown", (e) => {
+    const keys = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"];
+    if (!keys.includes(e.key)) return;
+    const tabs = Array.from(strip.querySelectorAll(".tab"));
+    const at = tabs.indexOf(document.activeElement);
+    if (at < 0) return;
+    e.preventDefault();
+    const back = e.key === "ArrowLeft" || e.key === "ArrowUp";
+    const to = e.key === "Home" ? 0
+      : e.key === "End" ? tabs.length - 1
+      : (at + (back ? -1 : 1) + tabs.length) % tabs.length;
+    tabs[to].focus();
+    tabs[to].click();
+  });
+});
+
+/* One Escape handler for every dismissible layer, so the key does the same
+   thing wherever you are. The settings sheet keeps its own, since it closes
+   over a listener it also has to remove. */
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  const box = document.querySelector(".lightbox");
+  if (box) { box.remove(); return; }
+  const sheet = document.querySelector(".sheet");
+  if (sheet) { sheet.remove(); return; }
+  const gate = $("gate");
+  // Only dismissible if a key is already stored — otherwise there is nothing
+  // behind it to go back to.
+  if (!gate.classList.contains("hidden") && apiKey) closeGate();
+});
 
 // Cmd/Ctrl+Enter submits from any field — but not while you are reading a page
 // that has no form on it.
@@ -3326,6 +3509,8 @@ async function boot() {
     $("hero").style.display = "none";
     showPage(hash, { link: false });
   }
+
+  if ($("hero").style.display !== "none") { lockScroll(true); revealOnScroll(); }
 
   await refreshHealth();
   setInterval(async () => { await refreshHealth(); maybeRefreshVoices(); }, 5000);
