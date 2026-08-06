@@ -710,15 +710,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 
 /* ---------------------------------------------------------------- footer */
 .sitefoot { margin-top: 46px; padding-top: 18px; border-top: 1px solid var(--line);
-  display: flex; gap: 8px 20px; flex-wrap: wrap; align-items: baseline;
   color: var(--faint); font-size: 12px; }
 .sitefoot b { color: var(--muted); font-weight: 600; }
-.sitefoot nav { margin-left: auto; display: flex; gap: 16px; flex-wrap: wrap; }
-.sitefoot a { color: var(--faint); text-decoration: none; }
-.sitefoot a:hover { color: var(--text); }
-.sitefoot button { border: 0; background: none; color: var(--faint); font-size: 12px; padding: 0; }
-.sitefoot button:hover { color: var(--text); }
-@media (max-width: 700px) { .sitefoot nav { margin-left: 0; } }
 
 /* ------------------------------------------------------------------ chat
    A conversation is not a form with an output panel: the transcript is the
@@ -858,8 +851,6 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
   </div>
 
   <div class="foot reveal">
-    <a href="#" data-page-link="guide">Guide</a>
-    <a href="#" data-page-link="api">API</a>
     <a href="#" data-page-link="about">About</a>
     <a href="#" id="heroLib">Library</a>
     <a href="/docs" target="_blank">OpenAPI</a>
@@ -1593,14 +1584,7 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
   </div>
 
   <footer class="sitefoot">
-    <span>Anneal — local generation, built by <b>Jon Moseley</b>.</span>
-    <nav>
-      <a href="#" data-page-link="guide">Guide</a>
-      <a href="#" data-page-link="api">API</a>
-      <a href="#" data-page-link="about">About</a>
-      <a href="/openapi.json" target="_blank">Spec</a>
-      <button id="footHome">Front door</button>
-    </nav>
+    <span>Anneal — local generation, built by <b>Jon Moseley</b>. MIT licensed.</span>
   </footer>
 </div>
 
@@ -3333,7 +3317,6 @@ $("heroLib").onclick = (e) => { e.preventDefault(); enterApp("music"); setLibrar
 $("heroSet").onclick = (e) => { e.preventDefault(); showSettings(); };
 $("brandHome").onclick = showHero;
 $("btnStart").onclick = () => enterApp("music");
-$("footHome").onclick = showHero;
 $("btnSettings").onclick = showSettings;
 $("btnTheme").onclick = toggleTheme;
 applyTheme(document.documentElement.getAttribute("data-theme") || "dark");
