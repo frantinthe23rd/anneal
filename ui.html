@@ -1429,6 +1429,23 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
       <p>Ask for <code>path</code> rather than <code>b64_json</code> when the caller is on the same
          machine or an agent: a megabyte of base64 in a response is a poor use of anyone's
          context.</p>
+      <p>Passing <code>init_image</code> — the <code>path</code> of an image this server made —
+         asks for a <b>variation</b> of it, with <code>retention</code> between 0.3 and 0.95
+         controlling how much survives.</p>
+      <div class="cb"><pre data-origin>curl -X POST "__ORIGIN__/v1/images/generations" \
+  -H "Authorization: Bearer $ANNEAL_KEY" -H 'Content-Type: application/json' \
+  -d '{"prompt": "a lighthouse in a storm, oil painting",
+       "init_image": "/Volumes/Storage/AIMusic/outputs/images/a_lighthouse-7.png",
+       "retention": 0.7, "response_format": "path"}'</pre></div>
+      <div class="note">
+        <span class="k">A variation is not an edit</span>
+        <p>It keeps the composition and re-renders the detail; it does not apply prompt changes
+           to the image. Measured: asking a brass watch to become silver returns the same brass
+           watch, at every retention down to 0.5. The server spends
+           <code>int(steps × retention)</code> steps reproducing the original, and schnell is
+           distilled to four — so keeping the image costs the steps that would redraw it.
+           Requests with an init image default to 8 steps for that reason.</p>
+      </div>
     </section>
 
     <section>
@@ -1472,7 +1489,9 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
 }</pre></div>
       <p>Tools: <code>service_status</code>, <code>prewarm</code>, <code>unload_models</code>,
          <code>generate_music</code>, <code>check_music_job</code>, <code>generate_speech</code>,
-         <code>generate_image</code>.</p>
+         <code>generate_image</code>. <b>Press is not among them</b>, and neither are image
+         variations — both are HTTP-only for now, so an agent that wants a whole record has to
+         call <code>/v1/press</code> itself.</p>
       <p>Two choices in there are deliberate, and both are about agents rather than about music.
          <b>Music submits and returns a job id</b> instead of blocking for minutes, with the tool
          descriptions telling the agent not to resubmit a slow job. <b>Binary comes back as a file

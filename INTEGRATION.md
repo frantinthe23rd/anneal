@@ -11,6 +11,8 @@ and release the memory when idle.
 | Music | ACE-Step 1.5 | async: submit → poll → download | 1.5–3 min |
 | Speech | Kokoro-82M | synchronous, returns bytes | 1–2 s |
 | Image | FLUX.1-schnell 4-bit | synchronous, returns bytes | ~2 min |
+| Text | Gemma 4 E4B 4-bit | synchronous or streamed | seconds |
+| **Press** | all four, in one call | async: submit → poll → download zip | 4 min – 1 hour |
 
 **Interactive API docs are hosted at
 <https://jons-mac-mini.pangolin-darter.ts.net/docs>**, with the raw spec at
@@ -223,6 +225,65 @@ the bytes in your own storage.** Do not treat the URL as durable.
 
 ---
 
+## 3a. Press: a whole record in one call
+
+Press chains every service — plan, lyrics, music, cover — behind a single
+request. It is the highest-value endpoint here and the one most worth wrapping,
+because it does in one call what would otherwise be a dozen and gets the model
+ordering right.
+
+```bash
+curl -X POST "$ANNEAL_URL/v1/press" \
+  -H "Authorization: Bearer $ANNEAL_KEY" -H 'Content-Type: application/json' \
+  -d '{"prompt": "a short winter album about leaving a coastal town, folk with strings",
+       "tracks": 4, "duration": 120, "quality": "draft", "art": true}'
+# -> {"data": {"id": "0f2c…", "state": "planning"}}
+
+curl "$ANNEAL_URL/v1/press?id=0f2c…" -H "Authorization: Bearer $ANNEAL_KEY"
+```
+
+Poll the same way you poll music — every 3–5 seconds. `state` runs
+`planning → writing → recording → artwork → done`, with `stage_note` carrying
+human-readable progress and `tracks[]` filling in as each one lands.
+
+| Parameter | Default | Notes |
+| --- | --- | --- |
+| `prompt` | required | The brief for the whole record. |
+| `tracks` | `1` | 1–8. One is a single. |
+| `duration` | `90` | Target seconds per track; the planner varies around it. |
+| `duration_min` / `duration_max` | 60% / 150% of `duration` | Bounds for that variation. |
+| `quality` | `draft` | `draft` or `high`, as for music. |
+| `instrumental` | `false` | Skips the lyric stage. |
+| `art` | `true` | Generate a cover. This is the only stage needing the image model. |
+| `art_size` | `1024x1024` | Cover dimensions. |
+| `audio_format` | `flac` | Master format. Downloads transcode from it. |
+
+**Budget for it properly.** A single is a few minutes; eight tracks is most of
+an hour. The stage order — every text stage, then every music stage, then the
+cover — is deliberate: doing lyrics→music→art per track would evict and reload a
+multi-gigabyte model between every step.
+
+**Downloading.** `GET /v1/press/download?id=…&format=mp3&bitrate=320k` returns
+the whole record as a zip: audio, cover and tracklist. Masters are FLAC, so a
+lossy format is transcoded from the original rather than from another lossy copy.
+Omit `format` for the masters as they are.
+
+**Interruption and cancellation.** A press outlives the client, so closing your
+connection does not stop it. If the gateway restarts mid-run the record is marked
+`interrupted` rather than left claiming to work, and `POST /v1/press/resume`
+`{"id": …}` finishes it — finished tracks are kept, only the missing work is
+redone. `POST /v1/press/cancel` `{"id": …}` stops one deliberately and frees the
+heavy slot; a track already in flight may still land, and a cancelled press
+cannot be resumed. `DELETE /v1/press?id=…` removes the record, with `&files=1`
+to take its audio and cover with it.
+
+**One at a time.** Two concurrent presses would interleave their stages and
+defeat the ordering entirely — see
+[#14](https://github.com/frantinthe23rd/anneal/issues/14). Serialise them your
+side until that is enforced server-side.
+
+---
+
 ## 4. Request parameters
 
 Only `prompt` is really required. Everything else has a sane default.
@@ -413,6 +474,29 @@ curl -X POST "$ANNEAL_URL/v1/images/generations" \
 | `n` | `1` | Max 4. Each costs a full generation. |
 | `seed` | random | With `n>1` seeds increment from this. |
 | `response_format` | `b64_json` | Use `path` to skip base64 and fetch via `/v1/images/file?path=`. |
+| `init_image` | — | Absolute `path` from a previous result. Makes this a **variation** of that image. Paths outside the server's output directory are rejected with 400. |
+| `retention` | `0.7` | 0.3–0.95. How much of `init_image` survives. Ignored without it. |
+
+### Variations are another take, not an edit
+
+`init_image` keeps the composition, subject and lighting of an earlier image and
+re-renders its detail. It does **not** apply prompt changes to that image.
+Measured on schnell: asking a brass watch to become silver returns the same
+brass watch, and asking black velvet to become red returns black velvet, at
+every retention down to 0.5 with six free steps. The init latent dominates.
+
+The reason is arithmetic. The server spends `int(steps * retention)` steps
+reproducing the original, and schnell is distilled to four — so keeping the
+image spends the very steps that would redraw it. Requests carrying
+`init_image` therefore default to **8** steps rather than 4, so that 0.85,
+0.7 and 0.55 have genuinely different budgets; at 4 steps two of those three
+produce byte-identical files. An explicit `steps` still wins.
+
+Responses for a variation carry `derived_from` and `retention` alongside the
+usual fields, and the saved sidecar records both.
+
+Use it for: colour and texture variants, damage states, tile variations, another
+take of the same shot. Not for: changing what is in the picture.
 
 `b64_json` inflates a ~1.3 MB PNG to ~1.7 MB of JSON. For anything
 latency-sensitive use `"response_format": "path"` and fetch the bytes separately.
@@ -429,13 +513,30 @@ Remember this evicts the music model.
 | GET | `/v1/stats` | music | Queue depth |
 | POST | `/v1/audio/speech` | speech | Synthesize speech, returns bytes |
 | GET | `/v1/voices` | speech | List voices |
-| POST | `/v1/images/generations` | image | Generate images |
+| POST | `/v1/images/generations` | image | Generate images, or a variation of one |
 | GET | `/v1/images/file?path=` | image | Download a generated image |
+| POST | `/v1/chat/completions` | text | OpenAI-shaped chat, streaming supported |
+| POST | `/v1/text` | text | One-shot prompt in, text out |
+| POST | `/v1/press` | in stages | Start a record: plan, lyrics, music, cover |
+| GET | `/v1/press?id=` | **no** | Poll a press, or list recent ones without `id` |
+| GET | `/v1/press/download?id=` | **no** | The whole record as a zip, transcoded on request |
+| POST | `/v1/press/resume` | in stages | Finish a press left `interrupted` by a restart |
+| POST | `/v1/press/cancel` | **no** | Stop a press deliberately; keeps finished tracks |
+| DELETE | `/v1/press?id=` | **no** | Remove a record; `&files=1` takes its audio too |
+| GET | `/v1/outputs` | **no** | The library, filterable by `kind` |
+| GET | `/v1/outputs/file?path=` | **no** | Download any saved output |
+| DELETE | `/v1/outputs?path=` | **no** | Delete a saved output and its sidecar |
+| GET | `/v1/music/tiers` | **no** | Which music model is loaded, and what else exists |
 | GET | `/health` | **no** | Per-service state |
 | GET | `/supervisor/status` | **no** | Idle seconds, memory, in-flight count |
+| GET | `/supervisor/auth` | **no** | Whether you are already authenticated, and how |
 | POST | `/supervisor/start` | yes | Pre-warm; blocks until ready |
 | POST | `/supervisor/stop` | **no** | Unload now, free the RAM |
 | GET | `/docs`, `/openapi.json` | **no** | Interactive docs and raw spec |
+
+Anything marked "wakes model: no" is answered by the gateway itself off disk, so
+polling, browsing the library and downloading finished work never cost a cold
+start.
 
 ---
 

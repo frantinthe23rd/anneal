@@ -360,7 +360,9 @@
                 "size": "1024x1024",
                 "steps": 4,
                 "n": 1,
-                "response_format": "b64_json"
+                "response_format": "b64_json",
+                "init_image": "/Volumes/Storage/AIMusic/outputs/images/a_puffin-42.png",
+                "retention": 0.7
               }
             }
           }
@@ -378,7 +380,8 @@
                       "url": "/v1/images/file?path=...",
                       "seed": 42,
                       "seconds": 34.2,
-                      "b64_json": "iVBORw0KGgo..."
+                      "b64_json": "iVBORw0KGgo...",
+                      "derived_from": null
                     }
                   ],
                   "code": 200
@@ -1075,6 +1078,70 @@
           }
         }
       }
+    },
+    "/v1/press/cancel": {
+      "post": {
+        "tags": [
+          "press"
+        ],
+        "summary": "Cancel a press",
+        "description": "Stops a press that is planning, writing or recording. Tracks already finished are kept and stay in the library; nothing in flight is rolled back, so a track being generated at the moment of cancellation may still land. Cancelling frees the heavy slot for other work.\n\nA cancelled press cannot be resumed — `/v1/press/resume` only picks up records marked `interrupted`, which is what a gateway restart produces.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "The press id. `press_id` is accepted as an alias."
+                  }
+                }
+              },
+              "example": {
+                "id": "0f2c…"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/supervisor/auth": {
+      "get": {
+        "tags": [
+          "supervisor"
+        ],
+        "summary": "Who am I, and do I need a key?",
+        "description": "Reports whether this caller is already authenticated and by what means. Public, because it only reflects an identity the caller already has — it is what lets the web UI skip the key prompt over a tailnet. `via` is `tailscale` or `key`; `user` is the tailnet login where there is one.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/supervisor/whoami": {
+      "get": {
+        "tags": [
+          "supervisor"
+        ],
+        "summary": "What Tailscale says about this caller",
+        "description": "The raw `Tailscale-*` headers the proxy attached, plus the client address. Public, and mostly a debugging aid for working out why identity is or is not being trusted — the headers are only believed while the listener is bound to loopback.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1304,8 +1371,20 @@
               "path"
             ],
             "default": "b64_json"
+          },
+          "init_image": {
+            "type": "string",
+            "description": "Absolute path of an image this server produced, from a previous result's `path`. Makes the request a **variation**: the composition, subject and lighting of that image are kept and its details re-rendered.\n\nThis is not an edit. Measured on schnell: asking a brass watch to become silver returns the same brass watch, at every retention down to 0.5. The init latent dominates, and a four-step distilled model has no step budget left to act on the prompt. Use it for another take of the same image, not to change what is in it.\n\nPaths outside the server's own output directory are rejected with 400."
+          },
+          "retention": {
+            "type": "number",
+            "minimum": 0.3,
+            "maximum": 0.95,
+            "default": 0.7,
+            "description": "How much of `init_image` survives. Ignored unless `init_image` is set.\n\nQuantised by the step count: the server spends `int(steps * retention)` steps reproducing the original, so at schnell's default of 4 there are only three distinct settings. Requests carrying `init_image` therefore default to **8** steps rather than 4, which gives 0.85 / 0.7 / 0.55 genuinely different budgets. An explicit `steps` still wins."
           }
-        }
+        },
+        "description": ""
       }
     }
   }

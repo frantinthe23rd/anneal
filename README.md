@@ -34,7 +34,7 @@ it uses are all served from `assets/`.
 | --- | --- | --- | --- |
 | Music | [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) | MIT | Songs with vocals, instrumentals, covers, continuation — up to 10 min. Two quality tiers. |
 | Speech | [Kokoro-82M](https://huggingface.co/prince-canuma/Kokoro-82M) via [mlx-audio](https://github.com/Blaizzy/mlx-audio) | Apache-2.0 | 28 voices, en/uk |
-| Image | FLUX.1-schnell 4-bit via [mflux](https://github.com/filipstrand/mflux) | Apache-2.0 | Up to ~1536px |
+| Image | FLUX.1-schnell 4-bit via [mflux](https://github.com/filipstrand/mflux) | Apache-2.0 | Up to ~1536px, plus variations of an earlier image |
 | Text | Gemma 4 e4b 4-bit via [mlx-lm](https://github.com/ml-explore/mlx-lm) | Gemma Terms of Use | Chat completions, streaming |
 
 (The Gemma row previously said Apache-2.0 here. That was wrong: the *tooling* is
@@ -264,6 +264,13 @@ that.
 - A `409` (the other heavy model is mid-job) offers to stop it and retry rather
   than just failing.
 - Results stack newest-first with inline playback or preview and a download link.
+- **Vary this** on any generated image feeds it back as an init latent, keeping
+  the composition and re-rendering the detail. Worth knowing what it is not: it
+  does **not** apply prompt changes to an existing image. Measured — asking a
+  brass watch to become silver returns the same brass watch. Distillation is
+  why: keeping the image spends the steps that would redraw it. Use it for
+  variants of a shot, not to change what is in one. See
+  [#19](https://github.com/frantinthe23rd/anneal/issues/19).
 - **Chat** is a plain conversation with the local Gemma model, streamed, in the
   shape every chat interface has: transcript above, composer below, **Enter to
   send** and Shift+Enter for a newline. Replies render as **Markdown** — the model
