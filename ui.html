@@ -142,6 +142,35 @@
 /* The heat bloom is dark-mode only — on light it reads as a stain. */
 :root[data-theme="light"] body::before { display: none; }
 
+/* ------------------------------------------------------------- dark plates
+   The front door and the doc banners are photographs with a scrim over them.
+   They stay dark in both themes, so they must not inherit the light theme's
+   text colours — doing so painted near-black type onto a near-black plate and
+   made the hero lede, the card titles and every banner paragraph unreadable.
+   Re-declaring the dark tokens on those two subtrees fixes all of it without a
+   single light-theme override anywhere else: the rules inside are unchanged,
+   they just resolve against dark values again. */
+.hero, .doc .banner {
+  /* Setting `color` here as well as the tokens is load-bearing, not belt and
+     braces: `body` already computed `color: var(--text)` against the light
+     value, and inheritance carries that computed colour down regardless of
+     what the tokens say further in. Anything inside that sets its own colour
+     re-resolves and was fine; anything that merely inherited — the hero card
+     titles, most of the banner — stayed near-black on near-black. */
+  color: var(--text);
+  --text:     #ece4dc;
+  --read:     #d2c6ba;
+  --muted:    #948477;
+  --faint:    #6b5d53;
+  --line:     #302825;
+  --line-2:   #3d332e;
+  --surface:  #1a1614;
+  --surface-2:#221d1a;
+  --heat-1:   #ff5f1f;
+  --heat-2:   #ffb03a;
+  --heat-edge: rgba(255,95,31,.42);
+}
+
 * { box-sizing: border-box; }
 html, body { height: 100%; }
 body {
@@ -207,7 +236,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   line-height: 1.5; animation: rise var(--t-slow) var(--ease) both .06s;
 }
 .hero .lede b { color: var(--heat-2); font-weight: 600; }
-.hero .sub { margin-top: 8px; color: var(--muted); font-size: 13.5px;
+.hero .sub { margin-top: 8px; max-width: 62ch; color: var(--muted); font-size: 13.5px;
   animation: rise var(--t-slow) var(--ease) both .1s; }
 .hero .strip { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 26px;
   animation: rise var(--t-slow) var(--ease) both .16s; }
@@ -1591,6 +1620,10 @@ async function refreshHealth() {
     health.__system = d.system || {};
   } catch (_) { health = {}; }
   renderForge();
+  // The front door says "the strip below is the truth about what is warm right
+  // now" and then showed nothing: renderHeroStrip only ran from showHero(),
+  // which fires when you navigate *back* to the hero, never on first load.
+  renderHeroStrip();
 }
 
 /* Sizes are phys_footprint, the figure Activity Monitor shows. Anything past a
