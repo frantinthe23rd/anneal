@@ -36,6 +36,12 @@ CREATE TABLE IF NOT EXISTS aliases (
     original TEXT PRIMARY KEY,
     current  TEXT NOT NULL
 );
+-- Which durable files a finished job produced, so repeated polls return the
+-- same copies instead of writing a fresh one every time.
+CREATE TABLE IF NOT EXISTS saved (
+    task_id TEXT PRIMARY KEY,
+    paths   TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS jobs_state ON jobs(state);
 CREATE INDEX IF NOT EXISTS aliases_current ON aliases(current);
 """
@@ -119,6 +125,19 @@ class JobStore:
             except ValueError:
                 self.abandon(task_id)
         return out
+
+    def set_saved(self, task_id, paths):
+        self._exec("INSERT OR REPLACE INTO saved (task_id, paths) VALUES (?, ?)",
+                   (task_id, json.dumps(paths)))
+
+    def get_saved(self, task_id):
+        rows = self._exec("SELECT paths FROM saved WHERE task_id = ?", (task_id,), fetch=True)
+        if not rows:
+            return None
+        try:
+            return json.loads(rows[0][0])
+        except ValueError:
+            return None
 
     def payload_for(self, task_id):
         """The original request body, for naming and metadata."""

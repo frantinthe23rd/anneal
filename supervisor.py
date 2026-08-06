@@ -804,7 +804,18 @@ class Handler(BaseHTTPRequestHandler):
             log("persist failed for %s: %r" % (route, exc))
 
     def _persist_music_takes(self, task_id, takes):
-        """Copy finished music out of the backend's prunable temp cache."""
+        """Copy finished music out of the backend's prunable temp cache.
+
+        Idempotent: a finished job can be polled any number of times, and each
+        poll used to write another copy of every take.
+        """
+        already = JOBS.get_saved(task_id)
+        if already and len(already) == len(takes):
+            for take, path in zip(takes, already):
+                if os.path.isfile(path):
+                    take["file"] = "/v1/audio?path=" + urllib.parse.quote(path, safe="")
+            return already
+
         payload = JOBS.payload_for(task_id) or {}
         prompt = payload.get("prompt", "")
         saved = []
@@ -827,6 +838,8 @@ class Handler(BaseHTTPRequestHandler):
                 # the backend is free to prune.
                 take["file"] = "/v1/audio?path=" + urllib.parse.quote(path, safe="")
                 saved.append(path)
+        if saved:
+            JOBS.set_saved(task_id, saved)
         return saved
 
     # -- job tracking -----------------------------------------------------
@@ -975,6 +988,15 @@ class Handler(BaseHTTPRequestHandler):
                     continue      # set from the body we actually send, below
                 headers[key] = value
             headers["Host"] = "127.0.0.1:%d" % svc.port
+            # The gateway is the trust boundary; the backends are internal,
+            # loopback-only services. Having already authenticated the caller —
+            # by key or by tailnet identity — present the backend's own
+            # credential rather than passing the client's through. Without this,
+            # a browser authenticated by Tailscale reached ACE-Step with no
+            # Authorization header at all and got its 401, which looked to the
+            # user like Anneal asking for a key it had just said wasn't needed.
+            if API_KEY:
+                headers["Authorization"] = "Bearer %s" % API_KEY
             # Rewriting task ids changes the body length, so Content-Length must
             # be recomputed. Forwarding the client's value truncated the body by
             # a byte, which corrupted the backend's JSON *and* desynced
