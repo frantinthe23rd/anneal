@@ -7,13 +7,26 @@ host and over the tailnet. Nothing leaves the machine.
 
 Named for what it does to its models: heat one up on demand, let it cool and
 release the memory when idle. On 16 GB that isn't an optimisation, it's the only
-way all three fit.
+way they all fit.
+
+**Everything runs locally.** No inference request leaves the machine. `env.sh`
+sets `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` at run time, so the model
+libraries resolve from the local cache and *raise* rather than quietly fetching
+anything — a missing or mis-pinned model fails loudly instead of being
+downloaded mid-request. `download-models.sh` and `update.sh` clear those flags
+deliberately; they are the only places a download happens. No hosted-model
+client (OpenAI, Anthropic, and so on) is installed in either virtualenv.
+
+The one external fetch is `/docs`, which pulls Swagger UI's CSS and JS from a
+CDN for the browser to render. No prompt or generated content is involved, and
+the spec itself is served locally. Say so if you want it vendored.
 
 | Service | Model | Licence | Output |
 | --- | --- | --- | --- |
 | Music | [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) | MIT | Songs with vocals, instrumentals, covers, continuation — up to 10 min. Two quality tiers. |
 | Speech | [Kokoro-82M](https://huggingface.co/prince-canuma/Kokoro-82M) via [mlx-audio](https://github.com/Blaizzy/mlx-audio) | Apache-2.0 | 28 voices, en/uk |
 | Image | FLUX.1-schnell 4-bit via [mflux](https://github.com/filipstrand/mflux) | Apache-2.0 | Up to ~1536px |
+| Text | Gemma 4 e4b 4-bit via [mlx-lm](https://github.com/ml-explore/mlx-lm) | Apache-2.0 | Chat completions, streaming |
 
 **Using it by hand?** Open the web UI at **`/`** — prompt window, output view,
 and a forge strip showing which models are hot.

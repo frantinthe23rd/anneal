@@ -98,6 +98,32 @@ SERVICES = {
         "busy_path": None,
         "log": os.path.join(AIMUSIC_ROOT, "speech-server.log"),
     },
+    # Text and code generation. mlx-lm ships an OpenAI-compatible server, so
+    # this needs no wrapper of its own — just a service entry.
+    #
+    # NOTE the routes: mlx_lm.server also serves /v1/models, which already
+    # belongs to music. Only the completion endpoints are routed here, so the
+    # collision never arises.
+    "text": {
+        "routes": ["/v1/chat/completions", "/v1/completions"],
+        "port": _int("TEXT_PORT", 8014),
+        "cmd": [GEN_PYTHON, "-m", "mlx_lm", "server",
+                # Resolved local snapshot rather than a repo id, so nothing can
+                # attempt a Hub lookup at run time.
+                "--model", os.environ.get("ANNEAL_TEXT_MODEL", '/Volumes/Storage/AIMusic/hf-cache/hub/models--mlx-community--gemma-4-e4b-it-4bit/snapshots/475b9088d29754a3379866cf5aeb6b41acd313c2'),
+                "--host", "127.0.0.1", "--port", str(_int("TEXT_PORT", 8014))],
+        "cwd": HERE,
+        "env": {},
+        "port_env": None,          # the port is already on the command line
+        # ~5 GB. Not in the same class as music or image, so it does not evict
+        # them — but it is not free either, hence the short idle timeout.
+        "heavy": False,
+        "ready_timeout": _int("TEXT_READY_TIMEOUT", 600),
+        "idle_timeout": _int("TEXT_IDLE_TIMEOUT", 300),
+        "busy_path": None,
+        "log": os.path.join(AIMUSIC_ROOT, "text-server.log"),
+        "health_path": "/v1/models",   # mlx_lm has no /health
+    },
     "image": {
         "routes": ["/v1/images"],
         "port": _int("IMAGE_PORT", 8013),

@@ -31,6 +31,11 @@
       "revision": "c410d249e71ea9385a7b586865e65b1473e1098d",
       "target": "checkpoints_dir/acestep-v15-sft",
       "note": "High-quality tier. Non-distilled, runs 32 steps."
+    },
+    "mlx-community/gemma-4-e4b-it-4bit": {
+      "revision": "475b9088d29754a3379866cf5aeb6b41acd313c2",
+      "target": "hf_cache",
+      "note": "Text/code generation, served by mlx_lm.server. Reasoning model \u2014 send chat_template_kwargs.enable_thinking=false for direct answers."
     }
   },
   "upstream": {

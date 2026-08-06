@@ -40,6 +40,10 @@
     {
       "name": "library",
       "description": "Everything generated, kept on disk and browsable. Never wakes a model."
+    },
+    {
+      "name": "text",
+      "description": "Gemma 4 e4b (4-bit) via mlx-lm — OpenAI-compatible chat completions, with streaming."
     }
   ],
   "paths": {
@@ -728,6 +732,47 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/chat/completions": {
+      "post": {
+        "tags": [
+          "text"
+        ],
+        "summary": "Chat completion (OpenAI-compatible, streaming supported)",
+        "description": "Local Gemma 4 e4b. Standard OpenAI chat-completions shape, so most client libraries work by changing the base URL.\n\n**Streaming works** — set `stream: true` and the gateway relays SSE chunks as they arrive rather than buffering the completion.\n\n**This is a reasoning model.** By default it emits a long `delta.reasoning` channel before any `delta.content`, and will exhaust a small `max_tokens` while still thinking. For direct answers send `chat_template_kwargs: {\"enable_thinking\": false}`. Leave it on when you actually want the reasoning.\n\n`model` is ignored — the gateway substitutes whichever model is loaded, so you can send anything or omit it.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "model": "gemma",
+                "stream": true,
+                "max_tokens": 700,
+                "chat_template_kwargs": {
+                  "enable_thinking": false
+                },
+                "messages": [
+                  {
+                    "role": "user",
+                    "content": "Write a verse of an indie folk song about waiting."
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Completion, or an SSE stream when `stream: true`"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/BackendUnavailable"
           }
         }
       }

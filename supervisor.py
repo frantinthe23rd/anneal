@@ -55,6 +55,17 @@ AIMUSIC_ROOT = os.environ.get("AIMUSIC_ROOT", "/Volumes/Storage/AIMusic")
 ACESTEP_DIR = os.environ.get("ACESTEP_DIR", os.path.join(AIMUSIC_ROOT, "ACE-Step-1.5"))
 TAILNET_HOST = os.environ.get("TAILNET_HOST", "")
 
+# mlx_lm names its model by the path it loaded, so the gateway rewrites the
+# `model` field of completion requests to match. Callers send anything.
+def _text_model_path():
+    cmd = SERVICES.get("text", {}).get("cmd") or []
+    return cmd[cmd.index("--model") + 1] if "--model" in cmd else ""
+
+
+TEXT_MODEL_PATH = _text_model_path()
+TEXT_MODEL_NAME = os.path.basename(os.path.dirname(os.path.dirname(TEXT_MODEL_PATH))) \
+    .replace("models--", "").replace("--", "/") if TEXT_MODEL_PATH else ""
+
 REAP_INTERVAL = 20.0
 PROXY_TIMEOUT = float(os.environ.get("PROXY_TIMEOUT", "1800"))
 
@@ -126,6 +137,18 @@ DOCS_HTML = """<!doctype html>
   </body>
 </html>
 """
+
+
+def _is_stream(resp):
+    """Whether a backend response should be relayed chunk by chunk.
+
+    Server-sent events, or any response with no declared length — both mean the
+    body arrives over time and must not be collected before forwarding.
+    """
+    ctype = (resp.getheader("Content-Type") or "").lower()
+    if "text/event-stream" in ctype:
+        return True
+    return resp.getheader("Content-Length") is None and resp.getheader("Transfer-Encoding")
 
 
 def log(msg: str) -> None:
@@ -281,7 +304,7 @@ class Service:
         """
         if not self.is_running():
             return "cold"
-        payload = self._get_json("/health", timeout=2.0)
+        payload = self._get_json(self.spec.get("health_path", "/health"), timeout=2.0)
         if payload is None:
             return "heating"
         data = payload.get("data", payload) or {}
@@ -299,7 +322,7 @@ class Service:
                 # A TCP connect alone is not proof of a live backend: straight
                 # after a stop the socket can still accept briefly, and we would
                 # "adopt" a corpse. Require a health response before believing it.
-                if self._get_json("/health", timeout=3.0) is not None:
+                if self._get_json(self.spec.get("health_path", "/health"), timeout=3.0) is not None:
                     log("%s: port %d already open, adopting it" % (self.name, self.port))
                     return
                 log("%s: port %d open but not healthy; starting our own" % (self.name, self.port))
@@ -328,7 +351,7 @@ class Service:
                         "%s exited during startup (code %s); see %s"
                         % (self.name, self.proc.returncode, self.spec["log"])
                     )
-                if self._get_json("/health", timeout=3.0) is not None:
+                if self._get_json(self.spec.get("health_path", "/health"), timeout=3.0) is not None:
                     log("%s: ready in %.0fs" % (self.name, time.time() - started))
                     self.epoch += 1
                     self.started_at = time.time()
@@ -981,6 +1004,17 @@ class Handler(BaseHTTPRequestHandler):
             body = self.rfile.read(length) if length else None
         if route == "/query_result":
             body = self._rewrite_polled_ids(body)
+        elif route in ("/v1/chat/completions", "/v1/completions") and body:
+            # mlx_lm identifies its model by the filesystem path it was loaded
+            # from, and 404s on anything else. Nobody should have to send a
+            # snapshot path, so accept whatever the caller wrote — or nothing —
+            # and substitute the model actually loaded.
+            try:
+                payload = json.loads(body.decode("utf-8"))
+                payload["model"] = TEXT_MODEL_PATH
+                body = json.dumps(payload).encode()
+            except Exception:
+                pass
         elif route == "/release_task" and body:
             try:
                 payload = json.loads(body.decode("utf-8"))
@@ -1071,6 +1105,25 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 conn.request(method, self.path, body=body, headers=headers)
                 resp = conn.getresponse()
+
+                # Token streams must be relayed as they arrive. Buffering an SSE
+                # response defeats the entire point of streaming — the caller
+                # would wait for the full completion and then receive it at once.
+                if _is_stream(resp):
+                    self.send_response(resp.status)
+                    for key, value in resp.getheaders():
+                        if key.lower() in HOP_BY_HOP or key.lower() == "content-length":
+                            continue
+                        self.send_header(key, value)
+                    self.end_headers()
+                    while True:
+                        chunk = resp.read(1024)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+                    return
+
                 payload = resp.read()
 
                 if resp.status == 200:

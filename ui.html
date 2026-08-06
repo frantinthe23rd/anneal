@@ -127,6 +127,9 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 
 .row { display: flex; align-items: center; gap: 10px; }
 .check { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.lyhead { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
+.lyhead .iconbtn { margin-left: auto; padding: 4px 10px; }
+.lyhead .iconbtn.on { border-color: rgba(255,95,31,.45); color: var(--heat-2); }
 .seg { display: flex; gap: 4px; padding: 4px; background: var(--bg); border: 1px solid var(--line); border-radius: 9px; }
 .seg button { flex: 1; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 13px; transition: background .15s, color .15s; }
 .seg button:hover { color: var(--text); }
@@ -254,7 +257,10 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
           </div>
 
           <div class="field" id="mLyricsWrap" style="display:none">
-            <label class="f" for="mLyrics">Lyrics</label>
+            <div class="lyhead">
+              <label class="f" for="mLyrics" style="margin:0">Lyrics</label>
+              <button type="button" class="iconbtn" id="btnWrite" title="Draft lyrics with the local language model">Write for me</button>
+            </div>
             <textarea id="mLyrics" class="code" placeholder="[verse]&#10;Streetlights blur into the rain&#10;&#10;[chorus]&#10;Hold on, hold on"></textarea>
             <div class="hint">Use [verse], [chorus], [bridge] section tags.</div>
           </div>
@@ -884,6 +890,81 @@ function setLibrary(on) {
   else { renderResults(); }
 }
 
+/* ------------------------------------------------------- lyric generation
+   Streams from the local Gemma service straight into the textarea. Kept in the
+   UI rather than behind a bespoke endpoint so the same call is available to any
+   client — it is just /v1/chat/completions. */
+let writing = null;
+
+async function writeLyrics() {
+  if (writing) { writing.abort(); return; }          // second click cancels
+
+  const style = $("mPrompt").value.trim() || "an indie folk song";
+  const existing = $("mLyrics").value.trim();
+  const btn = $("btnWrite");
+  const box = $("mLyrics");
+
+  const instruction =
+    "Write song lyrics for: " + style + ".\n" +
+    (existing ? "Continue or rework these existing lyrics:\n" + existing + "\n" : "") +
+    "Use [verse], [chorus] and [bridge] section tags on their own lines. " +
+    "Two verses and a chorus is plenty. Output only the lyrics — no title, no commentary.";
+
+  writing = new AbortController();
+  btn.classList.add("on"); btn.textContent = "Stop";
+  const before = box.value;
+  box.value = "";
+
+  try {
+    const res = await fetch("/v1/chat/completions", {
+      method: "POST",
+      headers: Object.assign({ "Content-Type": "application/json" },
+                             apiKey ? { Authorization: "Bearer " + apiKey } : {}),
+      // enable_thinking=false: this model reasons at length by default, which
+      // burns the token budget before any lyrics appear.
+      body: JSON.stringify({
+        model: "gemma", stream: true, max_tokens: 700, temperature: 0.9,
+        chat_template_kwargs: { enable_thinking: false },
+        messages: [{ role: "user", content: instruction }],
+      }),
+      signal: writing.signal,
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop();                              // keep the partial line
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const payload = line.slice(6).trim();
+        if (payload === "[DONE]") continue;
+        try {
+          const delta = JSON.parse(payload).choices[0].delta || {};
+          if (delta.content) {
+            box.value += delta.content;
+            box.scrollTop = box.scrollHeight;         // follow the text down
+          }
+        } catch (_) { /* partial JSON across chunks */ }
+      }
+    }
+    if (!box.value.trim()) box.value = before;        // produced nothing — don't destroy their work
+  } catch (e) {
+    if (e.name !== "AbortError") {
+      box.value = before;
+      setStatus("Lyric generation failed: " + e.message, "err");
+    }
+  } finally {
+    writing = null;
+    btn.classList.remove("on"); btn.textContent = "Write for me";
+  }
+}
+
 /* ------------------------------------------------------------------ utils */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const slug = (s) => (s.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase().slice(0, 48) || "anneal");
@@ -927,6 +1008,7 @@ document.querySelectorAll("#mVocal button").forEach((b) => {
 });
 $("go").onclick = run;
 $("btnLibrary").onclick = () => setLibrary(!libView);
+$("btnWrite").onclick = writeLyrics;
 document.querySelectorAll("#libbar button").forEach((b) => {
   b.onclick = () => {
     libKind = b.dataset.k;

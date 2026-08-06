@@ -17,6 +17,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOCK="$HERE/models.lock.json"
 
 export HF_HUB_DISABLE_XET=1 HF_HUB_ENABLE_HF_TRANSFER=0
+# Downloads are the one place that legitimately needs the network.
+export HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0
 
 MODE="${1:---check}"
 

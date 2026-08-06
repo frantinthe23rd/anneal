@@ -20,6 +20,14 @@ export ACESTEP_CHECKPOINTS_DIR="$AIMUSIC_ROOT/models"
 export HF_HUB_DISABLE_XET=1
 export HF_HUB_ENABLE_HF_TRANSFER=0
 
+# Every model runs locally. This makes that structural rather than merely true:
+# with HF_HUB_OFFLINE set, the hub libraries resolve from the local cache and
+# raise instead of silently reaching out, so a missing or mis-pinned model fails
+# loudly rather than being fetched mid-request. download-models.sh and update.sh
+# unset it deliberately, which are the only places a download should happen.
+export HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
+export TRANSFORMERS_OFFLINE="${TRANSFORMERS_OFFLINE:-1}"
+
 # --- Apple Silicon native acceleration ---
 export ACESTEP_LM_BACKEND="mlx"
 export TOKENIZERS_PARALLELISM="false"
