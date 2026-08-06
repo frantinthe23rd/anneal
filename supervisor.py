@@ -1084,6 +1084,11 @@ class Handler(BaseHTTPRequestHandler):
                         "prompt": req.get("prompt", ""), "seed": item.get("seed"),
                         "size": req.get("size"), "steps": req.get("steps"),
                         "seconds": item.get("seconds"), "service": "image",
+                        # A variation is only interpretable next to what it came
+                        # from, so the sidecar records the parent explicitly
+                        # rather than leaving it implied by the request.
+                        "derived_from": item.get("derived_from"),
+                        "retention": item.get("retention"),
                         "request": dict(req, seed=item.get("seed")),
                     })
         except Exception as exc:

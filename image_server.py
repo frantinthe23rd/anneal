@@ -12,6 +12,8 @@ Endpoints:
 
     POST /v1/images/generations  {"prompt": "...", "size": "1024x1024",
                                   "steps": 4, "seed": 42, "n": 1,
+                                  "init_image": "<path from a previous result>",
+                                  "retention": 0.7,
                                   "response_format": "b64_json"|"path"}
     GET  /v1/images/file?path=   -> raw PNG bytes
     GET  /health                 -> readiness
@@ -83,22 +85,72 @@ def parse_size(raw):
     return width, height
 
 
-def generate(prompt, width, height, steps, seed):
+def resolve_init_image(raw):
+    """Validate an init image path for img2img, or raise.
+
+    Only files this server produced are accepted. The alternative — taking any
+    path the caller names — hands a network client the ability to read anything
+    the process can, and the value of accepting arbitrary paths is nil when
+    every image Anneal makes is already in here.
+    """
+    if not raw:
+        return None
+    path = os.path.realpath(str(raw))
+    root = os.path.realpath(OUTPUT_DIR)
+    if not (path.startswith(root + os.sep) and os.path.isfile(path)):
+        raise ValueError("init image must be a file previously generated here")
+    return path
+
+
+def unique_path(stem, seed):
+    """A path that does not already exist.
+
+    The name is prompt-slug plus seed, and neither is unique: the slug is
+    truncated at 48 characters and the seed is often deliberately reused. Two
+    requests could therefore land on the same filename, and the second silently
+    destroyed the first along with its sidecar. A variation makes that routine
+    rather than rare — it shares both the prompt prefix and the seed with the
+    image it derives from, so it overwrote its own source.
+    """
+    base = os.path.join(OUTPUT_DIR, "%s-%d" % (stem, seed))
+    if not os.path.exists(base + ".png"):
+        return base + ".png"
+    n = 2
+    while os.path.exists("%s-%d.png" % (base, n)):
+        n += 1
+    return "%s-%d.png" % (base, n)
+
+
+def generate(prompt, width, height, steps, seed, init_path=None, retention=None):
     model = get_model()
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     stem = re.sub(r"[^A-Za-z0-9]+", "_", prompt)[:48].strip("_") or "image"
-    path = os.path.join(OUTPUT_DIR, "%s-%d.png" % (stem, seed))
+    if init_path:
+        stem = (stem + "_var")[:52]
+    path = unique_path(stem, seed)
+
+    # mflux spends `int(steps * strength)` of the budget reproducing the init
+    # image, leaving the remainder to act on the prompt. schnell is distilled to
+    # four steps, so at high retention there is only one step left — which is
+    # the point for variations, and why this cannot restructure a subject. See
+    # issue #19: measured, not assumed.
+    extra = {}
+    if init_path:
+        extra = {"image_path": init_path, "image_strength": retention}
 
     with _generate_lock:
         t0 = time.time()
         image = model.generate_image(
             seed=seed, prompt=prompt, num_inference_steps=steps,
-            width=width, height=height,
+            width=width, height=height, **extra,
         )
-        image.save(path, overwrite=True)
+        image.save(path, overwrite=False)   # unique_path already guaranteed it
         elapsed = time.time() - t0
 
-    log("%dx%d, %d steps, seed %d -> %s (%.1fs)" % (width, height, steps, seed, path, elapsed))
+    log("%dx%d, %d steps, seed %d%s -> %s (%.1fs)" % (
+        width, height, steps, seed,
+        ", from %s @ %.2f" % (os.path.basename(init_path), retention) if init_path else "",
+        path, elapsed))
     return path, elapsed
 
 
@@ -173,15 +225,41 @@ class Handler(BaseHTTPRequestHandler):
         base_seed = payload.get("seed")
         fmt = (payload.get("response_format") or "b64_json").lower()
 
+        try:
+            init_path = resolve_init_image(payload.get("init_image"))
+        except ValueError as exc:
+            self._json({"code": 400, "error": str(exc)}, 400)
+            return
+        # Retention is how much of the original survives. Below ~0.5 on a
+        # four-step model the result drifts into a different subject rather
+        # than a variation of this one, so the floor is deliberate.
+        retention = float(payload.get("retention") or 0.7)
+        if init_path and not 0.3 <= retention <= 0.95:
+            self._json({"code": 400,
+                        "error": "retention must be between 0.3 and 0.95"}, 400)
+            return
+        # Retention is quantised by the step count: mflux spends
+        # `int(steps * retention)` steps reproducing the init image, so at the
+        # default four there are only three distinct settings and 0.7 and 0.55
+        # produce byte-identical output. Eight steps gives the three offered
+        # levels genuinely different remaining budgets (2, 3 and 4), at a few
+        # seconds' cost. An explicit `steps` from the caller still wins.
+        if init_path and payload.get("steps") is None:
+            steps = 8
+
         with _flight_lock:
             _in_flight += 1
         try:
             results = []
             for index in range(count):
                 seed = int(base_seed) + index if base_seed is not None else random.randint(0, 2**31 - 1)
-                path, elapsed = generate(prompt, width, height, steps, seed)
+                path, elapsed = generate(prompt, width, height, steps, seed,
+                                         init_path, retention)
                 entry = {"path": path, "seed": seed, "seconds": round(elapsed, 1),
                          "url": "/v1/images/file?path=" + path}
+                if init_path:
+                    entry["derived_from"] = init_path
+                    entry["retention"] = retention
                 if fmt == "b64_json":
                     with open(path, "rb") as fh:
                         entry["b64_json"] = base64.b64encode(fh.read()).decode()

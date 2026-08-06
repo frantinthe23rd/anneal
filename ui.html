@@ -323,6 +323,10 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 }
 .item .foot a:hover, .item .foot button:hover { color: var(--heat-2); }
 .item .foot .sp { color: var(--faint); font-family: var(--mono); font-size: 11.5px; margin-left: auto; }
+.varyrow { display: flex; align-items: center; gap: 10px; padding: 9px 11px;
+  background: rgba(255,95,31,.07); border: 1px solid rgba(255,95,31,.28); border-radius: 8px; }
+.varyrow .nm { flex: 1; min-width: 0; font-size: 12.5px; color: var(--heat-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item.failed { border-color: rgba(224,87,74,.4); }
 .msg { background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px; padding: 12px 14px; }
 .msg.user { background: rgba(255,95,31,.06); border-color: rgba(255,95,31,.22); }
@@ -777,6 +781,26 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
             </div>
           </div>
           <div class="hint">Schnell is distilled for 4 steps — more mostly costs time. Smaller sizes are proportionally faster.</div>
+
+          <div class="field hidden" id="varyBox">
+            <label class="f">Varying an existing image</label>
+            <div class="varyrow">
+              <span class="nm" id="varyName"></span>
+              <button type="button" class="iconbtn" id="varyCancel">Cancel</button>
+            </div>
+            <div class="field">
+              <label class="f" for="iRetain">How close to the original</label>
+              <select id="iRetain">
+                <option value="0.85">Very close — detail drift only</option>
+                <option value="0.7" selected>Close — a clear variation</option>
+                <option value="0.55">Looser — same shot, redrawn</option>
+              </select>
+              <div class="hint"><b>This makes another take of the same image, not an edit of it.</b>
+                Composition, subject and lighting are kept and the details are re-rendered.
+                Changing the prompt has little effect — measured: asking a brass watch to become
+                silver returned the same brass watch. For a different subject, generate afresh.</div>
+            </div>
+          </div>
         </section>
 
         <!-- CHAT lives in its own full-width layout below, not in this column. -->
@@ -1556,6 +1580,12 @@ function renderResults() {
       dl.href = r.audio || r.image; dl.download = r.filename || "anneal-output";
       dl.textContent = "Download";
       foot.appendChild(dl);
+      if (r.kind === "image" && r.path) {
+        const v = el("button", null, "Vary this");
+        v.title = "Generate a variation that keeps this composition";
+        v.onclick = () => setVary(r);
+        foot.appendChild(v);
+      }
       if (r.seed != null) foot.appendChild(el("span", "sp", "seed " + r.seed));
       else if (r.took) foot.appendChild(el("span", "sp", r.took));
       item.appendChild(foot);
@@ -1718,17 +1748,30 @@ async function runSpeech() {
 }
 
 /* --- image --------------------------------------------------------------- */
+/* Set when "Vary this" is used: the server-side path of the image the next
+   request should start from. Cleared after one use, because silently deriving
+   every later image from an old one would be baffling. */
+let varyFrom = null;
+
 async function runImage() {
   const prompt = $("iPrompt").value.trim();
   if (!prompt) { setStatus("Describe the image first.", "warn"); return; }
 
   const cold = coldWarning("image");
-  setStatus(cold || "Generating…", cold ? "warn" : "", { bar: true });
+  const init = varyFrom;
+  setStatus(cold || (init ? "Varying…" : "Generating…"), cold ? "warn" : "", { bar: true });
 
-  const res = await api("/v1/images/generations", {
-    method: "POST",
-    body: { prompt, size: $("iSize").value, steps: Number($("iSteps").value) || 4, n: 1, response_format: "path" },
-  });
+  const body = {
+    prompt, size: $("iSize").value, steps: Number($("iSteps").value) || 4,
+    n: 1, response_format: "path",
+  };
+  if (init) {
+    body.init_image = init.path;
+    body.retention = Number($("iRetain").value) || 0.7;
+    body.size = init.size || body.size;    // img2img must match the source shape
+  }
+
+  const res = await api("/v1/images/generations", { method: "POST", body });
 
   for (const img of res.data || []) {
     // Fetch through the API so the auth header is applied; <img src> can't send one.
@@ -1736,10 +1779,33 @@ async function runImage() {
     const url = URL.createObjectURL(blob); blobUrls.push(url);
     addResult({
       kind: "image", prompt, image: url, filename: slug(prompt) + ".png",
-      meta: $("iSize").value, seed: img.seed,
+      meta: body.size + (init ? " · variation" : ""), seed: img.seed,
+      path: img.path, size: body.size,
     });
   }
+  clearVary();
   hideStatus();
+}
+
+/* Variation is a per-request mode, not a setting, so the form says so plainly
+   while it is armed and returns to normal afterwards. */
+function setVary(item) {
+  if (!item || !item.path) {
+    setStatus("This one was made before variations existed — regenerate it first.", "warn");
+    return;
+  }
+  varyFrom = { path: item.path, size: item.size || $("iSize").value };
+  const btn = document.querySelector('.tab[data-mode="image"]');
+  if (btn) btn.click();
+  $("varyBox").classList.remove("hidden");
+  $("varyName").textContent = (item.prompt || "image").slice(0, 60);
+  $("iPrompt").value = item.prompt || "";
+  $("iPrompt").focus();
+}
+
+function clearVary() {
+  varyFrom = null;
+  $("varyBox").classList.add("hidden");
 }
 
 /* ---------------------------------------------------------------- library
@@ -2181,6 +2247,16 @@ function renderLibrary() {
       const reuse = el("button", null, "Reuse");
       reuse.onclick = () => { applyRequest(it.kind, it.meta.request); };
       foot.appendChild(reuse);
+      if (it.kind === "images") {
+        const v = el("button", null, "Vary this");
+        v.title = "Generate a variation that keeps this composition";
+        v.onclick = () => setVary({
+          path: it.path,
+          prompt: (it.meta && it.meta.prompt) || "",
+          size: (it.meta && it.meta.size) || null,
+        });
+        foot.appendChild(v);
+      }
       item.appendChild(det);
     }
     const del = el("button", "del", "Delete");
@@ -2857,6 +2933,7 @@ document.querySelectorAll("#mVocal button").forEach((b) => {
 });
 $("go").onclick = run;
 $("btnLibrary").onclick = () => setLibrary(!libView);
+$("varyCancel").onclick = clearVary;
 $("btnWrite").onclick = writeLyrics;
 document.querySelectorAll(".hero .card").forEach((c) => {
   c.onclick = () => enterApp(c.dataset.go);
