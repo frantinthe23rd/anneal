@@ -232,7 +232,7 @@ Only `prompt` is really required. Everything else has a sane default.
 | `prompt` | string | — | Style description. Genre, instruments, mood, production. |
 | `lyrics` | string | `""` | Use `[verse]` / `[chorus]` / `[bridge]` tags. `"[instrumental]"` for no vocals. |
 | `audio_duration` | float | model picks | Seconds, 10–600. |
-| `audio_format` | string | `mp3` | `mp3`, `flac`, `wav`, `wav32`, `opus`, `aac`. |
+| `audio_format` | string | **`flac`** | Lossless by default. The backend's `mp3` is fixed at 128 kbps with no bitrate control — audibly lossy. |
 | `batch_size` | int | 2 | Takes per request, max 8. Each costs roughly full generation time. |
 | `bpm` | int | LM fills | 30–300. |
 | `key_scale` | string | LM fills | e.g. `"C Major"`, `"Am"`. |
@@ -240,7 +240,8 @@ Only `prompt` is really required. Everything else has a sane default.
 | `vocal_language` | string | `en` | `en`, `zh`, `ja`, … |
 | `seed` | int | random | Set with `"use_random_seed": false` to reproduce. |
 | `inference_steps` | int | 8 | The turbo model wants 8. Raising it mostly costs time. |
-| `thinking` | bool | false | Runs an LM planning pass. Better structure, slower. |
+| `thinking` | bool | **true** | Planning pass — sections, key, arrangement. ~30 s. Anneal defaults this on; the backend does not. |
+| `quality` | string | `draft` | `draft` (turbo, ~90 s) or `high` (sft, ~180 s, better detail). Switching restarts the model once. |
 | `task_type` | string | `text2music` | Also `cover`, `repaint`, `lego`, `extract`, `complete`. |
 
 camelCase aliases work too (`audioDuration`, `keyScale`), as do `caption` for
@@ -250,6 +251,17 @@ Anything not specified gets filled in by a small language model from your
 prompt, so a bare `{"prompt": "..."}` produces a complete, coherent track.
 
 ---
+
+### Defaults worth knowing
+
+Anneal overrides two upstream defaults because they materially change output,
+and leaving them would make every integrator rediscover the same two things:
+`thinking` is **on**, and `audio_format` is **flac**. Send either field to
+override.
+
+`metas` in a result (`bpm`, `keyscale`) is what the planning LM *asked for*, not
+an analysis of the audio. It can be plainly wrong while the audio is fine. Set
+`bpm`/`key_scale` on the request if you need them to mean something.
 
 ## 5. Concurrency
 

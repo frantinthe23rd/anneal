@@ -49,7 +49,7 @@
           "music"
         ],
         "summary": "Submit a music generation job",
-        "description": "Returns immediately with a task_id. Poll /query_result until status is 1 or 2.\n\nOnly `prompt` is required; anything omitted is filled in by a small planning LM.",
+        "description": "Returns immediately with a task_id. Poll /query_result until status is 1 or 2.\n\nOnly `prompt` is required; anything omitted is filled in by a small planning LM.\n\n**Anneal applies two defaults that differ from the upstream backend**, because both materially affect output quality and every integrator would otherwise rediscover them:\n\n- `thinking` defaults to **true** (upstream: false). Runs the planning pass that decides sections, key and arrangement before any audio exists. Costs ~30s; without it structure is noticeably weaker.\n- `audio_format` defaults to **flac** (lossless). The backend's MP3 encoder is fixed at 128 kbps with no bitrate control, which is audibly lossy.\n\nSend either field explicitly to override.",
         "requestBody": {
           "required": true,
           "content": {
@@ -815,7 +815,8 @@
               "opus",
               "aac"
             ],
-            "default": "mp3"
+            "default": "flac",
+            "description": "Output format. **Anneal defaults to flac**; the backend's mp3 is fixed at 128 kbps and audibly lossy."
           },
           "batch_size": {
             "type": "integer",
@@ -861,8 +862,8 @@
           },
           "thinking": {
             "type": "boolean",
-            "default": false,
-            "description": "Run an LM planning pass — better structure, slower."
+            "default": true,
+            "description": "Run the 5Hz LM planning pass. **Anneal defaults this to true**, unlike the backend. Better structure, ~30s slower."
           },
           "task_type": {
             "type": "string",

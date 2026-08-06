@@ -94,6 +94,7 @@ def tool_generate_music(args):
         "audio_duration": args.get("duration_seconds", 30),
         "batch_size": args.get("takes", 1),
         "audio_format": args.get("format", "flac"),
+        "quality": args.get("quality", "draft"),
     }
     for key in ("bpm", "key_scale", "seed"):
         if args.get(key) is not None:
@@ -236,6 +237,10 @@ TOOLS = [
                 "bpm": {"type": "integer", "minimum": 30, "maximum": 300},
                 "key_scale": {"type": "string", "description": "e.g. 'F# minor'"},
                 "seed": {"type": "integer", "description": "Set to reproduce a previous take."},
+                "quality": {"type": "string", "enum": ["draft", "high"], "default": "draft",
+                            "description": "draft = fast (~90s), fine for sketches and game assets. "
+                                           "high = better detail (~180s). Switching between them restarts "
+                                           "the model once, costing a cold load."},
                 "format": {"type": "string", "enum": ["flac", "wav", "mp3"], "default": "flac",
                            "description": "flac/wav are lossless. mp3 is capped at 128 kbps and audibly lossy."},
             },

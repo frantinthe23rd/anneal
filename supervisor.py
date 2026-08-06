@@ -995,6 +995,13 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 ensure_music_tier(tier)
                 payload.setdefault("inference_steps", MUSIC_TIERS[tier]["steps"])
+                # Anneal-level defaults, deliberately different from upstream's.
+                # A bare API call otherwise gets thinking=false and lossy audio —
+                # the two settings we already established make output materially
+                # worse — so every integrator would rediscover them separately.
+                # Both are plain overrides: send the field to get the old behaviour.
+                payload.setdefault("thinking", True)
+                payload.setdefault("audio_format", "flac")
                 # Non-turbo models need CFG; turbo ignores these entirely.
                 for k, v in (MUSIC_TIERS[tier].get("extra_params") or {}).items():
                     payload.setdefault(k, v)
