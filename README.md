@@ -31,7 +31,10 @@ the spec itself is served locally. Say so if you want it vendored.
 **Press** chains all four: one brief becomes a title, an artist name, a
 tracklist with varied lengths, lyrics, the music and a cover.
 `POST /v1/press {"prompt": "...", "tracks": 4}`, then poll `/v1/press?id=`.
-Results appear in the Library as a record you can play through.
+Results appear in the Library as a record you can play through, and
+`GET /v1/press/download?id=…&format=mp3&bitrate=320k` returns the whole thing as
+a zip — audio, cover and tracklist. Masters are FLAC, so lossy formats are
+transcoded from the original rather than from another lossy copy.
 
 **Using it by hand?** Open the web UI at **`/`** — prompt window, output view,
 and a forge strip showing which models are hot.

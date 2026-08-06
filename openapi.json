@@ -44,6 +44,10 @@
     {
       "name": "text",
       "description": "Gemma 4 e4b (4-bit) via mlx-lm — OpenAI-compatible chat completions, with streaming."
+    },
+    {
+      "name": "press",
+      "description": "One brief to a finished single or album: plan, lyrics, music and cover."
     }
   ],
   "paths": {
@@ -847,6 +851,165 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/v1/press": {
+      "post": {
+        "tags": [
+          "press"
+        ],
+        "summary": "Start a press",
+        "description": "Returns immediately with a press_id; poll GET /v1/press?id=.\n\nRuns minutes to tens of minutes. Stages are ordered plan → all lyrics → all music → cover so each heavy model loads once. On an album, track lengths vary around `duration` rather than being uniform.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "prompt"
+                ],
+                "properties": {
+                  "prompt": {
+                    "type": "string",
+                    "description": "The brief."
+                  },
+                  "tracks": {
+                    "type": "integer",
+                    "default": 1,
+                    "minimum": 1,
+                    "maximum": 8,
+                    "description": "1 = single."
+                  },
+                  "duration": {
+                    "type": "integer",
+                    "default": 90,
+                    "description": "Nominal seconds; albums vary around it."
+                  },
+                  "duration_min": {
+                    "type": "integer"
+                  },
+                  "duration_max": {
+                    "type": "integer"
+                  },
+                  "quality": {
+                    "type": "string",
+                    "enum": [
+                      "draft",
+                      "high"
+                    ],
+                    "default": "draft"
+                  },
+                  "instrumental": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "art": {
+                    "type": "boolean",
+                    "default": true
+                  },
+                  "art_size": {
+                    "type": "string",
+                    "default": "1024x1024"
+                  }
+                }
+              },
+              "example": {
+                "prompt": "a short winter album about leaving a coastal town",
+                "tracks": 4,
+                "duration": 90
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Started"
+          },
+          "400": {
+            "description": "Missing prompt"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "press"
+        ],
+        "summary": "Press state, or recent presses",
+        "description": "With `id`, the full record: plan, artist, per-track state, lyrics and cover. Without, recent presses.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Press state"
+          },
+          "404": {
+            "description": "No such press"
+          }
+        }
+      }
+    },
+    "/v1/press/download": {
+      "get": {
+        "tags": [
+          "press"
+        ],
+        "summary": "Download a press as a zip",
+        "description": "Audio, cover and tracklist in one archive. Masters are FLAC, so mp3/aac are transcoded from the lossless original rather than from another lossy copy.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "flac",
+                "mp3",
+                "aac",
+                "wav"
+              ],
+              "default": "flac"
+            }
+          },
+          {
+            "name": "bitrate",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "320k"
+            },
+            "description": "mp3/aac only."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Zip archive"
+          },
+          "409": {
+            "description": "Nothing finished yet"
+          },
+          "400": {
+            "description": "Unsupported format"
           }
         }
       }

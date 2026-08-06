@@ -1172,6 +1172,48 @@ function renderPresses() {
       cov.onclick = (e) => { e.stopPropagation(); showArtwork(coverPath, plan.title || ""); };
       acts.appendChild(cov);
     }
+
+    // Whole record as a zip: audio, cover and tracklist. Masters are FLAC, so
+    // anything lossy is transcoded from the original rather than from a copy.
+    const fmtSel = document.createElement("select");
+    fmtSel.style.cssText = "width:auto;padding:2px 6px;font-size:12px";
+    [["flac", "FLAC (lossless)"], ["mp3", "MP3"], ["aac", "AAC"], ["wav", "WAV"]]
+      .forEach(([v, t]) => { const o = document.createElement("option"); o.value = v; o.textContent = t; fmtSel.appendChild(o); });
+    const brSel = document.createElement("select");
+    brSel.style.cssText = "width:auto;padding:2px 6px;font-size:12px;display:none";
+    ["320k", "256k", "192k", "128k"].forEach((b) => {
+      const o = document.createElement("option"); o.value = b; o.textContent = b; brSel.appendChild(o);
+    });
+    fmtSel.onchange = (e) => {
+      e.stopPropagation();
+      brSel.style.display = ["mp3", "aac"].includes(fmtSel.value) ? "" : "none";
+    };
+    fmtSel.onclick = (e) => e.stopPropagation();
+    brSel.onclick = (e) => e.stopPropagation();
+
+    const zip = el("button", null, "Download album");
+    zip.onclick = async (e) => {
+      e.stopPropagation();
+      const label = zip.textContent;
+      zip.textContent = "Preparing…"; zip.disabled = true;
+      try {
+        const qs = "?id=" + encodeURIComponent(p.id) + "&format=" + fmtSel.value +
+                   (["mp3", "aac"].includes(fmtSel.value) ? "&bitrate=" + brSel.value : "");
+        const blob = await api("/v1/press/download" + qs, { raw: true, timeout: 0 });
+        const url = URL.createObjectURL(blob); blobUrls.push(url);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = slug((plan.title || "album") + " " + (plan.artist || "")) + "-" + fmtSel.value + ".zip";
+        a.click();
+      } catch (err) {
+        alert("Download failed: " + err.message);
+      } finally {
+        zip.textContent = label; zip.disabled = false;
+      }
+    };
+    acts.appendChild(zip);
+    acts.appendChild(fmtSel);
+    acts.appendChild(brSel);
     body.appendChild(acts);
     body.appendChild(det);
     wrap.appendChild(body);

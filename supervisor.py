@@ -33,6 +33,10 @@ from __future__ import annotations
 
 import http.client
 import json
+import re
+import shutil
+import tempfile
+import zipfile
 import os
 import signal
 import socket
@@ -930,6 +934,104 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(chunk)
         return True
 
+    # -- album download ---------------------------------------------------
+    def _send_press_zip(self):
+        """Bundle a press as a zip: audio, cover and tracklist.
+
+        Masters are kept as FLAC, so anything else is transcoded on demand from
+        the lossless original rather than from another lossy copy.
+        """
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        pid = (q.get("id") or [""])[0]
+        fmt = (q.get("format") or ["flac"])[0].lower()
+        bitrate = (q.get("bitrate") or ["320k"])[0].lower()
+
+        press = PRESSES.get(pid) if pid else None
+        if not press:
+            self._send_json({"code": 404, "error": "no such press"}, 404)
+            return
+        if fmt not in ("flac", "mp3", "aac", "wav"):
+            self._send_json({"code": 400, "error": "format must be flac, mp3, aac or wav"}, 400)
+            return
+        if not re.match(r"^\d{2,3}k$", bitrate):
+            bitrate = "320k"
+
+        plan = press.get("plan") or {}
+        title = plan.get("title") or "anneal-press"
+        artist = plan.get("artist") or ""
+        tracks = [t for t in (press.get("tracks") or []) if t.get("file") and t.get("state") == "done"]
+        if not tracks:
+            self._send_json({"code": 409, "error": "nothing finished to download yet"}, 409)
+            return
+
+        workdir = tempfile.mkdtemp(prefix="press-zip-")
+        zip_path = os.path.join(workdir, "album.zip")
+        try:
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for t in tracks:
+                    src = self._path_from_file_url(t["file"])
+                    if not src or not os.path.isfile(src):
+                        continue
+                    stem = "%02d %s" % (t.get("n", 0), outputs.slugify(t.get("title", "track"), 60))
+                    if fmt == "flac" and src.lower().endswith(".flac"):
+                        zf.write(src, stem + ".flac")          # already the master
+                        continue
+                    out = os.path.join(workdir, stem + "." + fmt)
+                    cmd = ["ffmpeg", "-v", "error", "-y", "-i", src]
+                    if fmt == "mp3":
+                        cmd += ["-c:a", "libmp3lame", "-b:a", bitrate]
+                    elif fmt == "aac":
+                        cmd += ["-c:a", "aac", "-b:a", bitrate]
+                    elif fmt == "wav":
+                        cmd += ["-c:a", "pcm_s24le"]
+                    else:
+                        cmd += ["-c:a", "flac"]
+                    cmd.append(out)
+                    try:
+                        subprocess.run(cmd, check=True, timeout=300)
+                        zf.write(out, os.path.basename(out))
+                    except Exception as exc:
+                        log("press zip: transcode failed for %s: %r" % (stem, exc))
+
+                cover = press.get("cover") or {}
+                cover_path = cover.get("path") if isinstance(cover, dict) else None
+                if cover_path and os.path.isfile(cover_path):
+                    zf.write(cover_path, "cover" + os.path.splitext(cover_path)[1])
+
+                listing = ["%s%s" % (title, " — " + artist if artist else ""), ""]
+                if plan.get("concept"):
+                    listing += [plan["concept"], ""]
+                for t in tracks:
+                    d = int(t.get("duration") or 0)
+                    listing.append("%2d. %-44s %d:%02d" % (t.get("n", 0), t.get("title", "")[:44],
+                                                           d // 60, d % 60))
+                total = sum(int(t.get("duration") or 0) for t in tracks)
+                listing += ["", "Total %d:%02d over %d track(s)" % (total // 60, total % 60, len(tracks))]
+                zf.writestr("tracklist.txt", "\n".join(listing) + "\n")
+
+            size = os.path.getsize(zip_path)
+            name = outputs.slugify("%s %s" % (title, artist), 60) + "-" + fmt + ".zip"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Length", str(size))
+            self.send_header("Content-Disposition", 'attachment; filename="%s"' % name)
+            self.end_headers()
+            with open(zip_path, "rb") as fh:
+                while True:
+                    chunk = fh.read(256 * 1024)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            log("client disconnected during album download")
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    @staticmethod
+    def _path_from_file_url(file_url):
+        params = urllib.parse.parse_qs(urllib.parse.urlparse(file_url or "").query)
+        return (params.get("path") or [""])[0] or None
+
     # -- persistence ------------------------------------------------------
     def _persist_output(self, route, request_body, response_body, content_type):
         """Keep a durable, named copy of whatever a service just produced.
@@ -1387,6 +1489,13 @@ class Handler(BaseHTTPRequestHandler):
         if route in ("/docs", "/docs/"):
             self._send_bytes(DOCS_HTML.encode(), "text/html; charset=utf-8")
             return
+        if route == "/v1/press/download":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            self._send_press_zip()
+            return
+
         if route == "/v1/press":
             if not self._authorized():
                 self._send_json({"code": 401, "error": "unauthorized"}, 401)
@@ -1560,6 +1669,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         route = urllib.parse.urlparse(self.path).path
+        if route == "/v1/press/download":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            self._send_press_zip()
+            return
+
         if route == "/v1/press":
             if not self._authorized():
                 self._send_json({"code": 401, "error": "unauthorized"}, 401)
