@@ -140,7 +140,8 @@ def main() -> None:
     p.add_argument("--language", default="en", help="vocal language (default en)")
     p.add_argument("--steps", type=int, default=8, help="inference steps, turbo wants 8")
     p.add_argument("--batch-size", type=int, default=1, help="how many takes to generate")
-    p.add_argument("--format", default="mp3", choices=["mp3", "flac", "wav", "wav32", "opus", "aac"])
+    p.add_argument("--format", default="flac", choices=["mp3", "flac", "wav", "wav32", "opus", "aac"],
+                   help="flac/wav are lossless. mp3 is capped at 128 kbps by the backend and is audibly lossy.")
     p.add_argument("--seed", type=int, help="fixed seed for reproducible output")
     p.add_argument("--no-thinking", action="store_true", help="skip the 5Hz LM planning pass (faster, lower quality)")
     p.add_argument("--out", default=DEFAULT_OUT, help=f"output directory (default {DEFAULT_OUT})")

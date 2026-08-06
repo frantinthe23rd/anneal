@@ -267,6 +267,24 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
             </div>
           </div>
 
+          <div class="field">
+            <label class="check"><input type="checkbox" id="mThink" checked>
+              Planning pass — better structure, ~30s slower</label>
+            <div class="hint">Runs the 5Hz language model first to plan sections, key and arrangement
+              before the audio is generated. Off, the model improvises the whole take in one go.</div>
+          </div>
+
+          <div class="field">
+            <label class="f" for="mFormat">Audio quality</label>
+            <select id="mFormat">
+              <option value="flac" selected>FLAC — lossless (recommended)</option>
+              <option value="wav">WAV — lossless, uncompressed</option>
+              <option value="mp3">MP3 — 128 kbps, small but lossy</option>
+            </select>
+            <div class="hint">The model renders at 48 kHz stereo. MP3 is capped at 128 kbps here, which is
+              audibly lossy on cymbals and reverb tails — use FLAC unless you need small files.</div>
+          </div>
+
           <div class="field grid2">
             <div>
               <label class="f" for="mBpm">BPM <span style="text-transform:none;letter-spacing:0">(optional)</span></label>
@@ -628,7 +646,8 @@ async function runMusic() {
     lyrics: instrumental ? "[instrumental]" : ($("mLyrics").value || ""),
     audio_duration: Number($("mDur").value) || 30,
     batch_size: Math.min(4, Math.max(1, Number($("mTakes").value) || 1)),
-    audio_format: "mp3",
+    audio_format: $("mFormat").value,
+    thinking: $("mThink").checked,
   };
   const bpm = Number($("mBpm").value); if (bpm) body.bpm = bpm;
   const key = $("mKey").value.trim();   if (key) body.key_scale = key;
@@ -672,9 +691,10 @@ async function runMusic() {
         const blob = await api(take.file, { raw: true });
         const url = URL.createObjectURL(blob); blobUrls.push(url);
         const m = take.metas || {};
+        const ext = "." + ($("mFormat").value === "wav32" ? "wav" : $("mFormat").value);
         addResult({
           kind: "music", prompt, audio: url,
-          filename: slug(prompt) + ".mp3",
+          filename: slug(prompt) + ext,
           meta: [m.duration ? Math.round(m.duration) + "s" : null, m.bpm ? m.bpm + " bpm" : null, m.keyscale].filter(Boolean).join(" · "),
           took: fmtElapsed(),
         });

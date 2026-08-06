@@ -27,6 +27,7 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 BASE = os.environ.get("ANNEAL_URL", "http://127.0.0.1:8001").rstrip("/")
@@ -92,7 +93,7 @@ def tool_generate_music(args):
         "lyrics": args.get("lyrics") or "[instrumental]",
         "audio_duration": args.get("duration_seconds", 30),
         "batch_size": args.get("takes", 1),
-        "audio_format": "mp3",
+        "audio_format": args.get("format", "flac"),
     }
     for key in ("bpm", "key_scale", "seed"):
         if args.get(key) is not None:
@@ -135,7 +136,8 @@ def tool_check_music_job(args):
             continue
         # `file` is a complete request path already — appending is correct,
         # re-encoding it is the classic mistake here.
-        saved = _save_binary(take["file"], args.get("save_dir"), ".mp3")
+        saved = _save_binary(take["file"], args.get("save_dir"),
+                             os.path.splitext(urllib.parse.unquote(take["file"]))[1] or ".flac")
         meta = take.get("metas") or {}
         out.append("  %s  (%ss, %s bpm, %s)" % (
             saved, meta.get("duration"), meta.get("bpm"), meta.get("keyscale")))
@@ -234,6 +236,8 @@ TOOLS = [
                 "bpm": {"type": "integer", "minimum": 30, "maximum": 300},
                 "key_scale": {"type": "string", "description": "e.g. 'F# minor'"},
                 "seed": {"type": "integer", "description": "Set to reproduce a previous take."},
+                "format": {"type": "string", "enum": ["flac", "wav", "mp3"], "default": "flac",
+                           "description": "flac/wav are lossless. mp3 is capped at 128 kbps and audibly lossy."},
             },
             "required": ["prompt"],
         },
