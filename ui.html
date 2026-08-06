@@ -988,6 +988,7 @@ async function loadTiers() {
   Object.entries(tiers.tiers).forEach(([key, t]) => {
     const o = document.createElement("option");
     o.value = key; o.textContent = t.label;
+    o.disabled = t.available === false;      // offered, but say why rather than fail late
     if (key === tiers.default) o.selected = true;
     sel.appendChild(o);
   });
@@ -999,6 +1000,10 @@ function describeTier() {
   if (!tiers) return;
   const t = tiers.tiers[$("mQuality").value];
   if (!t) return;
+  if (t.available === false) {
+    $("mQualityHint").textContent = t.unavailable_reason || "Unavailable.";
+    return;
+  }
   $("mQualityHint").textContent = t.loaded
     ? "Loaded and ready."
     : "Not currently loaded — switching costs a few minutes to load the model, once.";

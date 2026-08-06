@@ -983,6 +983,10 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json({"code": 400, "error": "unknown quality %r; expected one of %s"
                                      % (tier, ", ".join(MUSIC_TIERS))}, 400)
                     return
+                if MUSIC_TIERS[tier].get("available") is False:
+                    self._send_json({"code": 400, "error": MUSIC_TIERS[tier]["unavailable_reason"],
+                                     "quality": tier, "available": False}, 400)
+                    return
                 ensure_music_tier(tier)
                 payload.setdefault("inference_steps", MUSIC_TIERS[tier]["steps"])
                 body = json.dumps(payload).encode()
@@ -1096,7 +1100,9 @@ class Handler(BaseHTTPRequestHandler):
                 "default": DEFAULT_MUSIC_TIER,
                 "loaded_model": current,
                 "tiers": {k: {"model": v["model"], "steps": v["steps"], "label": v["label"],
-                              "loaded": v["model"] == current}
+                              "loaded": v["model"] == current,
+                              "available": v.get("available", True),
+                              "unavailable_reason": v.get("unavailable_reason")}
                           for k, v in MUSIC_TIERS.items()},
             }, "code": 200, "error": None})
             return

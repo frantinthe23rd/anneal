@@ -194,13 +194,20 @@ always advertises the machine actually serving it.
 Pick per request with `"quality": "draft" | "high"`, or in the UI's Model
 selector. Measured on the same prompt and seed:
 
-| Tier | Model | Steps | Generation | Notes |
+| Tier | Model | Steps | Generation | Status |
 | --- | --- | --- | --- | --- |
-| `draft` | `acestep-v15-turbo` | 8 | ~60 s | Distilled for speed. Fine for sketches and game assets. |
-| `high` | `acestep-v15-sft` | 32 | ~90 s | 11.6 dB more energy above 12 kHz, 41% larger lossless file. |
+| `draft` | `acestep-v15-turbo` | 8 | ~60 s | Working. Distilled for speed. |
+| `high` | `acestep-v15-sft` | 50 | — | **Unavailable — see [#8](https://github.com/frantinthe23rd/anneal/issues/8)** |
 
-Only ~30 s apart, because step one carries a ~46 s warm-up and each further
-step costs about a second — more steps are far cheaper than the ratio suggests.
+`high` is refused with an explanation rather than run. Non-turbo models need
+`dcw_enabled=false` plus CFG settings that ACE-Step's REST API does not expose —
+`inference.py` hardcodes the turbo default and the request model has no such
+field. Gradio picks them per model type; the API cannot. Run with turbo
+settings, sft produces garbled noise.
+
+Useful thing learned while measuring: 32 steps cost only ~30 s more than 8,
+because step one carries a ~46 s warm-up and each further step is about a
+second. If #8 is fixed, 50 steps is entirely affordable here.
 
 ACE-Step fixes its DiT at startup and can only route between models already
 resident, which on 16 GB is one. **Switching tiers restarts the backend**, so

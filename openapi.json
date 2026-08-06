@@ -699,7 +699,7 @@
           "music"
         ],
         "summary": "List music quality tiers",
-        "description": "Which model each tier uses and whether it is currently loaded. Answered by the gateway — never wakes a model. Use it to warn a user before a request that will trigger a model swap.",
+        "description": "Which model each tier uses, whether it is loaded, and whether it is usable at all. Answered by the gateway — never wakes a model. Check `available` before offering a tier: one is currently unusable for reasons outside Anneal's control, and `unavailable_reason` explains why.",
         "responses": {
           "200": {
             "description": "Tiers",
@@ -883,7 +883,7 @@
               "high"
             ],
             "default": "draft",
-            "description": "Model tier. `draft` = acestep-v15-turbo, 8 steps, ~60s of generation. `high` = acestep-v15-sft, 32 steps, ~90s, measurably more high-frequency detail. Switching tiers restarts the backend and costs one cold load (~2-4 min), because only one DiT fits in memory."
+            "description": "Model tier. `draft` = acestep-v15-turbo, 8 steps, ~60s of generation — currently the only working tier. `high` = acestep-v15-sft, which is downloaded but refused with a 400: non-turbo models need dcw_enabled=false and CFG settings the backend's REST API does not expose, and produce garbled audio with turbo defaults. Call GET /v1/music/tiers for live availability rather than assuming."
           }
         }
       },
