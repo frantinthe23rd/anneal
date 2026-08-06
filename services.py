@@ -37,19 +37,40 @@ def _int(name: str, default: int) -> int:
         return default
 
 
+# Music quality tiers. ACE-Step picks its DiT at startup via ACESTEP_CONFIG_PATH
+# and can only route between models it already has resident — which on 16 GB is
+# exactly one. So a tier change means restarting the backend on the other model,
+# which the supervisor already knows how to do.
+MUSIC_TIERS = {
+    "draft": {
+        "model": "acestep-v15-turbo",
+        "steps": 8,
+        "label": "Draft — fast, distilled (8 steps)",
+    },
+    "high": {
+        "model": "acestep-v15-sft",
+        "steps": 32,
+        "label": "High — fine-tuned, more detail (32 steps)",
+    },
+}
+DEFAULT_MUSIC_TIER = os.environ.get("ANNEAL_MUSIC_TIER", "draft")
+
+
 SERVICES = {
     "music": {
         "routes": [
             "/release_task", "/query_result", "/create_random_sample", "/format_input",
             "/v1/audio", "/v1/stats", "/v1/models", "/v1/init", "/v1/reinitialize",
             "/v1/model_inventory", "/v1/create_sample", "/v1/lora",
+            # /v1/music/tiers is answered by the gateway, not proxied.
             # /docs and /openapi.json are deliberately NOT routed here — the
             # gateway serves its own spec covering all three services.
         ],
         "port": _int("ACESTEP_BACKEND_PORT", 8011),
         "cmd": [UV_BIN, "run", "acestep-api"],
         "cwd": ACESTEP_DIR,
-        "env": {"ACESTEP_API_HOST": "127.0.0.1"},
+        "env": {"ACESTEP_API_HOST": "127.0.0.1",
+                "ACESTEP_CONFIG_PATH": MUSIC_TIERS[DEFAULT_MUSIC_TIER]["model"]},
         "port_env": "ACESTEP_API_PORT",
         "heavy": True,
         # Weights load lazily on the first generation request, not at boot.

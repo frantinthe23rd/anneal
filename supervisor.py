@@ -44,7 +44,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from services import SERVICES, resolve  # noqa: E402
+from services import SERVICES, MUSIC_TIERS, DEFAULT_MUSIC_TIER, resolve  # noqa: E402
 from jobstore import JobStore  # noqa: E402
 import outputs  # noqa: E402
 
@@ -607,6 +607,32 @@ class ServiceBusy(Exception):
         )
 
 
+def ensure_music_tier(tier):
+    """Make the music backend run the model for `tier`, restarting if needed.
+
+    ACE-Step fixes its DiT at startup and can only route between models already
+    resident, which on 16 GB is one. So switching tiers costs a restart and a
+    fresh cold load — deliberate, and surfaced to the caller rather than hidden.
+    """
+    spec = MUSIC_TIERS.get(tier)
+    if not spec:
+        return None
+    svc = SERVICE_OBJECTS["music"]
+    wanted = spec["model"]
+    if svc.spec["env"].get("ACESTEP_CONFIG_PATH") == wanted:
+        return wanted                      # already configured for this tier
+
+    if svc.is_running():
+        with svc.flight_lock:
+            busy = svc.in_flight
+        if busy or svc.has_work():
+            raise ServiceBusy("music", "music (%s tier)" % tier)
+        log("music: switching tier to %r (%s) — restarting" % (tier, wanted))
+        svc.stop("tier switch to %s" % tier)
+    svc.spec["env"]["ACESTEP_CONFIG_PATH"] = wanted
+    return wanted
+
+
 def start_service(name):
     """Start `name`, first evicting any other *idle* heavy service.
 
@@ -949,6 +975,23 @@ class Handler(BaseHTTPRequestHandler):
             body = self.rfile.read(length) if length else None
         if route == "/query_result":
             body = self._rewrite_polled_ids(body)
+        elif route == "/release_task" and body:
+            try:
+                payload = json.loads(body.decode("utf-8"))
+                tier = (payload.pop("quality", None) or DEFAULT_MUSIC_TIER)
+                if tier not in MUSIC_TIERS:
+                    self._send_json({"code": 400, "error": "unknown quality %r; expected one of %s"
+                                     % (tier, ", ".join(MUSIC_TIERS))}, 400)
+                    return
+                ensure_music_tier(tier)
+                payload.setdefault("inference_steps", MUSIC_TIERS[tier]["steps"])
+                body = json.dumps(payload).encode()
+            except ServiceBusy as busy:
+                self._send_json({"code": 409, "error": str(busy),
+                                 "busy_service": busy.holder}, 409)
+                return
+            except Exception:
+                pass
 
         svc = SERVICE_OBJECTS[name]
         try:
@@ -1045,6 +1088,17 @@ class Handler(BaseHTTPRequestHandler):
 
         if route in ("/health", "/supervisor/status"):
             self._send_json({"data": self._status_payload(), "code": 200, "error": None})
+            return
+        if route == "/v1/music/tiers":
+            svc = SERVICE_OBJECTS["music"]
+            current = svc.spec["env"].get("ACESTEP_CONFIG_PATH")
+            self._send_json({"data": {
+                "default": DEFAULT_MUSIC_TIER,
+                "loaded_model": current,
+                "tiers": {k: {"model": v["model"], "steps": v["steps"], "label": v["label"],
+                              "loaded": v["model"] == current}
+                          for k, v in MUSIC_TIERS.items()},
+            }, "code": 200, "error": None})
             return
         if route == "/supervisor/auth":
             # Lets the UI find out whether it needs to ask for a key at all.

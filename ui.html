@@ -162,6 +162,9 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .bar i { display: block; height: 100%; width: 35%; border-radius: 2px;
   background: linear-gradient(90deg, transparent, var(--heat-1), var(--heat-2), transparent);
   animation: slide 1.6s ease-in-out infinite; }
+/* Once the backend reports real progress we stop pretending with a sweep. */
+.bar.known i { animation: none; width: var(--pct, 0%);
+  background: linear-gradient(90deg, var(--heat-1), var(--heat-2)); transition: width .4s ease; }
 @keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(320%); } }
 
 /* ---------------------------------------------------------------- output */
@@ -265,6 +268,12 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
               <label class="f" for="mTakes">Takes</label>
               <input type="number" id="mTakes" value="1" min="1" max="4">
             </div>
+          </div>
+
+          <div class="field">
+            <label class="f" for="mQuality">Model</label>
+            <select id="mQuality"></select>
+            <div class="hint" id="mQualityHint"></div>
           </div>
 
           <div class="field">
@@ -520,11 +529,20 @@ function renderForge() {
 /* ------------------------------------------------------------- status line */
 let elapsedTimer = null, startedAt = 0;
 
-function setStatus(msg, kind = "", { bar = false, actions = [] } = {}) {
+function setStatus(msg, kind = "", { bar = false, actions = [], pct = null } = {}) {
   const s = $("status");
   s.className = "status show" + (kind ? " " + kind : "");
   $("statusMsg").textContent = msg;
-  $("statusBar").style.display = bar ? "" : "none";
+  const barEl = $("statusBar");
+  barEl.style.display = bar ? "" : "none";
+  // A real percentage beats an indeterminate sweep — it is the difference
+  // between "something is happening" and "it has hung".
+  if (pct == null) {
+    barEl.classList.remove("known");
+  } else {
+    barEl.classList.add("known");
+    barEl.style.setProperty("--pct", Math.round(pct * 100) + "%");
+  }
   const act = $("statusAct");
   act.textContent = "";
   actions.forEach(([label, fn]) => { const b = el("button", null, label); b.onclick = fn; act.appendChild(b); });
@@ -632,6 +650,7 @@ async function run() {
     $("go").textContent = "Forge";
     stopElapsed();
     refreshHealth();
+    loadTiers();
     if (libView) loadLibrary();
   }
 }
@@ -648,6 +667,7 @@ async function runMusic() {
     batch_size: Math.min(4, Math.max(1, Number($("mTakes").value) || 1)),
     audio_format: $("mFormat").value,
     thinking: $("mThink").checked,
+    quality: $("mQuality").value,
   };
   const bpm = Number($("mBpm").value); if (bpm) body.bpm = bpm;
   const key = $("mKey").value.trim();   if (key) body.key_scale = key;
@@ -674,6 +694,15 @@ async function runMusic() {
 
     const row = rows.find((r) => r.task_id === task_id);
     if (!row) continue;
+
+    // ACE-Step reports a real fraction and a human-readable stage. Show both.
+    try {
+      const partial = JSON.parse(row.result || "[]")[0] || {};
+      if (typeof partial.progress === "number") {
+        const stage = (partial.stage || "").replace(/\.\.\.$/, "");
+        setStatus(stage || "Generating…", "", { bar: true, pct: partial.progress });
+      }
+    } catch (_) { /* mid-generation result may not be parseable yet */ }
 
     if (row.status === 2) {
       if (row.orphaned) throw new Error("The job was lost when the model restarted. Nothing is running — submit it again.");
@@ -948,6 +977,33 @@ async function maybeRefreshVoices() {
   } catch (_) { /* keep the built-in list */ }
 }
 
+let tiers = null;
+
+async function loadTiers() {
+  try {
+    tiers = (await api("/v1/music/tiers")).data;
+  } catch (_) { return; }
+  const sel = $("mQuality");
+  sel.textContent = "";
+  Object.entries(tiers.tiers).forEach(([key, t]) => {
+    const o = document.createElement("option");
+    o.value = key; o.textContent = t.label;
+    if (key === tiers.default) o.selected = true;
+    sel.appendChild(o);
+  });
+  sel.onchange = describeTier;
+  describeTier();
+}
+
+function describeTier() {
+  if (!tiers) return;
+  const t = tiers.tiers[$("mQuality").value];
+  if (!t) return;
+  $("mQualityHint").textContent = t.loaded
+    ? "Loaded and ready."
+    : "Not currently loaded — switching costs a few minutes to load the model, once.";
+}
+
 async function boot() {
   // Ask before demanding anything: over the tailnet, Tailscale has already
   // identified us and the key gate would be pure friction.
@@ -965,6 +1021,7 @@ async function boot() {
   if (!authVia && !apiKey) { openGate(); return; }
   $("hostname").textContent = location.host;
   fillVoices(VOICES, DEFAULT_VOICE);
+  loadTiers();
   await refreshHealth();
   setInterval(async () => { await refreshHealth(); maybeRefreshVoices(); }, 5000);
 }

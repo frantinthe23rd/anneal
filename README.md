@@ -11,7 +11,7 @@ way all three fit.
 
 | Service | Model | Licence | Output |
 | --- | --- | --- | --- |
-| Music | [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) | MIT | Songs with vocals, instrumentals, covers, continuation — up to 10 min |
+| Music | [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) | MIT | Songs with vocals, instrumentals, covers, continuation — up to 10 min. Two quality tiers. |
 | Speech | [Kokoro-82M](https://huggingface.co/prince-canuma/Kokoro-82M) via [mlx-audio](https://github.com/Blaizzy/mlx-audio) | Apache-2.0 | 28 voices, en/uk |
 | Image | FLUX.1-schnell 4-bit via [mflux](https://github.com/filipstrand/mflux) | Apache-2.0 | Up to ~1536px |
 
@@ -188,6 +188,28 @@ Tool paths and the tailnet hostname are resolved at startup rather than
 hardcoded, and Tailscale is optional — without it Anneal serves on loopback
 only. The OpenAPI `servers` block is generated per host, so `/openapi.json`
 always advertises the machine actually serving it.
+
+## Music quality tiers
+
+Pick per request with `"quality": "draft" | "high"`, or in the UI's Model
+selector. Measured on the same prompt and seed:
+
+| Tier | Model | Steps | Generation | Notes |
+| --- | --- | --- | --- | --- |
+| `draft` | `acestep-v15-turbo` | 8 | ~60 s | Distilled for speed. Fine for sketches and game assets. |
+| `high` | `acestep-v15-sft` | 32 | ~90 s | 11.6 dB more energy above 12 kHz, 41% larger lossless file. |
+
+Only ~30 s apart, because step one carries a ~46 s warm-up and each further
+step costs about a second — more steps are far cheaper than the ratio suggests.
+
+ACE-Step fixes its DiT at startup and can only route between models already
+resident, which on 16 GB is one. **Switching tiers restarts the backend**, so
+the first request after a switch pays a cold load. `GET /v1/music/tiers` reports
+which is loaded, so a client can warn before committing.
+
+Output is **FLAC by default**. The backend's MP3 encoder is fixed at 128 kbps
+and does not expose a bitrate through the API — a null test puts its discarded
+residual at −42 dB, around 24 dB below programme level, which is audible.
 
 ## Keeping it current
 

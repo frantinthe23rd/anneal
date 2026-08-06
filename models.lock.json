@@ -25,7 +25,12 @@
     "dhairyashil/FLUX.1-schnell-mflux-4bit": {
       "revision": "0e0b247ac48b8bf86fd5b440813b7da5854e238b",
       "target": "hf_cache",
-      "note": "Image. Ungated pre-quantized mirror — black-forest-labs' own repo is gated"
+      "note": "Image. Ungated pre-quantized mirror \u2014 black-forest-labs' own repo is gated"
+    },
+    "ACE-Step/acestep-v15-sft": {
+      "revision": "c410d249e71ea9385a7b586865e65b1473e1098d",
+      "target": "checkpoints_dir/acestep-v15-sft",
+      "note": "High-quality tier. Non-distilled, runs 32 steps."
     }
   },
   "upstream": {

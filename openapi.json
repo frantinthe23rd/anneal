@@ -129,7 +129,7 @@
           "music"
         ],
         "summary": "Poll one or more music jobs",
-        "description": "Poll every 3–5 seconds. There is no webhook.\n\n**`result` is a JSON-encoded string, not an object** — parse it a second time. It decodes to a list with one entry per take.\n\n**Jobs survive a restart.** The gateway records every job and replays anything outstanding when the backend restarts. Keep polling the id you were given — the replayed job gets a new id internally and the gateway translates both ways, so you will see `status: 0` across a restart and the result when it lands.\n\n**Orphaned jobs** are the residual case: something too old to replay, or that has failed repeatedly, returns `status: 2` with `\"orphaned\": true`. That is final — resubmit.\n\n**Transient errors.** A `502` during polling means the backend was restarting, not that the job failed. Retry the poll; never resubmit on a 502, or you will queue duplicate work.",
+        "description": "Poll every 3–5 seconds. There is no webhook.\n\n**`result` is a JSON-encoded string, not an object** — parse it a second time. It decodes to a list with one entry per take.\n\n**Jobs survive a restart.** The gateway records every job and replays anything outstanding when the backend restarts. Keep polling the id you were given — the replayed job gets a new id internally and the gateway translates both ways, so you will see `status: 0` across a restart and the result when it lands.\n\n**Orphaned jobs** are the residual case: something too old to replay, or that has failed repeatedly, returns `status: 2` with `\"orphaned\": true`. That is final — resubmit.\n\n**Transient errors.** A `502` during polling means the backend was restarting, not that the job failed. Retry the poll; never resubmit on a 502, or you will queue duplicate work.\n\n**Progress.** While a job runs, the decoded `result` carries `progress` (0.0-1.0) and a human-readable `stage` such as \"Generating music (batch size: 1)...\" or \"Decoding audio...\". Show these — a generation takes minutes, and without them a caller cannot tell slow from hung.",
         "requestBody": {
           "required": true,
           "content": {
@@ -692,6 +692,45 @@
           }
         }
       }
+    },
+    "/v1/music/tiers": {
+      "get": {
+        "tags": [
+          "music"
+        ],
+        "summary": "List music quality tiers",
+        "description": "Which model each tier uses and whether it is currently loaded. Answered by the gateway — never wakes a model. Use it to warn a user before a request that will trigger a model swap.",
+        "responses": {
+          "200": {
+            "description": "Tiers",
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "default": "draft",
+                    "loaded_model": "acestep-v15-turbo",
+                    "tiers": {
+                      "draft": {
+                        "model": "acestep-v15-turbo",
+                        "steps": 8,
+                        "label": "Draft — fast, distilled (8 steps)",
+                        "loaded": true
+                      },
+                      "high": {
+                        "model": "acestep-v15-sft",
+                        "steps": 32,
+                        "label": "High — fine-tuned, more detail (32 steps)",
+                        "loaded": false
+                      }
+                    }
+                  },
+                  "code": 200
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -818,7 +857,7 @@
           "inference_steps": {
             "type": "integer",
             "default": 8,
-            "description": "The turbo model wants 8. Raising it mostly costs time."
+            "description": "Overrides the tier default (8 for draft, 32 for high). Step one carries a ~46s warm-up; each further step is about a second, so more steps are cheaper than they look."
           },
           "thinking": {
             "type": "boolean",
@@ -836,6 +875,15 @@
               "complete"
             ],
             "default": "text2music"
+          },
+          "quality": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "high"
+            ],
+            "default": "draft",
+            "description": "Model tier. `draft` = acestep-v15-turbo, 8 steps, ~60s of generation. `high` = acestep-v15-sft, 32 steps, ~90s, measurably more high-frequency detail. Switching tiers restarts the backend and costs one cold load (~2-4 min), because only one DiT fits in memory."
           }
         }
       },
