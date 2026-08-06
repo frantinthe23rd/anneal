@@ -50,6 +50,27 @@ PATCHES = [
             '            kwargs["timesteps"] = torch.tensor(timesteps, dtype=torch.float32, device=self.device)\n'
             '        return kwargs',
     },
+    {
+        "name": "no-mlx-dit-for-non-turbo",
+        "file": "acestep/core/generation/handler/init_service_setup.py",
+        "why": (
+            "acestep/models/mlx/dit_model.py describes itself as a re-implementation of "
+            "modeling_acestep_v15_turbo.py. Non-turbo checkpoints are dimensionally identical, "
+            "so they load through it without error and render smeared, noisy audio with poor "
+            "prompt adherence. Fall back to the PyTorch path for anything that is not turbo."
+        ),
+        "anchor": '        mlx_dit_status = "Disabled"\n'
+                  '        if use_mlx_dit and device in ("mps", "cpu"):',
+        "replacement":
+            '        mlx_dit_status = "Disabled"\n'
+            '        ' + MARKER + ' no-mlx-dit-for-non-turbo\n'
+            '        # The MLX DiT is a port of the turbo model specifically. Non-turbo\n'
+            '        # weights load through it cleanly and produce degraded audio, so keep\n'
+            '        # them on the PyTorch path.\n'
+            '        if use_mlx_dit and not getattr(getattr(self, "config", None), "is_turbo", False):\n'
+            '            use_mlx_dit = False\n'
+            '        if use_mlx_dit and device in ("mps", "cpu"):',
+    },
 ]
 
 

@@ -197,14 +197,21 @@ selector. Measured on the same prompt and seed:
 | Tier | Model | Steps | Generation | Notes |
 | --- | --- | --- | --- | --- |
 | `draft` | `acestep-v15-turbo` | 8 | ~68 s | Distilled for speed. |
-| `high` | `acestep-v15-sft` | 50 | ~130 s | Non-turbo, needs CFG and DCW off. |
+| `high` | `acestep-v15-sft` | 50 | ~180 s | Non-turbo: CFG on, DCW off, PyTorch DiT. |
 
-`high` only works because of a local patch. Non-turbo models need
-`dcw_enabled=false`, which `inference.py` hardcodes to the turbo value and the
-REST API cannot override — Gradio sets it per model type, the API never could.
-Run with turbo settings, sft produces noise rather than music.
-`patches/apply_patches.py` derives the flag from the model's own `is_turbo`
-config instead, and `start-api.sh` re-applies it on every start.
+`high` only works because of two local patches in `patches/apply_patches.py`,
+re-applied by `start-api.sh` on every start. Both exist because ACE-Step's
+non-Gradio paths assume turbo:
+
+1. **`dcw-off-for-non-turbo`** — DCW is turbo-only. `inference.py` hardcodes it
+   on and the REST API cannot override it, so sft rendered pure noise. Now
+   derived from the model's own `is_turbo` config.
+2. **`no-mlx-dit-for-non-turbo`** — `models/mlx/dit_model.py` is, by its own
+   docstring, a re-implementation of *`modeling_acestep_v15_turbo.py`*.
+   Non-turbo checkpoints are dimensionally identical so they load through it
+   without error and render smeared, low-contrast audio. Non-turbo models now
+   use the PyTorch DiT, which costs ~50 s but restored dynamic range from
+   8.4 dB to 14.6 dB.
 
 Measured on the same prompt and seed, high is ~2× the generation time, 7.2 dB
 more energy above 12 kHz and a 23% larger lossless file. **Whether that is
