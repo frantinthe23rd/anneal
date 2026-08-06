@@ -505,11 +505,6 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .outhead h2 { margin: 0; font-size: 12px; letter-spacing: .11em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
 .outhead .n { margin-left: auto; color: var(--faint); font-family: var(--mono); font-size: 12px; }
 
-.libbar { display: flex; gap: 6px; padding: 10px 14px 0; flex-wrap: wrap; }
-.libbar button { border: 1px solid var(--line); background: var(--surface-2); color: var(--muted);
-  border-radius: 999px; padding: 5px 12px; font-size: 12px; }
-.libbar button.on { border-color: var(--line-2); color: var(--text); background: var(--quench-wash); }
-.libbar .sp { margin-left: auto; color: var(--faint); font-size: 12px; align-self: center; }
 .item .when { color: var(--faint); font-family: var(--mono); font-size: 11px; }
 .item .del { color: var(--faint); }
 .item .del:hover { color: var(--bad) !important; }
@@ -1118,13 +1113,6 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
         <span class="n" id="outCount"></span>
         <button class="iconbtn" id="btnLibrary" title="Everything saved on the server">Library</button>
         <button class="iconbtn" id="btnClear">Clear</button>
-      </div>
-      <div class="libbar hidden" id="libbar">
-        <button data-k="" class="on">All</button>
-        <button data-k="music">Music</button>
-        <button data-k="speech">Speech</button>
-        <button data-k="images">Images</button>
-        <span class="sp" id="libCount"></span>
       </div>
       <div class="items hidden" id="albums" style="padding:14px 14px 0"></div>
       <div class="items hidden" id="libitems"></div>
@@ -2336,7 +2324,10 @@ function buildPlayer(p, plan) {
 function renderPresses() {
   const box = $("albums");
   box.textContent = "";
-  const show = presses.filter((p) => libKind === "" || libKind === "music");
+  // Records have their own tab now; they used to be shown under All/Music,
+  // which is why this filtered on "music" and showed nothing once the Library
+  // became per-tab.
+  const show = libKind === "press" ? presses : [];
   box.classList.toggle("hidden", show.length === 0);
   show.forEach((p) => {
     const plan = p.plan || {};
@@ -2498,16 +2489,20 @@ function renderPresses() {
 }
 
 async function loadLibrary() {
+  if (libKind === "press") {          // records come from their own store
+    libItems = [];
+    renderLibrary();
+    loadPresses();
+    return;
+  }
   try {
-    const d = (await api("/v1/outputs?limit=300" + (libKind ? "&kind=" + libKind : ""))).data;
+    const d = (await api("/v1/outputs?limit=300&kind=" + libKind)).data;
     libItems = d.items || [];
-    $("libCount").textContent = d.total + " saved";
   } catch (e) {
     libItems = [];
-    $("libCount").textContent = "could not load: " + e.message;
   }
   renderLibrary();
-  loadPresses();
+  $("albums").classList.add("hidden");   // not a Press view
 }
 
 function renderLibrary() {
@@ -2678,12 +2673,21 @@ function applyRequest(kind, req) {
   setStatus("Settings loaded from that result — adjust and forge again.", "");
 }
 
+/* The Library shows what the tab you are on makes, and nothing else. The mode
+   tabs already name the kind, so the old filter row restated them one level
+   down — and never had a Press filter at all, which left finished records
+   reachable only by scrolling past everything else. */
+const LIB_KIND_FOR_MODE = { music: "music", speech: "speech", image: "images", press: "press" };
+const LIB_TITLE = { music: "Saved tracks", speech: "Saved speech", image: "Saved images",
+                    press: "Records" };
+
 function setLibrary(on) {
   libView = on;
-  $("outTitle").textContent = on ? "Library" : "Output";
+  libKind = LIB_KIND_FOR_MODE[mode] || "music";
+  const isPress = libKind === "press";
+  $("outTitle").textContent = on ? (LIB_TITLE[mode] || "Library") : "Output";
   $("btnLibrary").textContent = on ? "Session" : "Library";
-  $("libbar").classList.toggle("hidden", !on);
-  $("libitems").classList.toggle("hidden", !on);
+  $("libitems").classList.toggle("hidden", !on || isPress);
   if (!on) $("albums").classList.add("hidden");
   $("btnClear").hidden = on;
   if (on) { $("items").classList.add("hidden"); $("empty").classList.add("hidden"); loadLibrary(); }
@@ -3356,13 +3360,6 @@ $("cInput").addEventListener("keydown", (e) => {
   e.preventDefault();
   e.stopPropagation();                // don't also hit the global Cmd+Enter handler
   runChat();
-});
-document.querySelectorAll("#libbar button").forEach((b) => {
-  b.onclick = () => {
-    libKind = b.dataset.k;
-    document.querySelectorAll("#libbar button").forEach((x) => x.classList.toggle("on", x === b));
-    loadLibrary();
-  };
 });
 $("btnClear").onclick = () => {
   blobUrls.forEach(URL.revokeObjectURL); blobUrls = [];
