@@ -318,7 +318,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .hero .foot { margin-top: 7vh; padding-top: 20px; border-top: 1px solid var(--line);
   color: var(--faint); font-size: 12px; display: flex; gap: 16px;
   flex-wrap: wrap; align-items: baseline; }
-.hero .foot a { color: var(--faint); }
+.hero .foot a { color: var(--muted); }
 .hero .foot a:hover { color: var(--text); }
 .hero .foot .by { margin-left: auto; }
 @media (max-width: 700px) { .hero .foot .by { margin-left: 0; } }
@@ -368,16 +368,17 @@ header {
 @keyframes heat { 0%,100% { opacity: .35; transform: scale(.85); } 50% { opacity: 1; transform: scale(1); } }
 
 .who { color: var(--faint); font-size: 12px; white-space: nowrap; }
+/* 36px minimum, per the scheme — these were 28. */
 .iconbtn {
   border: 1px solid var(--line); background: var(--surface); color: var(--muted);
-  border-radius: 8px; padding: 6px 10px; font-size: 12px;
+  border-radius: var(--radius-sm); padding: 6px 12px; font-size: 12px;
+  min-height: 36px; display: inline-flex; align-items: center; gap: 6px;
 }
 .iconbtn:hover { color: var(--text); border-color: var(--faint); }
 /* The toggle shows where it will take you, not where you are: a sun in the dark
    theme, a moon in the light one. Both glyphs ship and CSS picks, so switching
    costs no request and no repaint of the button's contents. */
-.iconbtn.theme { display: inline-flex; align-items: center; justify-content: center;
-  min-width: 36px; min-height: 30px; padding: 6px 9px; }
+.iconbtn.theme { justify-content: center; min-width: 36px; padding: 6px 9px; }
 .theme .i-moon { display: none; }
 :root[data-theme="light"] .theme .i-sun { display: none; }
 :root[data-theme="light"] .theme .i-moon { display: block; }
@@ -488,7 +489,9 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .status.warn { border-color: rgba(255,176,58,.4); background: rgba(255,176,58,.07); }
 .status.warn .msg { color: var(--heat-2); }
 .status .act { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
-.status .act button { border: 1px solid var(--line); background: var(--surface); border-radius: 7px; padding: 6px 11px; font-size: 12px; color: var(--text); }
+.status .act button { border: 1px solid var(--line); background: var(--surface);
+  border-radius: var(--radius-sm); padding: 6px 12px; font-size: 12px; color: var(--text);
+  min-height: 36px; }
 .status .act button:hover { border-color: var(--line-2); color: var(--text); }
 
 .bar { height: 2px; margin-top: 11px; background: var(--line); border-radius: 2px; overflow: hidden; }
@@ -506,7 +509,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .outhead .n { margin-left: auto; color: var(--faint); font-family: var(--mono); font-size: 12px; }
 
 .item .when { color: var(--faint); font-family: var(--mono); font-size: 11px; }
-.item .del { color: var(--faint); }
+.item .del { color: var(--muted); }
 .item .del:hover { color: var(--bad) !important; }
 .empty { padding: 64px 24px; text-align: center; color: var(--faint);
   border-radius: var(--radius); box-shadow: var(--sh-inset); margin: 14px; }
@@ -521,9 +524,26 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .items { padding: 14px; display: flex; flex-direction: column; gap: 14px; }
 .cols > .panel:first-child { position: sticky; top: 16px; }
 @media (max-width: 900px) { .cols > .panel:first-child { position: static; } }
-.item { background: var(--fill-surface-2); border: 1px solid var(--line);
-  border-radius: var(--radius); padding: 14px; box-shadow: var(--sh-2); }
-.item.pending { border-style: dashed; }
+/* ------------------------------------------------------------------- card
+   One component, four kinds. A result, a chat message and a record header had
+   drifted into three different fills, three radii (10 / 9 / 10), two paddings
+   and a shadow on only one of them — which is why the output column read as
+   three separate features rather than one list. The shell is declared once
+   here; what follows are the differences that are real.
+
+   Unified at the CSS level rather than by rewriting three render paths: the
+   existing class names become the modifiers, so nothing downstream changes. */
+.card, .item, .msg, .album {
+  background: var(--fill-surface-2); border: 1px solid var(--line);
+  border-radius: var(--radius); box-shadow: var(--sh-2);
+}
+.card, .item, .msg { padding: 14px; }
+/* A record holds a drawer, so it pads its own head instead — otherwise the
+   drawer's contents inherit the padding and cannot sit flush. */
+.album { padding: 0; overflow: hidden; }
+
+/* modifiers */
+.item.pending, .card.pending { border-style: dashed; }
 .item .top { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
 .kind {
   flex: none; font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
@@ -544,8 +564,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
   background: var(--quench-wash); border: 1px solid var(--line-2); border-radius: var(--radius-sm); }
 .varyrow .nm { flex: 1; min-width: 0; font-size: 12.5px; color: var(--quench);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.item.failed { border-color: rgba(224,87,74,.4); }
-.msg { background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px; padding: 12px 14px; }
+.item.failed, .card.failed { border-color: var(--bad); }
 .msg.user { background: var(--quench-wash); border-color: var(--line-2); }
 .msg .who { display: block; color: var(--muted); font-size: 10.5px; letter-spacing: .1em;
   text-transform: uppercase; margin-bottom: 6px; }
@@ -555,7 +574,6 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .msg .body.md { white-space: normal; }
 .msg .think { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line);
   color: var(--faint); font-size: 12.5px; white-space: pre-wrap; }
-.album { background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .album > .hd { display: flex; gap: 14px; padding: 14px; cursor: pointer; align-items: center; }
 .album > .hd:hover { background: var(--quench-wash); }
 .album .art { width: 74px; height: 74px; border-radius: 7px; object-fit: cover; flex: none;
@@ -576,7 +594,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .album li audio { height: 30px; }
 .album .player { display: flex; align-items: center; gap: 8px; padding: 9px 0; border-top: 1px solid var(--line); }
 .album .player button { border: 1px solid var(--line); background: var(--surface); color: var(--text);
-  border-radius: 7px; padding: 5px 11px; font-size: 13px; line-height: 1; }
+  border-radius: var(--radius-sm); padding: 5px 12px; font-size: 13px; line-height: 1;
+  min-height: 36px; }
 .album .player button:hover:not(:disabled) { border-color: var(--line-2); color: var(--text); }
 .album .player .now { flex: 1; min-width: 0; color: var(--muted); font-size: 12.5px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -584,7 +603,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .album li.cur { background: var(--quench-wash); }
 .album li.cur .nm { color: var(--text); font-weight: 600; }
 .album li .nm { cursor: pointer; }
-.album li a.dl { color: var(--faint); font-size: 11.5px; text-decoration: none; }
+.album li a.dl { color: var(--muted); font-size: 11.5px; text-decoration: none; }
 .album li a.dl:hover { color: var(--text); }
 .album .acts { display: flex; gap: 14px; padding-top: 10px; margin-top: 4px; border-top: 1px solid var(--line); }
 .album .acts button, .album .acts a { background: none; border: 0; padding: 0; color: var(--muted);
@@ -772,6 +791,14 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .brand .mark { display: block; width: 24px; height: 24px; flex: none; align-self: center; }
 .hero .heromark { display: block; width: clamp(96px, 14vw, 168px); height: auto;
   margin: 0 0 18px -6px; animation: rise var(--t-slow) var(--ease) both; }
+
+/* Touch and pen: the scheme asks for 44px where the pointer is coarse. */
+@media (pointer: coarse) {
+  .iconbtn, .status .act button, .album .player button, .tab, .seg button { min-height: 44px; }
+  .item .foot a, .item .foot button, .album .acts button, .album .acts a {
+    min-height: 44px; display: inline-flex; align-items: center;
+  }
+}
 
 /* ---------------------------------------------------------------- key gate */
 .gate { position: fixed; inset: 0; background: rgba(10,8,7,.9); display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 50; }
