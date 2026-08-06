@@ -47,23 +47,15 @@ MUSIC_TIERS = {
         "steps": 8,
         "label": "Draft — fast, distilled (8 steps)",
     },
-    # Downloaded and dimensionally loadable, but NOT usable through the REST
-    # API. Non-turbo models require dcw_enabled=False and ACE-Step's request
-    # model has no such field — inference.py hardcodes the turbo default of
-    # True. Gradio sets it correctly per model type; the API never can. Running
-    # sft with turbo settings produces garbled noise, so it is offered but
-    # refused with the reason rather than silently generating rubbish.
+    # Non-turbo. Needs DCW off (patches/apply_patches.py derives that from the
+    # model's own is_turbo flag, which upstream never did) plus real CFG, which
+    # turbo ignores. 50 steps is what this model was tuned for.
     "high": {
         "model": "acestep-v15-sft",
         "steps": 50,
-        "label": "High — fine-tuned (unavailable via API)",
-        "available": False,
-        "unavailable_reason": (
-            "acestep-v15-sft needs dcw_enabled=false and guidance/CFG settings that "
-            "ACE-Step's REST API does not expose — it hardcodes the turbo defaults, "
-            "which produce garbled audio on a non-turbo model. Use the Gradio UI for "
-            "this model, or see issue #8."
-        ),
+        "label": "High — fine-tuned, 50 steps",
+        "extra_params": {"guidance_scale": 7.0, "cfg_interval_start": 0.0,
+                         "cfg_interval_end": 1.0, "use_adg": False},
     },
 }
 DEFAULT_MUSIC_TIER = os.environ.get("ANNEAL_MUSIC_TIER", "draft")

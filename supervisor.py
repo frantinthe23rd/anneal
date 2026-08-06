@@ -989,6 +989,9 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 ensure_music_tier(tier)
                 payload.setdefault("inference_steps", MUSIC_TIERS[tier]["steps"])
+                # Non-turbo models need CFG; turbo ignores these entirely.
+                for k, v in (MUSIC_TIERS[tier].get("extra_params") or {}).items():
+                    payload.setdefault(k, v)
                 body = json.dumps(payload).encode()
             except ServiceBusy as busy:
                 self._send_json({"code": 409, "error": str(busy),

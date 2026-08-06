@@ -29,6 +29,12 @@ if [[ ! -L "$ACESTEP_DIR/checkpoints" ]]; then
     ln -s "$ACESTEP_CHECKPOINTS_DIR" "$ACESTEP_DIR/checkpoints"
 fi
 
+# Upstream fixes live outside this repo, so re-apply them on every start.
+# Idempotent, and loud if an anchor stops matching after an upstream update.
+if ! "$HERE/patches/apply_patches.py"; then
+    echo "WARNING: an upstream patch could not be applied — see above." >&2
+fi
+
 export ACESTEP_DIR UV_BIN
 
 echo "Starting supervisor on http://${SUPERVISOR_HOST}:${SUPERVISOR_PORT} ..."

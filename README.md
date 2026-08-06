@@ -194,20 +194,40 @@ always advertises the machine actually serving it.
 Pick per request with `"quality": "draft" | "high"`, or in the UI's Model
 selector. Measured on the same prompt and seed:
 
-| Tier | Model | Steps | Generation | Status |
+| Tier | Model | Steps | Generation | Notes |
 | --- | --- | --- | --- | --- |
-| `draft` | `acestep-v15-turbo` | 8 | ~60 s | Working. Distilled for speed. |
-| `high` | `acestep-v15-sft` | 50 | — | **Unavailable — see [#8](https://github.com/frantinthe23rd/anneal/issues/8)** |
+| `draft` | `acestep-v15-turbo` | 8 | ~68 s | Distilled for speed. |
+| `high` | `acestep-v15-sft` | 50 | ~130 s | Non-turbo, needs CFG and DCW off. |
 
-`high` is refused with an explanation rather than run. Non-turbo models need
-`dcw_enabled=false` plus CFG settings that ACE-Step's REST API does not expose —
-`inference.py` hardcodes the turbo default and the request model has no such
-field. Gradio picks them per model type; the API cannot. Run with turbo
-settings, sft produces garbled noise.
+`high` only works because of a local patch. Non-turbo models need
+`dcw_enabled=false`, which `inference.py` hardcodes to the turbo value and the
+REST API cannot override — Gradio sets it per model type, the API never could.
+Run with turbo settings, sft produces noise rather than music.
+`patches/apply_patches.py` derives the flag from the model's own `is_turbo`
+config instead, and `start-api.sh` re-applies it on every start.
 
-Useful thing learned while measuring: 32 steps cost only ~30 s more than 8,
-because step one carries a ~46 s warm-up and each further step is about a
-second. If #8 is fixed, 50 steps is entirely affordable here.
+Measured on the same prompt and seed, high is ~2× the generation time, 7.2 dB
+more energy above 12 kHz and a 23% larger lossless file. **Whether that is
+better is a judgement for your ears** — see the note on verification below.
+
+### Verifying generated audio
+
+An earlier "improvement" here was garbled noise shipped on the strength of a
+spectral measurement that moved in the expected direction. Noise is broadband,
+so it *raises* high-frequency energy. Numbers alone cannot tell good audio from
+bad.
+
+What does work, short of listening:
+
+- **Spectrogram** — `ffmpeg -i x.flac -lavfi showspectrumpic=s=900x360 out.png`.
+  Music shows harmonic bands, note onsets, section changes and silence. Noise is
+  a uniform wash. The difference is unmistakable.
+- **Near-silent frame fraction** — music breathes; the garbled take had *zero*
+  quiet frames against 22.8% for a good one. This was the sharpest single
+  discriminator.
+- **Spectral flatness** — the garbled take measured 5× higher.
+
+Use those to catch catastrophic failure. Use your ears for everything else.
 
 ACE-Step fixes its DiT at startup and can only route between models already
 resident, which on 16 GB is one. **Switching tiers restarts the backend**, so
