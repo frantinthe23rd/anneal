@@ -82,6 +82,12 @@ the host chip when the kernel says so — not merely because swap is large.
 
 Run `./monitor.py` during a generation to see it for yourself.
 
+`ANNEAL_FREE_TORCH_DECODER=1` releases a duplicated copy of the DiT decoder
+after MLX conversion, taking the peak footprint from 22 GB to 18 GB. It is off
+by default: 18 GB still exceeds physical RAM so the paging is unchanged, and it
+costs the PyTorch diffusion fallback plus Gradio's LRC and lyric-scoring
+features. See [#7](https://github.com/frantinthe23rd/anneal/issues/7).
+
 **Measure with `phys_footprint`, never RSS.** MLX allocates through Metal, which
 `ps` does not attribute to the process — a backend genuinely holding 21 GB
 reports an RSS of ~120 MB that jitters as ordinary heap moves around. The
