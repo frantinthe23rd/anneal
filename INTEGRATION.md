@@ -481,6 +481,12 @@ incomplete weight files produce confusing load errors.
 
 ## 10. Content and licensing
 
+Every model and library, with its licence and who wrote it, is listed in the
+README's [Credits](README.md#credits) section and on the UI's About page. One to
+know before you redistribute anything: the text model's weights (Gemma) are
+under Google's **Gemma Terms of Use**, not an OSI licence — the MLX conversion
+tooling around them is MIT.
+
 ACE-Step 1.5 is MIT-licensed and runs entirely locally — no prompts, lyrics, or
 audio leave the machine. Output rights follow the model licence; if you ship
 generated audio in a product, confirm the current upstream terms at
