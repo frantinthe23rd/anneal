@@ -67,8 +67,12 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 /* The front door scrolls: there is more to say here than fits a short window,
    and a scrim baked into the background rather than an ::after overlay means
    the type stays readable however far down the plate you are. */
+/* The padding lives on .hin, not here. With it on .hero, a child at
+   min-height:100% resolves against the content box and the padding is added on
+   top — so the page always overflowed by exactly 12vh and showed a scrollbar
+   that scrolled nothing. Inside .hin, box-sizing keeps it within the 100%. */
 .hero {
-  position: fixed; inset: 0; z-index: 40; display: block; padding: 6vh 7vw;
+  position: fixed; inset: 0; z-index: 40; display: block;
   overflow-y: auto; overscroll-behavior: contain;
   background-color: #0b0908;
   background-image:
@@ -81,7 +85,7 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .hero.gone { opacity: 0; transform: scale(1.03); pointer-events: none; }
 /* min-height rather than centring the container: with tall content, centring a
    flex child puts its top out of reach of the scrollbar. */
-.hero .hin { position: relative; z-index: 1; min-height: 100%;
+.hero .hin { position: relative; z-index: 1; min-height: 100%; padding: 6vh 7vw;
   display: flex; flex-direction: column; justify-content: center; }
 .hero h1 {
   margin: 0; font-size: clamp(38px, 7vw, 76px); font-weight: 600; letter-spacing: .16em;
@@ -198,10 +202,15 @@ header {
 section[data-panel] { animation: panel var(--t-med) var(--ease) both; }
 @keyframes panel { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .item, .album, .msg { animation: panel var(--t-med) var(--ease) both; }
-/* The drawer opens rather than snapping — it is the main gesture in the Library. */
+/* The drawer opens rather than snapping — it is the main gesture in the Library.
+   A fixed open height is a trap: a long tracklist with a Details block expanded
+   inside it exceeds any figure picked here and is silently cut off. The height
+   is measured on open and released to `none` once the transition ends, so the
+   drawer animates but never constrains what is inside it. */
 .album .body { display: block; max-height: 0; overflow: hidden; padding-top: 0; padding-bottom: 0;
   transition: max-height var(--t-med) var(--ease), padding var(--t-med) var(--ease); }
-.album.open .body { max-height: 3000px; padding-bottom: 14px; }
+.album.open .body { padding-bottom: 14px; }
+.album.open .body.done { max-height: none; overflow: visible; }
 .album .chev { transition: transform var(--t-med) var(--ease); }
 .album.open .chev { transform: rotate(180deg); }
 /* Cold -> heating -> hot is the story the strip exists to tell, so let it move. */
@@ -288,7 +297,14 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .empty svg { opacity: .3; margin-bottom: 14px; }
 .empty p { margin: 0; font-size: 13.5px; }
 
-.items { padding: 14px; display: flex; flex-direction: column; gap: 14px; max-height: calc(100vh - 260px); overflow-y: auto; }
+/* No inner scroller. Capping these at viewport height meant an opened album
+   drawer, or a Details block inside one, was clipped by an ancestor with no
+   indication there was more below — you could scroll the outer list but never
+   reach the rest of the panel. The page scrolls instead, which is what a long
+   list should do, and the controls column sticks so it stays reachable. */
+.items { padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+.cols > .panel:first-child { position: sticky; top: 16px; }
+@media (max-width: 900px) { .cols > .panel:first-child { position: static; } }
 .item { background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px; padding: 14px; }
 .item.pending { border-style: dashed; }
 .item .top { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
@@ -1759,6 +1775,37 @@ const fmtDur = (s) => Math.floor(s / 60) + ":" + String(Math.round(s % 60)).padS
 
 /* Full-size artwork. Fetched through the API so auth applies; click anywhere or
    press Escape to dismiss. */
+/* Open by measuring, then get out of the way. max-height animates the drawer;
+   leaving a fixed value in place afterwards is what clipped long tracklists and
+   any Details block opened inside one. Once the transition has run, the cap is
+   released so the drawer sizes to whatever it now contains. */
+function toggleDrawer(wrap) {
+  const body = wrap.querySelector(".body");
+  const opening = !wrap.classList.contains("open");
+  body.classList.remove("done");
+  if (opening) {
+    wrap.classList.add("open");
+    body.style.maxHeight = body.scrollHeight + "px";
+    const settle = () => { body.style.maxHeight = ""; body.classList.add("done"); };
+    body.addEventListener("transitionend", settle, { once: true });
+    setTimeout(settle, 500);                     // reduced-motion: no transition fires
+  } else {
+    body.style.maxHeight = body.scrollHeight + "px";   // from a real height, not `none`
+    requestAnimationFrame(() => {
+      body.style.maxHeight = "";
+      wrap.classList.remove("open");
+    });
+  }
+}
+
+/* Details sits inside a drawer, so opening it changes the drawer's content
+   height after the drawer already settled. Nothing to recompute now that the
+   cap is released, but the drawer must not be left mid-transition. */
+function releaseDrawer(node) {
+  const body = node.closest(".album .body");
+  if (body) { body.style.maxHeight = ""; body.classList.add("done"); }
+}
+
 async function showArtwork(path, caption) {
   const box = el("div", "lightbox");
   box.appendChild(el("div", "cap", "Loading…"));
@@ -1943,7 +1990,7 @@ function renderPresses() {
       (p.state === "done" ? "" : " · " + p.state)));
     hd.appendChild(meta);
     hd.appendChild(el("div", "chev", "▾"));
-    hd.onclick = () => wrap.classList.toggle("open");
+    hd.onclick = () => toggleDrawer(wrap);
     wrap.appendChild(hd);
 
     const body = el("div", "body");
@@ -1967,6 +2014,7 @@ function renderPresses() {
       e.stopPropagation();
       det.classList.toggle("open");
       info.textContent = det.classList.contains("open") ? "Hide" : "Details";
+      releaseDrawer(det);          // this lives inside a drawer; let it grow
     };
     acts.appendChild(info);
 
@@ -2362,36 +2410,67 @@ function scheduleChatRender() {
   chatFrame = requestAnimationFrame(() => { chatFrame = null; renderChat(); });
 }
 
+/* Rendering incrementally is not an optimisation here, it is the fix for a
+   visible bug. `.msg` carries an entrance animation, so tearing the transcript
+   down and rebuilding it on every token restarted that animation on every
+   message, every frame — the whole conversation flickering in and out while a
+   reply streamed. Message elements are now built once and kept; only the body
+   of a message whose content actually changed is repainted. */
+let chatNodes = [];
+
+function buildMsg(m) {
+  const wrap = el("div", "msg" + (m.role === "user" ? " user" : ""));
+  wrap.appendChild(el("span", "who", m.role === "user" ? "you" : "gemma"));
+  wrap.appendChild(el("div", "body"));
+  return wrap;
+}
+
+function paintMsg(node, m) {
+  // Nothing changed since the last frame: leave the DOM alone entirely.
+  if (node._src === m.content && node._pending === m.pending && node._reason === m.reasoning) return;
+  node._src = m.content; node._pending = m.pending; node._reason = m.reasoning;
+
+  const body = node.querySelector(".body");
+  if (m.role === "user") body.textContent = m.content;          // never parsed
+  else if (m.html) { body.innerHTML = m.html; body.classList.add("md"); }
+  else if (m.content) {
+    renderMarkdown(body, m.content);
+    if (!m.pending) m.html = body.innerHTML;                    // settled: cache it
+  } else body.textContent = "";
+  if (m.pending) body.appendChild(el("span", "caret"));
+
+  let think = node.querySelector(".think");
+  if (m.reasoning) {
+    if (!think) { think = el("div", "think"); node.appendChild(think); }
+    think.textContent = m.reasoning;
+  } else if (think) think.remove();
+}
+
 function renderChat() {
   const box = $("chatitems");
   // Only stick to the bottom if you were already there — otherwise scrolling
   // back to read something gets yanked away by the next token.
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
-  box.textContent = "";
   $("cTurns").textContent = chatLog.length ? Math.ceil(chatLog.length / 2) + " turn(s)" : "";
+
+  // Shrinking means a new conversation — that is the only case worth a rebuild.
+  if (chatNodes.length > chatLog.length) { box.textContent = ""; chatNodes = []; }
+
   if (!chatLog.length) {
-    const e = el("div", "empty");
-    e.appendChild(el("p", null, "Nothing yet — ask something."));
-    box.appendChild(e);
+    if (!box.querySelector(".empty")) {
+      const e = el("div", "empty");
+      e.appendChild(el("p", null, "Nothing yet — ask something."));
+      box.appendChild(e);
+    }
     return;
   }
-  chatLog.forEach((m) => {
-    const wrap = el("div", "msg" + (m.role === "user" ? " user" : ""));
-    wrap.appendChild(el("span", "who", m.role === "user" ? "you" : "gemma"));
-    const body = el("div", "body");
-    if (m.role === "user") body.textContent = m.content;          // never parsed
-    else if (m.html) { body.innerHTML = m.html; body.classList.add("md"); }
-    else if (m.content) {
-      renderMarkdown(body, m.content);
-      if (!m.pending) m.html = body.innerHTML;                    // settled: cache it
-    }
-    if (m.pending) body.appendChild(el("span", "caret"));
-    wrap.appendChild(body);
-    if (m.reasoning) {
-      const t = el("div", "think", m.reasoning);
-      wrap.appendChild(t);
-    }
-    box.appendChild(wrap);
+  const blank = box.querySelector(".empty");
+  if (blank) blank.remove();
+
+  chatLog.forEach((m, i) => {
+    let node = chatNodes[i];
+    if (!node) { node = buildMsg(m); chatNodes[i] = node; box.appendChild(node); }
+    paintMsg(node, m);
   });
   if (atBottom) box.scrollTop = box.scrollHeight;
 }
