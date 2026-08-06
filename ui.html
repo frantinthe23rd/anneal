@@ -207,6 +207,13 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .item .foot a:hover, .item .foot button:hover { color: var(--heat-2); }
 .item .foot .sp { color: var(--faint); font-family: var(--mono); font-size: 11.5px; margin-left: auto; }
 .item.failed { border-color: rgba(224,87,74,.4); }
+.msg { background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px; padding: 12px 14px; }
+.msg.user { background: rgba(255,95,31,.06); border-color: rgba(255,95,31,.22); }
+.msg .who { display: block; color: var(--muted); font-size: 10.5px; letter-spacing: .1em;
+  text-transform: uppercase; margin-bottom: 6px; }
+.msg .body { white-space: pre-wrap; word-break: break-word; font-size: 14px; }
+.msg .think { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line);
+  color: var(--faint); font-size: 12.5px; white-space: pre-wrap; }
 .item .err { color: #f0a49c; font-size: 12.5px; font-family: var(--mono); word-break: break-word; }
 
 /* ---------------------------------------------------------------- key gate */
@@ -240,6 +247,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
         <button class="tab" role="tab" data-mode="music"  aria-selected="true">Music</button>
         <button class="tab" role="tab" data-mode="speech" aria-selected="false">Speech</button>
         <button class="tab" role="tab" data-mode="image"  aria-selected="false">Image</button>
+        <button class="tab" role="tab" data-mode="chat"   aria-selected="false">Chat</button>
       </div>
 
       <div class="pad">
@@ -354,6 +362,22 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
           <div class="hint">Schnell is distilled for 4 steps — more mostly costs time. Smaller sizes are proportionally faster.</div>
         </section>
 
+        <!-- CHAT -->
+        <section data-panel="chat" class="hidden">
+          <label class="f" for="cInput">Message</label>
+          <textarea id="cInput" placeholder="Ask anything — it runs on the local Gemma model."></textarea>
+          <div class="field">
+            <label class="check"><input type="checkbox" id="cThink">
+              Show reasoning — slower, but you see how it got there</label>
+            <div class="hint">Gemma 4 reasons before answering. Off by default: with it on, short
+              replies can spend their whole budget thinking.</div>
+          </div>
+          <div class="field row">
+            <button class="iconbtn" id="cClear">New conversation</button>
+            <span class="hint" id="cTurns" style="margin:0"></span>
+          </div>
+        </section>
+
         <button class="go" id="go">Forge</button>
 
         <div class="status" id="status">
@@ -383,6 +407,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
         <span class="sp" id="libCount"></span>
       </div>
       <div class="items hidden" id="libitems"></div>
+      <div class="items hidden" id="chatitems"></div>
       <div id="empty" class="empty">
         <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
           <path d="M3 15h13l3-4h2M5 15v4h9v-4M7 11l2-6h4l-1 6"/>
@@ -622,6 +647,7 @@ function coldWarning(service) {
 
 /* ------------------------------------------------------------------ submit */
 async function run() {
+  if (mode === "chat") return runChat();
   if (busy) return;
   busy = true;
   $("go").disabled = true;
@@ -858,6 +884,11 @@ function renderLibrary() {
     const dl = document.createElement("a");
     dl.href = it.url; dl.download = it.name; dl.textContent = "Download";
     foot.appendChild(dl);
+    if (it.meta && it.meta.request) {
+      const reuse = el("button", null, "Reuse");
+      reuse.onclick = () => { applyRequest(it.kind, it.meta.request); };
+      foot.appendChild(reuse);
+    }
     const del = el("button", "del", "Delete");
     del.onclick = async () => {
       if (!confirm("Delete " + it.name + "?")) return;
@@ -877,6 +908,38 @@ function renderLibrary() {
     item.appendChild(foot);
     box.appendChild(item);
   });
+}
+
+/* Load a saved result's settings back into the form, so a good take can be
+   nudged rather than reconstructed from memory. */
+function applyRequest(kind, req) {
+  const tab = { music: "music", speech: "speech", images: "image" }[kind];
+  const tabBtn = document.querySelector('.tab[data-mode="' + tab + '"]');
+  if (tabBtn) tabBtn.click();
+  setLibrary(false);
+
+  if (kind === "music") {
+    $("mPrompt").value = req.prompt || "";
+    const inst = !req.lyrics || req.lyrics.trim() === "[instrumental]";
+    document.querySelector('#mVocal button[data-v="' + (inst ? "inst" : "sung") + '"]').click();
+    if (!inst) $("mLyrics").value = req.lyrics || "";
+    if (req.audio_duration) $("mDur").value = req.audio_duration;
+    if (req.batch_size) $("mTakes").value = req.batch_size;
+    if (req.bpm) $("mBpm").value = req.bpm;
+    if (req.key_scale) $("mKey").value = req.key_scale;
+    if (req.audio_format) $("mFormat").value = req.audio_format;
+    if (req.quality) $("mQuality").value = req.quality;
+    if (typeof req.thinking === "boolean") $("mThink").checked = req.thinking;
+  } else if (kind === "speech") {
+    $("sText").value = req.input || req.text || "";
+    if (req.voice) $("sVoice").value = req.voice;
+    if (req.speed) $("sSpeed").value = req.speed;
+  } else {
+    $("iPrompt").value = req.prompt || "";
+    if (req.size) $("iSize").value = req.size;
+    if (req.steps) $("iSteps").value = req.steps;
+  }
+  setStatus("Settings loaded from that result — adjust and forge again.", "");
 }
 
 function setLibrary(on) {
@@ -965,6 +1028,99 @@ async function writeLyrics() {
   }
 }
 
+/* ----------------------------------------------------------------- chat
+   A conversation with the same local model the lyric writer uses. Streams, and
+   keeps history client-side so the server stays stateless. */
+let chatLog = [];          // {role, content, reasoning}
+let chatting = null;
+
+function renderChat() {
+  const box = $("chatitems");
+  box.textContent = "";
+  $("cTurns").textContent = chatLog.length ? Math.ceil(chatLog.length / 2) + " turn(s)" : "";
+  if (!chatLog.length) {
+    box.appendChild(el("div", "empty", "Nothing yet — ask something."));
+    return;
+  }
+  chatLog.forEach((m) => {
+    const wrap = el("div", "msg" + (m.role === "user" ? " user" : ""));
+    wrap.appendChild(el("span", "who", m.role === "user" ? "you" : "gemma"));
+    wrap.appendChild(el("div", "body", m.content || (m.pending ? "…" : "")));
+    if (m.reasoning) {
+      const t = el("div", "think", m.reasoning);
+      wrap.appendChild(t);
+    }
+    box.appendChild(wrap);
+  });
+  box.scrollTop = box.scrollHeight;
+}
+
+async function runChat() {
+  if (chatting) { chatting.abort(); return; }
+  const text = $("cInput").value.trim();
+  if (!text) { setStatus("Type a message first.", "warn"); return; }
+
+  chatLog.push({ role: "user", content: text });
+  const reply = { role: "assistant", content: "", reasoning: "", pending: true };
+  chatLog.push(reply);
+  $("cInput").value = "";
+  renderChat();
+
+  chatting = new AbortController();
+  const showThinking = $("cThink").checked;
+  try {
+    const res = await fetch("/v1/chat/completions", {
+      method: "POST",
+      headers: Object.assign({ "Content-Type": "application/json" },
+                             apiKey ? { Authorization: "Bearer " + apiKey } : {}),
+      body: JSON.stringify({
+        model: "gemma", stream: true, max_tokens: 1500, temperature: 0.7,
+        chat_template_kwargs: { enable_thinking: showThinking },
+        messages: chatLog.filter((m) => !m.pending)
+                         .map((m) => ({ role: m.role, content: m.content })),
+      }),
+      signal: chatting.signal,
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const p = line.slice(6).trim();
+        if (p === "[DONE]") continue;
+        try {
+          const d = JSON.parse(p).choices[0].delta || {};
+          if (d.content) reply.content += d.content;
+          if (d.reasoning) reply.reasoning += d.reasoning;
+          reply.pending = false;
+          renderChat();
+        } catch (_) { /* partial JSON across chunk boundaries */ }
+      }
+    }
+    reply.pending = false;
+    if (!reply.content.trim() && reply.reasoning) {
+      // Ran out of budget while reasoning — say so rather than showing nothing.
+      reply.content = "(stopped while still reasoning — try again, or turn reasoning off)";
+    }
+    renderChat();
+  } catch (e) {
+    reply.pending = false;
+    reply.content = e.name === "AbortError" ? "(stopped)" : "Failed: " + e.message;
+    renderChat();
+  } finally {
+    chatting = null;
+    $("go").textContent = "Forge";
+  }
+}
+
 /* ------------------------------------------------------------------ utils */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const slug = (s) => (s.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase().slice(0, 48) || "anneal");
@@ -992,6 +1148,15 @@ document.querySelectorAll(".tab").forEach((tab) => {
     mode = tab.dataset.mode;
     document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", String(t === tab)));
     document.querySelectorAll("[data-panel]").forEach((p) => p.classList.toggle("hidden", p.dataset.panel !== mode));
+    // Chat has its own transcript column and its own verb.
+    const isChat = mode === "chat";
+    $("chatitems").classList.toggle("hidden", !isChat);
+    $("btnLibrary").hidden = isChat;
+    $("btnClear").hidden = isChat;
+    $("outTitle").textContent = isChat ? "Conversation" : "Output";
+    $("go").textContent = isChat ? "Send" : "Forge";
+    if (isChat) { $("items").classList.add("hidden"); $("empty").classList.add("hidden"); renderChat(); }
+    else { setLibrary(false); }
     hideStatus();
     renderForge();
   };
@@ -1009,6 +1174,10 @@ document.querySelectorAll("#mVocal button").forEach((b) => {
 $("go").onclick = run;
 $("btnLibrary").onclick = () => setLibrary(!libView);
 $("btnWrite").onclick = writeLyrics;
+$("cClear").onclick = () => { chatLog = []; renderChat(); };
+$("cInput") && $("cInput").addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); runChat(); }
+});
 document.querySelectorAll("#libbar button").forEach((b) => {
   b.onclick = () => {
     libKind = b.dataset.k;

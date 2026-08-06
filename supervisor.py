@@ -659,12 +659,18 @@ def ensure_music_tier(tier):
 def start_service(name):
     """Start `name`, first evicting any other *idle* heavy service.
 
+    Touches the service before doing anything slow. Starting a backend takes
+    seconds to minutes, and without this the reaper can decide to stop it based
+    on an idle time measured before the request arrived — killing the very
+    service the caller is waiting on, mid-stream.
+
     Eviction used to be unconditional, which silently killed in-flight music
     jobs whenever an image was requested — and because a dead queue still
     reports status 0, the client polled forever on work that no longer existed.
     Refusing loudly is far better than losing someone's job quietly.
     """
     svc = SERVICE_OBJECTS[name]
+    svc.touch()
     if not svc.heavy:
         svc.ensure_started()
         return
@@ -715,6 +721,10 @@ def reaper():
                     continue
                 if svc.has_work():
                     svc.touch()
+                    continue
+                # has_work() involves a network round trip, so re-read the clock
+                # before acting: a request may have arrived while we asked.
+                if time.time() - svc.last_activity < svc.spec["idle_timeout"]:
                     continue
                 svc.stop("idle %.0fs" % idle_for)
             except Exception as exc:  # a reaper crash must not wedge the proxy
@@ -836,7 +846,7 @@ class Handler(BaseHTTPRequestHandler):
                 outputs.save_bytes("speech", response_body, ext, {
                     "prompt": req.get("input") or req.get("text") or "",
                     "voice": req.get("voice"), "speed": req.get("speed"),
-                    "service": "speech",
+                    "service": "speech", "request": req,
                 })
 
             elif route.startswith("/v1/images"):
@@ -848,6 +858,7 @@ class Handler(BaseHTTPRequestHandler):
                         "prompt": req.get("prompt", ""), "seed": item.get("seed"),
                         "size": req.get("size"), "steps": req.get("steps"),
                         "seconds": item.get("seconds"), "service": "image",
+                        "request": dict(req, seed=item.get("seed")),
                     })
         except Exception as exc:
             log("persist failed for %s: %r" % (route, exc))
@@ -887,6 +898,9 @@ class Handler(BaseHTTPRequestHandler):
                 "metadata_source": "planning-lm (requested, not measured)",
                 "duration": meta.get("duration"), "seed": take.get("seed_value"),
                 "service": "music", "task_id": task_id,
+                # The full submitted request, so a result can be reproduced or
+                # used as a starting point without retyping it.
+                "request": payload,
             })
             if path:
                 # Point the caller at the durable copy rather than the temp file
@@ -984,7 +998,7 @@ class Handler(BaseHTTPRequestHandler):
             return response_body
 
     # -- proxying ---------------------------------------------------------
-    def _proxy(self, method, body=None):
+    def _proxy(self, method, body=None, transform=None):
         route = urllib.parse.urlparse(self.path).path
         name = resolve(route)
         if name is None:
@@ -1076,6 +1090,7 @@ class Handler(BaseHTTPRequestHandler):
         svc.touch()
         with svc.flight_lock:
             svc.in_flight += 1
+        started = False          # once headers are out, an error page is impossible
         try:
             headers = {}
             for key, value in self.headers.items():
@@ -1110,27 +1125,57 @@ class Handler(BaseHTTPRequestHandler):
                 # response defeats the entire point of streaming — the caller
                 # would wait for the full completion and then receive it at once.
                 if _is_stream(resp):
+                    started = True
                     self.send_response(resp.status)
                     for key, value in resp.getheaders():
                         if key.lower() in HOP_BY_HOP or key.lower() == "content-length":
                             continue
                         self.send_header(key, value)
+                    # Transfer-Encoding is hop-by-hop so it was stripped above,
+                    # and there is no Content-Length for a stream. That leaves
+                    # the response with no framing at all: on HTTP/1.1 the
+                    # connection stays open and the client waits forever for an
+                    # end that never comes. Close-delimit it instead, so end of
+                    # stream is end of connection.
+                    self.send_header("Connection", "close")
+                    self.close_connection = True
                     self.end_headers()
-                    while True:
-                        chunk = resp.read(1024)
-                        if not chunk:
-                            break
-                        self.wfile.write(chunk)
-                        self.wfile.flush()
+                    try:
+                        while True:
+                            # read1, not read: read(n) blocks until n bytes
+                            # exist, which re-buffers the stream we are relaying.
+                            chunk = resp.read1(8192) if hasattr(resp, "read1") else resp.read(1)
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                            self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        # The caller hung up — cancelling a stream is normal, not
+                        # an error. Stop relaying and let the backend finish.
+                        log("client disconnected mid-stream on %s" % route)
                     return
 
                 payload = resp.read()
 
-                if resp.status == 200:
+                if resp.status == 200 and transform == "text":
+                    # Unwrap the OpenAI envelope down to the text itself.
+                    try:
+                        d = json.loads(payload.decode("utf-8"))
+                        msg = (d["choices"][0].get("message") or {})
+                        payload = json.dumps({
+                            "data": {"text": (msg.get("content") or "").strip(),
+                                     "model": TEXT_MODEL_NAME,
+                                     "usage": d.get("usage")},
+                            "code": 200, "error": None}).encode()
+                    except Exception as exc:
+                        payload = json.dumps({"code": 502,
+                                              "error": "unexpected text response: %s" % exc}).encode()
+                elif resp.status == 200:
                     payload = self._track_music_jobs(route, body, payload)
                     self._persist_output(route, body, payload,
                                          resp.getheader("Content-Type") or "")
 
+                started = True
                 self.send_response(resp.status)
                 for key, value in resp.getheaders():
                     if key.lower() in HOP_BY_HOP or key.lower() == "content-length":
@@ -1141,8 +1186,16 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(payload)
             finally:
                 conn.close()
+        except (BrokenPipeError, ConnectionResetError):
+            log("client disconnected on %s" % route)
         except Exception as exc:
-            self._send_json({"code": 502, "error": "proxy error: %s" % exc}, 502)
+            # Only if nothing has been written yet. Sending an error body after
+            # headers are out corrupts the response and desyncs the connection.
+            if started:
+                log("proxy error after response began on %s: %r" % (route, exc))
+                self.close_connection = True
+            else:
+                self._send_json({"code": 502, "error": "proxy error: %s" % exc}, 502)
         finally:
             with svc.flight_lock:
                 svc.in_flight -= 1
@@ -1286,6 +1339,37 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         route = urllib.parse.urlparse(self.path).path
+
+        if route == "/v1/text":
+            # A deliberately small contract: prompt in, text out. The
+            # OpenAI-shaped /v1/chat/completions remains for clients that want
+            # messages, streaming and the rest.
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            payload, _ = self._body()
+            prompt = (payload.get("prompt") or "").strip()
+            if not prompt:
+                self._send_json({"code": 400, "error": "'prompt' is required"}, 400)
+                return
+            messages = []
+            if payload.get("system"):
+                messages.append({"role": "system", "content": payload["system"]})
+            messages.append({"role": "user", "content": prompt})
+            upstream = {
+                "model": TEXT_MODEL_PATH,
+                "messages": messages,
+                "max_tokens": min(int(payload.get("max_tokens") or 800), 4096),
+                "temperature": float(payload.get("temperature", 0.8)),
+                "stream": False,
+                # Gemma 4 reasons at length by default and would spend the token
+                # budget before answering. Callers wanting that can use
+                # /v1/chat/completions and set it themselves.
+                "chat_template_kwargs": {"enable_thinking": bool(payload.get("thinking", False))},
+            }
+            self.path = "/v1/chat/completions"
+            self._proxy("POST", body=json.dumps(upstream).encode(), transform="text")
+            return
 
         if route in ("/supervisor/start", "/supervisor/stop", "/supervisor/status"):
             payload, _ = self._body()

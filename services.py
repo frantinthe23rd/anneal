@@ -105,7 +105,7 @@ SERVICES = {
     # belongs to music. Only the completion endpoints are routed here, so the
     # collision never arises.
     "text": {
-        "routes": ["/v1/chat/completions", "/v1/completions"],
+        "routes": ["/v1/chat/completions", "/v1/completions", "/v1/text"],
         "port": _int("TEXT_PORT", 8014),
         "cmd": [GEN_PYTHON, "-m", "mlx_lm", "server",
                 # Resolved local snapshot rather than a repo id, so nothing can

@@ -776,6 +776,80 @@
           }
         }
       }
+    },
+    "/v1/text": {
+      "post": {
+        "tags": [
+          "text"
+        ],
+        "summary": "Generate text (simple contract)",
+        "description": "Prompt in, text out — for callers who don't want the OpenAI message shape.\n\nReasoning is **off** by default (Gemma 4 would otherwise spend a short token budget thinking before answering). Set `thinking: true` to keep it, or use `/v1/chat/completions` for full control and streaming.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "prompt"
+                ],
+                "properties": {
+                  "prompt": {
+                    "type": "string"
+                  },
+                  "system": {
+                    "type": "string",
+                    "description": "Optional system message."
+                  },
+                  "max_tokens": {
+                    "type": "integer",
+                    "default": 800,
+                    "maximum": 4096
+                  },
+                  "temperature": {
+                    "type": "number",
+                    "default": 0.8
+                  },
+                  "thinking": {
+                    "type": "boolean",
+                    "default": false
+                  }
+                }
+              },
+              "example": {
+                "prompt": "Name three moods for a rainy-day playlist."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Generated text",
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "text": "1. Melancholy reflection.\n2. Cozy introspection.\n3. Dramatic yearning.",
+                    "model": "mlx-community/gemma-4-e4b-it-4bit",
+                    "usage": {
+                      "prompt_tokens": 23,
+                      "completion_tokens": 20
+                    }
+                  },
+                  "code": 200,
+                  "error": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing prompt"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
     }
   },
   "components": {

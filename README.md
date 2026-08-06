@@ -116,8 +116,14 @@ that.
 - A `409` (the other heavy model is mid-job) offers to stop it and retry rather
   than just failing.
 - Results stack newest-first with inline playback or preview and a download link.
+- **Chat** is a plain conversation with the local Gemma model, streamed. Reasoning
+  is off by default — Gemma 4 will otherwise spend a short budget thinking before
+  answering — with a checkbox to show it.
+- **Write for me** in the lyrics block drafts lyrics from the style prompt,
+  streaming into the box. Click again to stop; your text is restored on failure.
 - **Library** switches to everything the server has kept — filter by kind, play
-  or preview, download, delete. Served off disk, so browsing wakes no model.
+  or preview, download, delete, and **Reuse**, which loads that result's exact
+  settings back into the form. Served off disk, so browsing wakes no model.
 - `Cmd/Ctrl+Enter` submits.
 
 Dark by design — the accent colour is reserved for things that are genuinely hot
