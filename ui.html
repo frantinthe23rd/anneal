@@ -556,9 +556,12 @@ function renderForge() {
       warn.appendChild(el("span", "nm", "host"));
       warn.appendChild(el("span", "st"));
     }
-    warn.querySelector(".st").textContent = "low memory · " + fmtMem(sys.swap_used_mb) + " swap";
-    warn.title = "The machine is short on memory and swapping heavily. Generation will be slow "
-               + "and jobs can die. Close other apps, or unload a model you aren't using.";
+    warn.querySelector(".st").textContent = sys.pressure_level === "critical" ? "critical" : "under pressure";
+    warn.title = "macOS reports memory pressure" +
+      (sys.pageouts_per_sec ? " (" + sys.pageouts_per_sec + " pageouts/sec)" : "") +
+      ". Generation may slow or fail. Close other apps, or unload a model you aren't using. "
+      + "Note a large swap file on its own is normal here — this appears only when the "
+      + "kernel says there is a problem.";
     box.appendChild(warn);
   } else if (warn) {
     warn.remove();

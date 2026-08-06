@@ -437,7 +437,7 @@
           "supervisor"
         ],
         "summary": "Gateway and service state",
-        "description": "Never wakes a model. Safe to poll as often as you like. No auth required.",
+        "description": "Never wakes a model. Safe to poll as often as you like. No auth required.\n\nThe `system` block reports `free_mb`, `swap_used_mb`, `pageouts_per_sec` and `pressure_level` (macOS's own verdict: normal / warning / critical), plus a boolean `pressure`.\n\n**Do not treat swap volume as a problem.** This host routinely runs a model larger than physical RAM; macOS pages it out once and then idles at a negligible pageout rate. `pressure` is true only when the kernel reports warning or critical, or paging is genuinely sustained.",
         "security": [],
         "responses": {
           "200": {

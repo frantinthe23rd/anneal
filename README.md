@@ -59,7 +59,17 @@ offer idle-unload, so ending the process is the only way to reclaim the memory.
 Measured: loading music takes free RAM from ~11 GB to ~1.5 GB and drives swap
 from 4 GB to 17 GB; stopping it hands all of that back. The cost is a ~3–4 minute
 cold start for music (~30–60 s for images) after an idle period or an eviction.
-Speech is light enough to stay resident alongside either.
+Speech and chat are light enough to stay resident alongside either.
+
+**A large swap file here is normal, not a problem.** This machine routinely runs
+a model whose footprint exceeds physical RAM. macOS pages it out once and then
+sits at roughly one pageout per second, with
+`kern.memorystatus_vm_pressure_level` reporting *normal* — and in use it is
+genuinely indistinguishable from having the memory. Anneal originally warned on
+swap *volume*, which meant warning during ordinary operation; a warning that
+fires when nothing is wrong just teaches you to ignore the one that matters. It
+now reports the kernel's own pressure level and the pageout *rate*, and only
+raises the host chip when one of those says something is actually wrong.
 
 **Measure with `phys_footprint`, never RSS.** MLX allocates through Metal, which
 `ps` does not attribute to the process — a backend genuinely holding 21 GB

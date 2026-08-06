@@ -171,45 +171,75 @@ def _parse_size_mb(text):
     return value * _SIZE_UNITS.get(unit, 1.0)
 
 
+_page_sample = {"t": 0.0, "pageouts": 0}
+
+
+def _pressure_level():
+    """macOS's own verdict: 1 normal, 2 warning, 4 critical.
+
+    Far better than anything inferred from free bytes, because the kernel knows
+    what it is doing with compression and what it can reclaim.
+    """
+    try:
+        out = subprocess.check_output(
+            ["sysctl", "-n", "kern.memorystatus_vm_pressure_level"], text=True)
+        return int(out.strip())
+    except Exception:
+        return 1
+
+
 def system_memory():
-    """Free memory and swap, so callers can see when the host is thrashing."""
+    """Memory state, judged by activity rather than by how much swap exists.
+
+    A large swap *file* is not a problem. This machine routinely runs a model
+    whose footprint exceeds physical RAM, macOS pages it out once, and then sits
+    at a pageout rate of about one page per second — which is why it feels
+    completely normal in use. Alarming on swap volume meant warning during
+    ordinary operation, and a warning that fires when nothing is wrong is worse
+    than none: it teaches you to ignore the one that matters.
+
+    What actually indicates trouble is sustained paging, or the kernel itself
+    saying so.
+    """
     info = {}
     try:
         out = subprocess.check_output(["vm_stat"], text=True)
-        page = 16384
-        stats = {}
+        page, stats = 16384, {}
         for line in out.splitlines():
             if ":" not in line:
                 continue
             k, v = line.split(":", 1)
-            # vm_stat's first line is a header whose "value" is prose — skip
-            # anything that isn't a page count rather than losing the whole read.
+            # The header line's "value" is prose — skip it rather than losing
+            # the whole read.
             try:
                 stats[k.strip()] = int(v.strip().rstrip(".").replace(",", "") or 0)
             except ValueError:
                 continue
         free = (stats.get("Pages free", 0) + stats.get("Pages inactive", 0)) * page
         info["free_mb"] = int(free / (1024 * 1024))
+
+        # Pageout *rate* between calls — the flow, not the stock.
+        now, outs = time.time(), stats.get("Pageouts", 0)
+        prev_t, prev_outs = _page_sample["t"], _page_sample["pageouts"]
+        if prev_t and now > prev_t and outs >= prev_outs:
+            info["pageouts_per_sec"] = int((outs - prev_outs) / (now - prev_t))
+        _page_sample["t"], _page_sample["pageouts"] = now, outs
     except Exception:
         pass
+
     try:
         out = subprocess.check_output(["sysctl", "-n", "vm.swapusage"], text=True)
-        # total = 21504.00M  used = 20418.56M  free = 1085.44M
-        for token in out.split():
-            pass
-        parts = dict(zip(out.replace("=", " ").split()[0::2], out.replace("=", " ").split()[1::2]))
-        used = parts.get("used", "0M").rstrip("M")
-        total = parts.get("total", "0M").rstrip("M")
-        info["swap_used_mb"] = int(float(used))
-        info["swap_total_mb"] = int(float(total))
+        parts = dict(zip(out.replace("=", " ").split()[0::2],
+                         out.replace("=", " ").split()[1::2]))
+        info["swap_used_mb"] = int(float(parts.get("used", "0M").rstrip("M")))
+        info["swap_total_mb"] = int(float(parts.get("total", "0M").rstrip("M")))
     except Exception:
         pass
-    # Either condition alone is worth surfacing. Requiring both missed the real
-    # case: a loaded music model leaves ~2.5 GB free while sitting on 16 GB of
-    # swap, which is thrashing however much headroom the free counter claims.
-    info["pressure"] = bool(
-        info.get("swap_used_mb", 0) > 8192 or info.get("free_mb", 99999) < 1536
-    )
+
+    level = _pressure_level()
+    info["pressure_level"] = {1: "normal", 2: "warning", 4: "critical"}.get(level, "normal")
+    # Trust the kernel first; otherwise only flag genuinely sustained paging.
+    info["pressure"] = bool(level >= 2 or info.get("pageouts_per_sec", 0) > 2000)
     return info
 
 

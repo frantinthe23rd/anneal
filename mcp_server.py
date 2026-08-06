@@ -70,8 +70,13 @@ def tool_service_status(_args):
     ) for name, s in services.items()]
     system = data.get("system", {})
     if system.get("pressure"):
-        lines.append("HOST UNDER MEMORY PRESSURE — generation will be slow and may fail.")
-    lines.append("free %s MB, swap %s MB" % (system.get("free_mb"), system.get("swap_used_mb")))
+        lines.append("HOST UNDER MEMORY PRESSURE (%s) — generation may slow or fail."
+                     % system.get("pressure_level", "warning"))
+    # Swap volume is reported as context, not as a warning: this host routinely
+    # runs a model larger than physical RAM and handles it without trouble.
+    lines.append("free %s MB, swap %s MB, pressure %s"
+                 % (system.get("free_mb"), system.get("swap_used_mb"),
+                    system.get("pressure_level", "normal")))
     return "\n".join(lines)
 
 
