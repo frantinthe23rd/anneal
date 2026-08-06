@@ -39,6 +39,12 @@ loaded; if behaviour doesn't match the code, check the process start time first.
 - **Verify against the running system, not by reading.** Reproduce a bug before
   fixing it and confirm the fix afterwards. Several hypotheses here looked
   obviously right and were wrong.
+- **`ui.html` needs a screenshot, not a read.** A light theme that painted
+  near-black text onto a near-black plate, a forge strip that never rendered on
+  first load, and a scrollbar that scrolled nothing all shipped without raising
+  an error. `tools/README.md` has the one-line command; `tools/audit.js`
+  measures rendered geometry when the question is "does this obey the design
+  scheme" rather than "does it look right".
 - **Docs change with code.** `README.md`, `INTEGRATION.md` and `openapi.json`
   are part of the change, not follow-up. Correct earlier claims that turn out
   wrong rather than quietly moving on.
