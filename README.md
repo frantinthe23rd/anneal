@@ -152,8 +152,16 @@ that.
 - **Write for me** in the lyrics block drafts lyrics from the style prompt,
   streaming into the box. Click again to stop; your text is restored on failure.
 - **Library** switches to everything the server has kept — filter by kind, play
-  or preview, download, delete, and **Reuse**, which loads that result's exact
-  settings back into the form. Served off disk, so browsing wakes no model.
+  or preview, download, delete, **Details** and **Reuse**. Details shows exactly
+  what produced a file: every submitted parameter, the full prompt and lyrics,
+  which DiT and planning model ran, and the planned bpm/key labelled as such.
+  Reuse loads those settings straight back into the form. Served off disk, so
+  browsing wakes no model.
+
+  Worth knowing when comparing takes: **generation is not deterministic**, even
+  with `use_random_seed: false`. Two identical requests produce different audio,
+  because the planning LM samples at temperature. Details tells you what was
+  asked for; it cannot tell you why two takes of the same request differ.
 - `Cmd/Ctrl+Enter` submits.
 
 Dark by design — the accent colour is reserved for things that are genuinely hot

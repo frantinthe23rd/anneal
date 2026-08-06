@@ -214,6 +214,14 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .msg .body { white-space: pre-wrap; word-break: break-word; font-size: 14px; }
 .msg .think { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line);
   color: var(--faint); font-size: 12.5px; white-space: pre-wrap; }
+.det { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); display: none; }
+.det.open { display: block; }
+.det dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; }
+.det dt { color: var(--faint); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+.det dd { margin: 0; font-size: 12.5px; font-family: var(--mono); word-break: break-word; }
+.det pre { margin: 8px 0 0; padding: 9px 11px; background: var(--bg); border: 1px solid var(--line);
+  border-radius: 7px; font-size: 12px; white-space: pre-wrap; color: var(--muted);
+  max-height: 220px; overflow-y: auto; }
 .item .err { color: #f0a49c; font-size: 12.5px; font-family: var(--mono); word-break: break-word; }
 
 /* ---------------------------------------------------------------- key gate */
@@ -896,9 +904,17 @@ function renderLibrary() {
     dl.href = it.url; dl.download = it.name; dl.textContent = "Download";
     foot.appendChild(dl);
     if (it.meta && it.meta.request) {
+      const det = buildDetails(it);
+      const info = el("button", null, "Details");
+      info.onclick = () => {
+        det.classList.toggle("open");
+        info.textContent = det.classList.contains("open") ? "Hide" : "Details";
+      };
+      foot.appendChild(info);
       const reuse = el("button", null, "Reuse");
       reuse.onclick = () => { applyRequest(it.kind, it.meta.request); };
       foot.appendChild(reuse);
+      item.appendChild(det);
     }
     const del = el("button", "del", "Delete");
     del.onclick = async () => {
@@ -919,6 +935,55 @@ function renderLibrary() {
     item.appendChild(foot);
     box.appendChild(item);
   });
+}
+
+/* What produced this file — the request as submitted, plus what the model
+   reported back. Shown rather than only replayable, because "why does this one
+   sound better?" is answered by reading the settings, not by re-running them. */
+const DETAIL_LABELS = {
+  quality: "tier", audio_duration: "length", batch_size: "takes",
+  audio_format: "format", inference_steps: "steps", key_scale: "key",
+  guidance_scale: "guidance", vocal_language: "language", size: "size",
+  steps: "steps", voice: "voice", speed: "speed",
+};
+const DETAIL_SKIP = new Set(["prompt", "lyrics", "input", "text", "model", "stream", "messages"]);
+
+function buildDetails(it) {
+  const det = el("div", "det");
+  const req = it.meta.request || {};
+  const dl = document.createElement("dl");
+
+  const row = (k, v) => {
+    if (v === undefined || v === null || v === "") return;
+    dl.appendChild(el("dt", null, k));
+    dl.appendChild(el("dd", null, String(v)));
+  };
+
+  row("when", new Date(it.created * 1000).toLocaleString());
+  Object.keys(req).sort().forEach((k) => {
+    if (DETAIL_SKIP.has(k)) return;
+    row(DETAIL_LABELS[k] || k.replace(/_/g, " "), req[k]);
+  });
+  // Reported by the model rather than requested — labelled as such, because it
+  // is the planning LM's intent and can disagree with the audio.
+  const m = it.meta || {};
+  row("bpm (planned)", m.bpm_planned);
+  row("key (planned)", m.key_scale_planned);
+  row("seed used", m.seed);
+  row("model", m.dit_model);
+  det.appendChild(dl);
+
+  const prompt = req.prompt || req.input || req.text || it.prompt;
+  if (prompt) {
+    det.appendChild(el("dt", null, "prompt"));
+    const p = document.createElement("pre"); p.textContent = prompt; det.appendChild(p);
+  }
+  const lyrics = req.lyrics;
+  if (lyrics && lyrics.trim() && lyrics.trim() !== "[instrumental]") {
+    det.appendChild(el("dt", null, "lyrics"));
+    const l = document.createElement("pre"); l.textContent = lyrics; det.appendChild(l);
+  }
+  return det;
 }
 
 /* Load a saved result's settings back into the form, so a good take can be

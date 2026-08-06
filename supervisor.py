@@ -942,6 +942,10 @@ class Handler(BaseHTTPRequestHandler):
                 "metadata_source": "planning-lm (requested, not measured)",
                 "duration": meta.get("duration"), "seed": take.get("seed_value"),
                 "service": "music", "task_id": task_id,
+                # Which model actually produced it — the tier alone is ambiguous
+                # once tiers or patches change underneath.
+                "dit_model": take.get("dit_model"),
+                "lm_model": take.get("lm_model"),
                 # The full submitted request, so a result can be reproduced or
                 # used as a starting point without retyping it.
                 "request": payload,
