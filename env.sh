@@ -78,8 +78,14 @@ export TS_BIN="${TS_BIN:-}"
 
 # Ask Tailscale for this machine's name instead of baking one host in. Empty is
 # fine — it only affects the URL printed at startup.
+# Deliberately no early-exiting filter (`grep -m1`, `head -1`) in this pipeline.
+# The callers run `set -euo pipefail`, and an early exit SIGPIPEs the upstream
+# stage, which makes the whole pipeline fail and silently aborts start-api.sh
+# before it does anything. awk reads to EOF and prints the first match instead.
 if [[ -z "${TAILNET_HOST:-}" && -n "$TS_BIN" && -x "$TS_BIN" ]]; then
     TAILNET_HOST="$("$TS_BIN" status --json 2>/dev/null \
-        | tr ',' '\n' | grep -m1 '"DNSName"' | cut -d'"' -f4 | sed 's/\.$//')"
+        | tr ',' '\n' \
+        | awk -F'"' '/DNSName/ && !seen { sub(/\.$/, "", $4); host = $4; seen = 1 } END { print host }' \
+        )" || true
 fi
 export TAILNET_HOST="${TAILNET_HOST:-localhost}"

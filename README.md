@@ -83,8 +83,13 @@ update clobbers it; without it the server silently re-downloads 9.4 GB.
 
 ## The UI
 
-`http://127.0.0.1:8001/` on the host, or `https://<tailnet-host>/` from anywhere
-on the tailnet. It asks once for the API key and keeps it in `localStorage`.
+Open `https://<tailnet-host>/` from anywhere on the tailnet — **no key, no
+login**. `tailscale serve` stamps the caller's identity onto every request it
+proxies, and Anneal trusts that, so the browser is already authenticated.
+
+The `http://127.0.0.1:8001/` loopback address carries no such identity, so it
+still asks for the key. Using the tailnet address on the host itself avoids
+that.
 
 - **Music / Speech / Image** tabs, prompt box, and the options that matter per mode.
 - **Forge strip** in the header shows each model as **cold**, **heating** or
@@ -190,8 +195,25 @@ the pin back.
 
 The supervisor binds to `127.0.0.1` only. Tailnet reach comes from `tailscale serve`,
 which terminates TLS and proxies to loopback — the API is never exposed to the LAN
-or the internet. Every endpoint except `/health` and `/supervisor/status` requires
-`Authorization: Bearer $ACESTEP_API_KEY`.
+or the internet.
+
+Two ways to authenticate:
+
+- **Tailnet identity.** `tailscale serve` adds `Tailscale-User-Login` to what it
+  proxies. Since the only route to the port is that proxy, the header can't be
+  forged from off-machine, so it's accepted as proof. This is what lets the UI
+  work without a token. Set `ANNEAL_ALLOWED_LOGINS` to restrict which logins
+  count; the default accepts any tailnet member, which is right for a personal
+  tailnet where reaching the port at all requires being on it.
+- **Bearer key** — `Authorization: Bearer $ACESTEP_API_KEY`, for programmatic
+  clients and for loopback, which carries no identity.
+
+The identity headers are trusted **only while the listener is on loopback**. Bind
+anywhere else and they're ignored outright, since they could then be forged.
+
+Public without auth: `/health`, `/supervisor/status`, `/supervisor/auth`,
+`/supervisor/whoami`, `/docs`, `/openapi.json` and the UI itself. Everything
+else requires one of the two methods above.
 
 ## Notes on this hardware
 

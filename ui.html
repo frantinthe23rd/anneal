@@ -89,6 +89,7 @@ header {
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
 @keyframes heat { 0%,100% { opacity: .35; transform: scale(.85); } 50% { opacity: 1; transform: scale(1); } }
 
+.who { color: var(--faint); font-size: 12px; white-space: nowrap; }
 .iconbtn {
   border: 1px solid var(--line); background: var(--surface); color: var(--muted);
   border-radius: 8px; padding: 6px 10px; font-size: 12px;
@@ -213,8 +214,9 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
       <small>local generation · <span id="hostname">—</span></small>
     </div>
     <div class="forge" id="forge"></div>
+    <span class="who" id="whoami" hidden></span>
     <button class="iconbtn" id="btnDocs" title="OpenAPI documentation">API</button>
-    <button class="iconbtn" id="btnKey" title="Change API key">Key</button>
+    <button class="iconbtn" id="btnKey" title="Set an API key (only needed off the tailnet)">Key</button>
   </header>
 
   <div class="cols">
@@ -346,7 +348,9 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 <div class="gate hidden" id="gate">
   <div class="box">
     <h2>API key</h2>
-    <p>Anneal needs its bearer key. It's in <code>env.local.sh</code> on the host and is stored only in this browser.</p>
+    <p>This connection isn't identified by Tailscale, so Anneal needs its bearer key.
+       It's in <code>env.local.sh</code> on the host and is stored only in this browser.
+       Opening Anneal via its <b>tailnet address</b> instead skips this entirely.</p>
     <input type="text" id="keyInput" placeholder="sk-aimusic-…" autocomplete="off" spellcheck="false">
     <div class="err" id="keyErr"></div>
     <button class="go" id="keySave" style="margin-top:14px">Save</button>
@@ -359,6 +363,9 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 /* ------------------------------------------------------------------ state */
 const KEY_STORE = "anneal.key";
 let apiKey = localStorage.getItem(KEY_STORE) || "";
+// When Anneal is reached over the tailnet, `tailscale serve` tells it who we
+// are and no key is needed. The key is only a fallback for loopback access.
+let authVia = null;
 let mode = "music";
 let busy = false;
 let results = [];          // newest first, rendered into #items
@@ -372,13 +379,16 @@ async function api(path, { method = "GET", body, raw = false } = {}) {
   const res = await fetch(path, {
     method,
     headers: Object.assign(
-      { "Authorization": "Bearer " + apiKey },
+      apiKey ? { "Authorization": "Bearer " + apiKey } : {},
       body ? { "Content-Type": "application/json" } : {}
     ),
     body: body ? JSON.stringify(body) : undefined,
   });
 
-  if (res.status === 401) { openGate("That key was rejected."); throw new Error("unauthorized"); }
+  if (res.status === 401) {
+    openGate(apiKey ? "That key was rejected." : "This connection isn't recognised — paste the API key.");
+    throw new Error("unauthorized");
+  }
 
   if (raw) {
     if (!res.ok) throw await httpError(res);
@@ -791,7 +801,20 @@ async function maybeRefreshVoices() {
 }
 
 async function boot() {
-  if (!apiKey) { openGate(); return; }
+  // Ask before demanding anything: over the tailnet, Tailscale has already
+  // identified us and the key gate would be pure friction.
+  try {
+    const r = await fetch("/supervisor/auth");
+    const d = (await r.json()).data || {};
+    authVia = d.authenticated ? d.via : null;
+    if (d.authenticated && d.via === "tailscale") {
+      $("whoami").textContent = d.user ? "signed in as " + d.user : "tailnet";
+      $("whoami").hidden = false;
+      $("btnKey").hidden = true;
+    }
+  } catch (_) { /* fall back to the key */ }
+
+  if (!authVia && !apiKey) { openGate(); return; }
   $("hostname").textContent = location.host;
   fillVoices(VOICES, DEFAULT_VOICE);
   await refreshHealth();

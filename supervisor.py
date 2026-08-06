@@ -62,6 +62,18 @@ PROXY_TIMEOUT = float(os.environ.get("PROXY_TIMEOUT", "1800"))
 # against "nothing left at all", not against "it will be tight".
 MIN_FREE_MB_FOR_HEAVY = int(os.environ.get("ANNEAL_MIN_FREE_MB", "1200"))
 
+# `tailscale serve` stamps Tailscale-User-* headers on what it proxies, which
+# lets the browser authenticate as a tailnet user instead of holding a token.
+# Only safe while we listen on loopback, because then the serve proxy is the
+# only way in; on any other bind address those headers could be forged.
+TRUST_TAILSCALE_IDENTITY = LISTEN_HOST in ("127.0.0.1", "localhost", "::1")
+# Comma-separated logins to accept. Empty means any tailnet member, which is the
+# right default for a personal tailnet — reaching the port at all requires being
+# on it. Set ANNEAL_ALLOWED_LOGINS to restrict on a shared tailnet.
+ALLOWED_LOGINS = {
+    s.strip().lower() for s in os.environ.get("ANNEAL_ALLOWED_LOGINS", "").split(",") if s.strip()
+}
+
 # Generated files are served straight off disk, but only from under these roots.
 # Reading back an old result must never wake the model that made it.
 AUDIO_ROOTS = [
@@ -675,11 +687,36 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _authorized(self):
+    def _tailscale_identity(self):
+        """The tailnet user Tailscale says is calling, if it told us.
+
+        `tailscale serve` stamps these headers on requests it proxies from
+        tailnet peers. They are trustworthy only because the supervisor binds to
+        loopback: the sole path in is the serve proxy, so nothing off-machine
+        can set them. Anything already running locally could forge them — but it
+        could equally read env.local.sh, so that changes nothing.
+
+        If the listener is ever widened past loopback that reasoning collapses,
+        so the headers are ignored outright in that case.
+        """
+        if not TRUST_TAILSCALE_IDENTITY:
+            return ""
+        return self.headers.get("Tailscale-User-Login") or ""
+
+    def _auth_method(self):
+        """How this request is authenticated: 'key', 'tailscale', or None."""
         if not API_KEY:
-            return True
+            return "open"
         header = self.headers.get("Authorization", "")
-        return header.startswith("Bearer ") and header[7:] == API_KEY
+        if header.startswith("Bearer ") and header[7:] == API_KEY:
+            return "key"
+        identity = self._tailscale_identity()
+        if identity and (not ALLOWED_LOGINS or identity.lower() in ALLOWED_LOGINS):
+            return "tailscale"
+        return None
+
+    def _authorized(self):
+        return self._auth_method() is not None
 
     def _body(self):
         length = int(self.headers.get("Content-Length") or 0)
@@ -811,6 +848,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"code": 404, "error": "no service owns %s" % route}, 404)
             return
 
+        # Every proxied route needs auth. This used to be left to the backends,
+        # which only worked by accident: ACE-Step enforces its own key, but the
+        # speech and image servers have none, so those endpoints were reachable
+        # by anything that could reach the gateway.
+        if not self._authorized():
+            self._send_json({"code": 401, "error": "unauthorized"}, 401)
+            return
+
         if body is None:
             length = int(self.headers.get("Content-Length") or 0)
             body = self.rfile.read(length) if length else None
@@ -901,6 +946,27 @@ class Handler(BaseHTTPRequestHandler):
 
         if route in ("/health", "/supervisor/status"):
             self._send_json({"data": self._status_payload(), "code": 200, "error": None})
+            return
+        if route == "/supervisor/auth":
+            # Lets the UI find out whether it needs to ask for a key at all.
+            # Safe to leave unauthenticated: it only reflects who you already are.
+            method = self._auth_method()
+            self._send_json({"data": {
+                "authenticated": method is not None,
+                "via": method,
+                "user": self.headers.get("Tailscale-User-Name") or self._tailscale_identity() or None,
+                "tailscale_identity_trusted": TRUST_TAILSCALE_IDENTITY,
+            }, "code": 200, "error": None})
+            return
+        if route == "/supervisor/whoami":
+            # What Tailscale tells us about the caller. Useful on its own, and
+            # the basis for letting the UI authenticate without a pasted token.
+            self._send_json({"data": {
+                "tailscale_identity": self._tailscale_identity(),
+                "headers": {k: v for k, v in self.headers.items()
+                            if k.lower().startswith("tailscale-")},
+                "client": self.client_address[0],
+            }, "code": 200, "error": None})
             return
         if route in ("/openapi.json", "/openapi"):
             try:
