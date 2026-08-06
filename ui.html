@@ -620,21 +620,17 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
   max-height: 220px; overflow-y: auto; }
 .item .err { color: #f0a49c; font-size: 12.5px; font-family: var(--mono); word-break: break-word; }
 
-/* ---------------------------------------------------------------- subnav
-   Studio is the application; the other three are reading. Same underline the
-   mode tabs use, so "which page am I on" and "which mode am I in" look like
-   the same kind of answer. */
-.subnav { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin: -8px 0 22px; }
-.subnav button {
-  border: 0; background: transparent; color: var(--muted); padding: 7px 13px;
-  border-radius: 8px; font-size: 13px; letter-spacing: .03em;
-  transition: background var(--t-fast), color var(--t-fast);
-}
-.subnav button:hover { color: var(--text); background: var(--surface); }
-.subnav button.on { color: var(--text); background: var(--fill-surface-2);
-  box-shadow: 0 0 0 1px var(--line-2), var(--sh-1); }
-.subnav .rule { flex: 1; height: 1px; margin: 0 6px;
-  background: linear-gradient(90deg, var(--line), transparent); }
+/* --------------------------------------------------------------- page nav
+   Studio is the application; the other three are reading. It is the same
+   component as the mode tabs — one strip, one lifted selection — so "which page
+   am I on" and "which mode am I in" are answered the same way. The utility
+   buttons ride on the right of the same row rather than wrapping under the
+   header on their own. */
+.navrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin: 0 0 20px; }
+.navrow .sp { flex: 1; }
+.pagetabs { display: inline-flex; background: var(--bg); border-radius: var(--radius); }
+.pagetabs .tab { flex: 0 0 auto; padding: 9px 20px; }
 
 /* ------------------------------------------------------------- doc pages
    Long-form. Same materials as the rest — surface, line, heat — at reading
@@ -883,6 +879,16 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
     </div>
     <div class="forge" id="forge"></div>
     <span class="who" id="whoami" hidden></span>
+  </header>
+
+  <div class="navrow">
+    <div class="tabs pagetabs" id="subnav" role="tablist">
+      <button class="tab" role="tab" data-page="studio" aria-selected="true">Studio</button>
+      <button class="tab" role="tab" data-page="guide"  aria-selected="false">Guide</button>
+      <button class="tab" role="tab" data-page="api"    aria-selected="false">API</button>
+      <button class="tab" role="tab" data-page="about"  aria-selected="false">About</button>
+    </div>
+    <span class="sp"></span>
     <button class="iconbtn theme" id="btnTheme" title="Switch theme" aria-label="Switch theme">
       <svg class="i-sun" width="15" height="15" viewBox="0 0 24 24" fill="none"
            stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
@@ -898,15 +904,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
     <button class="iconbtn" id="btnSettings" title="Settings">Settings</button>
     <button class="iconbtn" id="btnDocs" title="Swagger UI over this server's OpenAPI spec">OpenAPI</button>
     <button class="iconbtn" id="btnKey" title="Set an API key (only needed off the tailnet)">Key</button>
-  </header>
-
-  <nav class="subnav" id="subnav">
-    <button data-page="studio" class="on">Studio</button>
-    <button data-page="guide">Guide</button>
-    <button data-page="api">API</button>
-    <button data-page="about">About</button>
-    <span class="rule"></span>
-  </nav>
+  </div>
 
   <!-- The mode is a top-level choice, not part of the controls column: Chat
        replaces that column entirely, and a tab bar you can't get back to is
@@ -3105,8 +3103,8 @@ function showPage(name, { link = true } = {}) {
   $("cols").classList.toggle("hidden", !studio || mode === "chat");
   $("chatview").classList.toggle("hidden", !studio || mode !== "chat");
   Object.entries(DOC_PAGES).forEach(([k, id]) => $(id).classList.toggle("hidden", k !== name));
-  document.querySelectorAll("#subnav button").forEach((b) =>
-    b.classList.toggle("on", b.dataset.page === name));
+  document.querySelectorAll("#subnav .tab").forEach((b) =>
+    b.setAttribute("aria-selected", String(b.dataset.page === name)));
   if (link) history.replaceState(null, "", studio ? location.pathname : "#" + name);
   window.scrollTo({ top: 0, behavior: "auto" });
   if (!studio) decorateCode();
@@ -3340,7 +3338,7 @@ $("btnSettings").onclick = showSettings;
 $("btnTheme").onclick = toggleTheme;
 applyTheme(document.documentElement.getAttribute("data-theme") || "dark");
 
-document.querySelectorAll("#subnav button").forEach((b) => {
+document.querySelectorAll("#subnav .tab").forEach((b) => {
   b.onclick = () => showPage(b.dataset.page);
 });
 document.querySelectorAll("[data-page-link]").forEach((a) => {
