@@ -1174,8 +1174,8 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
     <div class="banner">
       <span class="eyebrow">About</span>
       <h2>What this is</h2>
-      <p>A single machine that makes music, speech, images and text on demand, for anyone on the
-         tailnet and for anything that can make an HTTP request. Built by Jon Moseley.</p>
+      <p>A single Apple silicon Mac that makes music, speech, images and text on demand, for anyone
+         on the tailnet and for anything that can make an HTTP request. Built by Jon Moseley.</p>
     </div>
 
     <section>
@@ -1223,6 +1223,23 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
          evidence a track improved — noise is broadband, and it moves those numbers too. Garbled
          audio has shipped from here on exactly that reasoning. Numbers can catch catastrophe;
          only listening can tell you it got better.</p>
+    </section>
+
+    <section>
+      <h3>What it runs on, and what it doesn't</h3>
+      <p><b>Apple silicon Macs, macOS, 16 GB of unified memory minimum</b> — the tested floor rather
+         than a recommendation, and a real floor: at 16 GB the music model's footprint already
+         exceeds physical RAM and pages throughout a generation. Around 40 GB of disk for weights,
+         environments and the growing library.</p>
+      <p>Nothing else works today, for two reasons worth separating. Speech, images and text all run
+         through <b>MLX</b>, which is Apple-silicon only and has no fallback here; ACE-Step is the
+         exception, since it supports CUDA and XPU upstream. And the whole model lifecycle — when to
+         evict, when to refuse, when to warn you about the host — rests on four macOS-only system
+         calls for memory pressure, paging and real process footprint.</p>
+      <p><b>Contributions and ports are welcome.</b> It is MIT licensed, the memory calls are four
+         functions behind an obvious interface, and adding a backend is a dictionary entry in
+         <code>services.py</code> rather than a rewrite. The repository's issues carry the reasoning
+         behind each decision, which is the right place to start.</p>
     </section>
 
     <section>

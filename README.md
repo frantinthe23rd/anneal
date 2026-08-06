@@ -62,6 +62,47 @@ and a forge strip showing which models are hot.
 | `/docs` | Swagger UI |
 | `/openapi.json` | Raw spec |
 
+## What it runs on
+
+**Apple silicon Macs, macOS, 16 GB of unified memory minimum.** That is not a
+recommendation, it is the tested floor — and it is a real one. At 16 GB the music
+model's ~21 GB footprint already exceeds physical RAM and pages continuously
+throughout a generation. Below that, nothing about this design helps: FLUX alone
+wants ~11 GB. More memory is strictly better and currently under-exploited,
+because every model choice is hardcoded for this machine
+([#9](https://github.com/frantinthe23rd/anneal/issues/9)).
+
+**About 40 GB of free disk**, measured on this install: ~26 GB of weights that
+are actually used, ~3 GB of virtualenvs, ~4 GB of wheel cache, and room for
+`outputs/`, which grows without bound and nothing prunes yet.
+
+Intel Macs are out, and so is everything else, for two separable reasons:
+
+- **MLX.** Speech, image and text all run through MLX, which is Apple-silicon
+  only. There is no fallback path in this repo. ACE-Step itself is the exception
+  — it supports CUDA and XPU upstream — but the MLX DiT route and both local
+  patches are Metal- and turbo-shaped.
+- **Four macOS-only system calls.** The supervisor's whole lifecycle rests on
+  `/usr/bin/footprint` (phys_footprint — the only honest memory number for an MLX
+  process), `vm_stat`, `sysctl kern.memorystatus_vm_pressure_level` and
+  `sysctl vm.swapusage`. Eviction, admission control and the host-pressure
+  warning are all downstream of those.
+
+### Contributions
+
+Welcome, including — especially — ports. It's MIT; extend it wherever you like.
+The two boundaries above are where the work is, and they are more separable than
+they look: the memory calls are four functions in `supervisor.py` behind an
+obvious interface, and `services.py` is already generic enough that a CUDA
+backend is a dictionary entry rather than a rewrite. A Linux/NVIDIA port would
+also make [#9](https://github.com/frantinthe23rd/anneal/issues/9) real work
+rather than a thought experiment, since on a 24 GB card the eviction logic that
+exists purely because only one heavy model fits stops being necessary at all.
+
+Open an issue before a large change so the reasoning gets recorded alongside it —
+that is the convention throughout this repo, and most of the decisions here only
+make sense with the measurement attached.
+
 ## Architecture
 
 ```
@@ -149,15 +190,20 @@ Everything bulky is on the **Storage SSD**; the internal disk holds only these s
 
 | Path | Contents |
 | --- | --- |
-| `/Volumes/Storage/AIMusic/ACE-Step-1.5` | upstream repo + `.venv` (~1.2 GB) |
-| `/Volumes/Storage/AIMusic/models` | ACE-Step weights (~9.4 GB) |
-| `/Volumes/Storage/AIMusic/hf-cache` | Kokoro + FLUX weights (~9.4 GB) |
-| `/Volumes/Storage/AIMusic/gen-venv` | venv for speech + image (mlx-audio, mflux) |
-| `/Volumes/Storage/AIMusic/uv-cache`, `uv-python` | wheel cache + Python 3.12 (~3.2 GB) |
+| `/Volumes/Storage/AIMusic/ACE-Step-1.5` | upstream repo + `.venv` (1.6 GB) |
+| `/Volumes/Storage/AIMusic/models` | ACE-Step weights (15 GB — turbo 4.5, sft 4.5, planning LMs 4.8, Qwen3 embedder 1.1, VAE 0.3) |
+| `/Volumes/Storage/AIMusic/hf-cache` | FLUX 9.0 GB, Gemma 4.8 GB, Kokoro 0.3 GB |
+| `/Volumes/Storage/AIMusic/gen-venv` | venv for speech + image (mlx-audio, mflux) — 1.3 GB |
+| `/Volumes/Storage/AIMusic/uv-cache`, `uv-python` | wheel cache + Python 3.12 (4.3 GB) |
 | `/Volumes/Storage/AIMusic/outputs/{music,speech,images}` | **everything generated**, prompt-named, with JSON sidecars |
 | `/Volumes/Storage/AIMusic/supervisor.log` | supervisor lifecycle log |
 | `/Volumes/Storage/AIMusic/api-server.log` | ACE-Step server log |
 | `/Volumes/Storage/AIMusic/speech-server.log`, `image-server.log` | backend logs |
+
+3.5 GB of that is `acestep-5Hz-lm-1.7B`, which arrives in ACE-Step's bundle and is
+never loaded here — this hardware classifies as tier4, which permits only the
+0.6B planning LM. It is dead weight on disk, kept because deleting part of a
+pinned bundle would make `verify-models.py` unhappy for no benefit.
 
 `ACE-Step-1.5/checkpoints` is a symlink to `models/` — the upstream server hardcodes
 that path and ignores `ACESTEP_CHECKPOINTS_DIR`. `start-api.sh` recreates it if a repo
