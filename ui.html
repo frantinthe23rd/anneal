@@ -50,6 +50,65 @@ button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .45; }
 :focus-visible { outline: 2px solid var(--heat-1); outline-offset: 2px; }
 
+/* Motion is opt-out, not opt-in. Everything below animates through these two
+   variables so a single media query can switch the whole interface to still. */
+:root { --t-fast: .16s; --t-med: .28s; --t-slow: .5s; --ease: cubic-bezier(.4,0,.2,1); }
+@media (prefers-reduced-motion: reduce) {
+  :root { --t-fast: 0s; --t-med: 0s; --t-slow: 0s; }
+  * { animation-duration: .001s !important; animation-iteration-count: 1 !important; }
+}
+
+/* ------------------------------------------------------------------ hero */
+.hero {
+  position: fixed; inset: 0; z-index: 40; display: flex; flex-direction: column;
+  justify-content: center; padding: 6vh 7vw; overflow: hidden;
+  background: #0b0908 url("/assets/hero.jpg") center/cover no-repeat;
+  opacity: 1; transition: opacity var(--t-slow) var(--ease), transform var(--t-slow) var(--ease);
+}
+/* Scrim so type stays readable over the brightest part of the plate. */
+.hero::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(105deg, rgba(11,9,8,.55) 0%, rgba(11,9,8,.78) 42%, rgba(11,9,8,.94) 100%);
+}
+.hero.gone { opacity: 0; transform: scale(1.03); pointer-events: none; }
+.hero > * { position: relative; z-index: 1; }
+.hero h1 {
+  margin: 0; font-size: clamp(38px, 7vw, 76px); font-weight: 600; letter-spacing: .16em;
+  text-transform: uppercase; line-height: 1;
+  background: linear-gradient(96deg, var(--heat-2), var(--heat-1) 62%, #b8431a);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: rise var(--t-slow) var(--ease) both;
+}
+.hero .lede {
+  margin: 16px 0 0; max-width: 40ch; color: var(--text); font-size: clamp(15px, 1.7vw, 19px);
+  line-height: 1.5; animation: rise var(--t-slow) var(--ease) both .06s;
+}
+.hero .lede b { color: var(--heat-2); font-weight: 600; }
+.hero .sub { margin-top: 8px; color: var(--muted); font-size: 13.5px;
+  animation: rise var(--t-slow) var(--ease) both .1s; }
+.hero .strip { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 26px;
+  animation: rise var(--t-slow) var(--ease) both .16s; }
+.hero .cards { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 30px;
+  animation: rise var(--t-slow) var(--ease) both .22s; }
+.hero .card {
+  flex: 1 1 168px; max-width: 230px; text-align: left; padding: 15px 16px;
+  border: 1px solid var(--line); border-radius: 11px; background: rgba(26,22,20,.72);
+  backdrop-filter: blur(7px); cursor: pointer;
+  transition: transform var(--t-fast) var(--ease), border-color var(--t-fast), background var(--t-fast);
+}
+.hero .card:hover { transform: translateY(-3px); border-color: rgba(255,95,31,.5);
+  background: rgba(34,29,26,.85); }
+.hero .card .k { display: block; font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.hero .card .d { color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+.hero .foot { margin-top: 30px; color: var(--faint); font-size: 12px; display: flex; gap: 16px;
+  flex-wrap: wrap; animation: rise var(--t-slow) var(--ease) both .28s; }
+.hero .foot a { color: var(--faint); }
+.hero .foot a:hover { color: var(--heat-2); }
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+
+.wrap { animation: fade var(--t-med) var(--ease) both; }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+
 /* ---------------------------------------------------------------- layout */
 .wrap { position: relative; z-index: 1; max-width: 1240px; margin: 0 auto; padding: 0 20px 64px; }
 
@@ -109,6 +168,22 @@ header {
 }
 .tab:hover { color: var(--text); }
 .tab[aria-selected="true"] { background: var(--surface-2); color: var(--text); box-shadow: inset 0 -2px 0 var(--heat-1); }
+/* Panels arrive rather than appearing, so a tab change reads as movement. */
+section[data-panel] { animation: panel var(--t-med) var(--ease) both; }
+@keyframes panel { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.item, .album, .msg { animation: panel var(--t-med) var(--ease) both; }
+/* The drawer opens rather than snapping — it is the main gesture in the Library. */
+.album .body { display: block; max-height: 0; overflow: hidden; padding-top: 0; padding-bottom: 0;
+  transition: max-height var(--t-med) var(--ease), padding var(--t-med) var(--ease); }
+.album.open .body { max-height: 3000px; padding-bottom: 14px; }
+.album .chev { transition: transform var(--t-med) var(--ease); }
+.album.open .chev { transform: rotate(180deg); }
+/* Cold -> heating -> hot is the story the strip exists to tell, so let it move. */
+.svc { transition: border-color var(--t-med), background var(--t-med); }
+.svc .dot { transition: background var(--t-med), box-shadow var(--t-med), transform var(--t-fast); }
+.svc .st { transition: color var(--t-med); }
+.go, .iconbtn, .tab, .seg button { transition: background var(--t-fast), color var(--t-fast),
+  border-color var(--t-fast), filter var(--t-fast), transform .05s; }
 
 .pad { padding: 18px; }
 label.f { display: block; margin-bottom: 7px; color: var(--muted); font-size: 11.5px; letter-spacing: .09em; text-transform: uppercase; }
@@ -249,6 +324,19 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .album .acts button, .album .acts a { background: none; border: 0; padding: 0; color: var(--muted);
   font-size: 12px; text-decoration: none; }
 .album .acts button:hover, .album .acts a:hover { color: var(--heat-2); }
+.sheet { position: fixed; inset: 0; z-index: 55; display: flex; align-items: center;
+  justify-content: center; padding: 24px; background: rgba(8,6,5,.86);
+  animation: fade var(--t-fast) var(--ease) both; }
+.sheet .panel { width: 100%; max-width: 620px; max-height: 84vh; overflow-y: auto;
+  animation: panel var(--t-med) var(--ease) both; }
+.sheet h2 { margin: 0; font-size: 16px; }
+.sheet .grp { padding: 16px 18px; border-top: 1px solid var(--line); }
+.sheet .grp:first-of-type { border-top: 0; }
+.sheet .grp h3 { margin: 0 0 12px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--muted); font-weight: 600; }
+.sheet .ro { display: grid; grid-template-columns: max-content 1fr; gap: 5px 14px; font-size: 12.5px; }
+.sheet .ro dt { color: var(--faint); }
+.sheet .ro dd { margin: 0; font-family: var(--mono); word-break: break-word; }
 .lightbox { position: fixed; inset: 0; background: rgba(8,6,5,.92); z-index: 60; display: flex;
   align-items: center; justify-content: center; flex-direction: column; gap: 14px; padding: 24px; }
 .lightbox img { max-width: min(92vw, 1100px); max-height: 78vh; border-radius: 10px; }
@@ -278,14 +366,55 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 </head>
 <body>
 
+<div class="hero" id="hero">
+  <h1>Anneal</h1>
+  <p class="lede">Music, speech, images and text — generated <b>entirely on this machine</b>.
+     Nothing you write or make leaves it.</p>
+  <p class="sub">Models heat up when you ask and cool down when you stop, because on 16 GB
+     that is the only way they all fit.</p>
+
+  <div class="strip" id="heroStrip"></div>
+
+  <div class="cards">
+    <div class="card" data-go="press">
+      <span class="k">Press</span>
+      <span class="d">One brief becomes a single or an album — lyrics, music and cover.</span>
+    </div>
+    <div class="card" data-go="music">
+      <span class="k">Music</span>
+      <span class="d">A track from a description, with or without vocals.</span>
+    </div>
+    <div class="card" data-go="speech">
+      <span class="k">Speech</span>
+      <span class="d">28 voices, about a second a sentence.</span>
+    </div>
+    <div class="card" data-go="image">
+      <span class="k">Image</span>
+      <span class="d">Stills up to 1536px. This page's backdrop was made here.</span>
+    </div>
+    <div class="card" data-go="chat">
+      <span class="k">Chat</span>
+      <span class="d">A local language model, streamed.</span>
+    </div>
+  </div>
+
+  <div class="foot">
+    <a href="#" id="heroLib">Library</a>
+    <a href="/docs" target="_blank">API</a>
+    <a href="#" id="heroSet">Settings</a>
+    <span id="heroWho"></span>
+  </div>
+</div>
+
 <div class="wrap">
   <header>
     <div class="brand">
-      <h1>Anneal</h1>
+      <h1 id="brandHome" style="cursor:pointer" title="Front door">Anneal</h1>
       <small>local generation · <span id="hostname">—</span></small>
     </div>
     <div class="forge" id="forge"></div>
     <span class="who" id="whoami" hidden></span>
+    <button class="iconbtn" id="btnSettings" title="Settings">Settings</button>
     <button class="iconbtn" id="btnDocs" title="OpenAPI documentation">API</button>
     <button class="iconbtn" id="btnKey" title="Set an API key (only needed off the tailnet)">Key</button>
   </header>
@@ -1134,7 +1263,12 @@ function renderPresses() {
 
     const body = el("div", "body");
     if (plan.concept) body.appendChild(el("div", "concept", plan.concept));
-    if (p.state !== "done" && p.state !== "failed" && p.state !== "cancelled") {
+    if (p.state === "interrupted") {
+      const w = el("div", "prog", (p.stage || "Interrupted") +
+        " — the run was cut short. Resume picks up where it stopped.");
+      w.style.color = "var(--heat-2)";
+      body.appendChild(w);
+    } else if (!["done", "failed", "cancelled"].includes(p.state)) {
       body.appendChild(el("div", "prog", p.stage || p.state));
     }
     if (p.error) body.appendChild(el("div", "err", p.error));
@@ -1214,6 +1348,32 @@ function renderPresses() {
     acts.appendChild(zip);
     acts.appendChild(fmtSel);
     acts.appendChild(brSel);
+
+    // An interrupted press kept its plan and finished tracks, so resuming picks
+    // up the missing work rather than starting the whole record again.
+    if (["interrupted", "failed", "cancelled"].includes(p.state)) {
+      const res = el("button", null, "Resume");
+      res.onclick = async (e) => {
+        e.stopPropagation();
+        res.textContent = "Resuming…"; res.disabled = true;
+        try { await api("/v1/press/resume", { method: "POST", body: { id: p.id } }); followPress(p.id); }
+        catch (err) { alert("Could not resume: " + err.message); res.textContent = "Resume"; res.disabled = false; }
+      };
+      acts.appendChild(res);
+    }
+
+    const del = el("button", "del", "Delete");
+    del.onclick = async (e) => {
+      e.stopPropagation();
+      const withFiles = confirm("Delete \"" + (plan.title || "this record") +
+        "\"?\n\nOK also deletes its audio and cover.\nCancel keeps the files and removes only the record.");
+      try {
+        await api("/v1/press?id=" + encodeURIComponent(p.id) + (withFiles ? "&files=1" : ""),
+                  { method: "DELETE" });
+        loadPresses(); loadLibrary();
+      } catch (err) { alert("Delete failed: " + err.message); }
+    };
+    acts.appendChild(del);
     body.appendChild(acts);
     body.appendChild(det);
     wrap.appendChild(body);
@@ -1622,6 +1782,164 @@ function followPress(id) {
   pressPoll = setInterval(tick, 8000);
 }
 
+/* ------------------------------------------------------------- front door
+   A landing state, so arriving at Anneal says what it is and what is warm
+   before dropping you into a form. */
+function enterApp(tab) {
+  const hero = $("hero");
+  hero.classList.add("gone");
+  setTimeout(() => { hero.style.display = "none"; }, 500);
+  if (tab) {
+    const btn = document.querySelector('.tab[data-mode="' + tab + '"]');
+    if (btn) btn.click();
+  }
+}
+
+function showHero() {
+  const hero = $("hero");
+  hero.style.display = "";
+  requestAnimationFrame(() => hero.classList.remove("gone"));
+  renderHeroStrip();
+}
+
+function renderHeroStrip() {
+  const box = $("heroStrip");
+  if (!box) return;
+  box.textContent = "";
+  SERVICES.forEach((name) => {
+    const st = (health[name] || {}).state || "cold";
+    const chip = el("div", "svc " + st);
+    chip.appendChild(el("span", "dot"));
+    chip.appendChild(el("span", "nm", name === "text" ? "chat" : name));
+    chip.appendChild(el("span", "st", st === "hot" && health[name].memory_mb
+      ? fmtMem(health[name].memory_mb) : st));
+    box.appendChild(chip);
+  });
+}
+
+/* ------------------------------------------------------------- preferences
+   Client-side defaults, so the form remembers how you like to work. Server
+   settings are shown read-only with the variable that changes them — editing
+   the gateway's environment from a web page is not something this should do. */
+const PREFS_KEY = "anneal.prefs";
+const DEFAULT_PREFS = { quality: "draft", format: "flac", duration: 30, thinking: true,
+                        voice: "af_heart", size: "1024x1024", reasoning: false };
+let prefs = Object.assign({}, DEFAULT_PREFS);
+
+function loadPrefs() {
+  try { prefs = Object.assign({}, DEFAULT_PREFS, JSON.parse(localStorage.getItem(PREFS_KEY) || "{}")); }
+  catch (_) { prefs = Object.assign({}, DEFAULT_PREFS); }
+  applyPrefs();
+}
+function savePrefs() { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); }
+function applyPrefs() {
+  const set = (id, v) => { const e = $(id); if (e && v !== undefined && v !== null) {
+    if (e.type === "checkbox") e.checked = !!v; else e.value = v; } };
+  set("mQuality", prefs.quality); set("mFormat", prefs.format);
+  set("mDur", prefs.duration); set("mThink", prefs.thinking);
+  set("sVoice", prefs.voice); set("iSize", prefs.size);
+  set("pQuality", prefs.quality); set("cThink", prefs.reasoning);
+}
+
+async function showSettings() {
+  const sheet = el("div", "sheet");
+  const panel = el("div", "panel");
+  const close = () => { sheet.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  sheet.onclick = (e) => { if (e.target === sheet) close(); };
+  document.addEventListener("keydown", onKey);
+
+  const head = el("div", "grp");
+  head.style.cssText = "display:flex;align-items:center;gap:12px";
+  head.appendChild(el("h2", null, "Settings"));
+  const x = el("button", "iconbtn", "Close");
+  x.style.marginLeft = "auto"; x.onclick = close;
+  head.appendChild(x);
+  panel.appendChild(head);
+
+  // --- defaults -----------------------------------------------------------
+  const g1 = el("div", "grp");
+  g1.appendChild(el("h3", null, "Defaults for new work"));
+  const mk = (label, id, kind, options, key) => {
+    const f = el("div", "field");
+    if (kind === "check") {
+      const lab = el("label", "check");
+      const cb = document.createElement("input"); cb.type = "checkbox"; cb.id = id;
+      cb.checked = !!prefs[key];
+      cb.onchange = () => { prefs[key] = cb.checked; savePrefs(); applyPrefs(); };
+      lab.append(cb, document.createTextNode(" " + label));
+      f.appendChild(lab);
+    } else {
+      f.appendChild(el("label", "f", label));
+      const sel = kind === "select" ? document.createElement("select") : document.createElement("input");
+      sel.id = id;
+      if (kind === "select") options.forEach(([v, t]) => {
+        const o = document.createElement("option"); o.value = v; o.textContent = t; sel.appendChild(o);
+      }); else { sel.type = "number"; }
+      sel.value = prefs[key];
+      sel.onchange = () => { prefs[key] = sel.value; savePrefs(); applyPrefs(); };
+      f.appendChild(sel);
+    }
+    g1.appendChild(f);
+  };
+  mk("Music model", "setQuality", "select",
+     [["draft", "Draft — fast"], ["high", "High — slower, more detail"]], "quality");
+  mk("Audio format", "setFormat", "select",
+     [["flac", "FLAC — lossless"], ["wav", "WAV"], ["mp3", "MP3 — 128 kbps, lossy"]], "format");
+  mk("Default length (s)", "setDur", "number", null, "duration");
+  mk("Planning pass on by default", "setThink", "check", null, "thinking");
+  mk("Show chat reasoning by default", "setReason", "check", null, "reasoning");
+  panel.appendChild(g1);
+
+  // --- server, read-only --------------------------------------------------
+  const g2 = el("div", "grp");
+  g2.appendChild(el("h3", null, "This server"));
+  const dl = document.createElement("dl"); dl.className = "ro";
+  const row = (k, v) => { dl.appendChild(el("dt", null, k)); dl.appendChild(el("dd", null, String(v))); };
+  try {
+    const h = (await (await fetch("/health")).json()).data;
+    Object.entries(h.services).forEach(([n, s]) => {
+      row(n === "text" ? "chat" : n,
+          s.state + (s.memory_mb ? " · " + fmtMem(s.memory_mb) : "") +
+          " · idles after " + s.idle_timeout_seconds + "s");
+    });
+    row("host memory", (h.system.free_mb || "?") + " MB free · " +
+        (h.system.swap_used_mb || 0) + " MB swap · " + (h.system.pressure_level || "?"));
+    const t = (await (await fetch("/v1/music/tiers")).json()).data;
+    row("music model", t.loaded_model || "not loaded");
+    const a = (await (await fetch("/supervisor/auth")).json()).data;
+    row("signed in", a.authenticated ? (a.user || "yes") + " (" + a.via + ")" : "API key required");
+  } catch (_) { row("status", "unavailable"); }
+  g2.appendChild(dl);
+  g2.appendChild(el("div", "hint",
+    "Idle timeouts, model choices and ports live in env.sh on the host. They are shown here "
+    + "rather than edited, because a web page should not be rewriting the server's environment."));
+  panel.appendChild(g2);
+
+  // --- access -------------------------------------------------------------
+  const g3 = el("div", "grp");
+  g3.appendChild(el("h3", null, "Access"));
+  const keyRow = el("div", "field");
+  keyRow.appendChild(el("label", "f", "API key"));
+  const inp = document.createElement("input");
+  inp.type = "text"; inp.value = apiKey || ""; inp.placeholder = "not set — using tailnet identity";
+  inp.onchange = () => { apiKey = inp.value.trim(); localStorage.setItem(KEY_STORE, apiKey); };
+  keyRow.appendChild(inp);
+  keyRow.appendChild(el("div", "hint",
+    "Only needed off the tailnet. Over Tailscale you are identified automatically."));
+  g3.appendChild(keyRow);
+  const wipe = el("button", "iconbtn", "Forget key and preferences");
+  wipe.onclick = () => {
+    localStorage.removeItem(KEY_STORE); localStorage.removeItem(PREFS_KEY);
+    location.reload();
+  };
+  g3.appendChild(wipe);
+  panel.appendChild(g3);
+
+  sheet.appendChild(panel);
+  document.body.appendChild(sheet);
+}
+
 /* ------------------------------------------------------------------ utils */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const slug = (s) => (s.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "").toLowerCase().slice(0, 48) || "anneal");
@@ -1676,6 +1994,13 @@ document.querySelectorAll("#mVocal button").forEach((b) => {
 $("go").onclick = run;
 $("btnLibrary").onclick = () => setLibrary(!libView);
 $("btnWrite").onclick = writeLyrics;
+document.querySelectorAll(".hero .card").forEach((c) => {
+  c.onclick = () => enterApp(c.dataset.go);
+});
+$("heroLib").onclick = (e) => { e.preventDefault(); enterApp("music"); setLibrary(true); };
+$("heroSet").onclick = (e) => { e.preventDefault(); showSettings(); };
+$("brandHome").onclick = showHero;
+$("btnSettings").onclick = showSettings;
 $("cClear").onclick = () => { chatLog = []; renderChat(); };
 $("cInput") && $("cInput").addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); runChat(); }
@@ -1784,6 +2109,7 @@ async function boot() {
   $("hostname").textContent = location.host;
   fillVoices(VOICES, DEFAULT_VOICE);
   loadTiers();
+  loadPrefs();
   await refreshHealth();
   setInterval(async () => { await refreshHealth(); maybeRefreshVoices(); }, 5000);
 }

@@ -579,12 +579,28 @@ def press_music(payload):
     raise RuntimeError("timed out waiting for track")
 
 
-def press_image(prompt, size):
-    d = _local_json("/v1/images/generations",
-                    {"prompt": prompt, "size": size, "steps": 4, "n": 1,
-                     "response_format": "path"})
-    items = (d or {}).get("data") or []
-    return items[0] if items else None
+def press_image(prompt, size, wait_for_slot=300):
+    """Paint the cover, waiting for the music model to release the heavy slot.
+
+    A track reports done the moment its result is stored, but the music service
+    keeps reporting work in flight for a little longer, so an immediate image
+    request is refused with a 409 by the eviction guard. That is the guard doing
+    its job — the caller just has to wait rather than treat it as failure.
+    """
+    deadline = time.time() + wait_for_slot
+    while True:
+        try:
+            d = _local_json("/v1/images/generations",
+                            {"prompt": prompt, "size": size, "steps": 4, "n": 1,
+                             "response_format": "path"})
+            items = (d or {}).get("data") or []
+            return items[0] if items else None
+        except RuntimeError as exc:
+            if "409" in str(exc) and time.time() < deadline:
+                log("press: heavy slot busy, waiting to paint the cover")
+                time.sleep(10)
+                continue
+            raise
 
 
 PRESS = Press(PRESSES, press_text, press_music, press_image, log=log)
@@ -1463,6 +1479,30 @@ class Handler(BaseHTTPRequestHandler):
                 "client": self.client_address[0],
             }, "code": 200, "error": None})
             return
+        if route.startswith("/assets/"):
+            # Locally generated artwork, served from the repo. Kept as files
+            # rather than inlined so ui.html stays readable, and served by us so
+            # the page still makes no external requests.
+            # basename() strips any directory component, so traversal cannot
+            # escape the assets directory.
+            name = os.path.basename(route)
+            path = os.path.join(HERE, "assets", name)
+            if not name or not os.path.isfile(path):
+                self._send_json({"code": 404, "error": "no such asset"}, 404)
+                return
+            ctype = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+                     ".webp": "image/webp", ".svg": "image/svg+xml"}.get(
+                os.path.splitext(name)[1].lower(), "application/octet-stream")
+            with open(path, "rb") as fh:
+                blob = fh.read()
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.send_header("Content-Length", str(len(blob)))
+            self.end_headers()
+            self.wfile.write(blob)
+            return
+
         if route in ("/openapi.json", "/openapi"):
             try:
                 with open(OPENAPI_PATH, "rb") as fh:
@@ -1591,6 +1631,24 @@ class Handler(BaseHTTPRequestHandler):
                              "code": 200, "error": None})
             return
 
+        if route == "/v1/press/resume":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            payload, _ = self._body()
+            pid = payload.get("id") or payload.get("press_id")
+            press = PRESSES.get(pid) if pid else None
+            if not press:
+                self._send_json({"code": 404, "error": "no such press"}, 404)
+                return
+            if press["state"] in ("planning", "lyrics", "music", "art"):
+                self._send_json({"code": 409, "error": "that press is already running"}, 409)
+                return
+            threading.Thread(target=PRESS.run, args=(pid,), kwargs={"resume": True},
+                             daemon=True).start()
+            self._send_json({"data": {"press_id": pid, "resuming": True}, "code": 200, "error": None})
+            return
+
         if route == "/v1/press/cancel":
             if not self._authorized():
                 self._send_json({"code": 401, "error": "unauthorized"}, 401)
@@ -1669,6 +1727,31 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         route = urllib.parse.urlparse(self.path).path
+        if route == "/v1/press":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            pid = (q.get("id") or [""])[0]
+            drop_files = (q.get("files") or ["0"])[0] in ("1", "true")
+            press = PRESSES.get(pid) if pid else None
+            if not press:
+                self._send_json({"code": 404, "error": "no such press"}, 404)
+                return
+            PRESS.cancel(pid)                       # stop it if still running
+            removed = 0
+            if drop_files:
+                for t in press.get("tracks") or []:
+                    p = self._path_from_file_url(t.get("file"))
+                    if p and outputs.delete(p):
+                        removed += 1
+                cover = (press.get("cover") or {}).get("path")
+                if cover and outputs.delete(cover):
+                    removed += 1
+            PRESSES.delete(pid)
+            self._send_json({"data": {"deleted": pid, "files_removed": removed},
+                             "code": 200, "error": None})
+            return
         if route == "/v1/press/download":
             if not self._authorized():
                 self._send_json({"code": 401, "error": "unauthorized"}, 401)
@@ -1713,6 +1796,13 @@ def main():
 
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
+
+    # A press runs in a thread; a restart leaves its record claiming to be
+    # working with nothing behind it. Reconcile before serving.
+    try:
+        PRESS.sweep_interrupted()
+    except Exception as exc:
+        log("press sweep failed: %r" % exc)
 
     threading.Thread(target=reaper, daemon=True).start()
 

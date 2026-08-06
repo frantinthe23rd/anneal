@@ -959,6 +959,39 @@
             "description": "No such press"
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "press"
+        ],
+        "summary": "Delete a press",
+        "description": "Removes the record. `files=1` also deletes its audio and cover from the library.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "files",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "No such press"
+          }
+        }
       }
     },
     "/v1/press/download": {
@@ -1010,6 +1043,35 @@
           },
           "400": {
             "description": "Unsupported format"
+          }
+        }
+      }
+    },
+    "/v1/press/resume": {
+      "post": {
+        "tags": [
+          "press"
+        ],
+        "summary": "Resume an interrupted press",
+        "description": "Re-runs only the missing work: finished tracks and an existing cover are kept. Presses left non-terminal by a gateway restart are marked `interrupted` on startup.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "id": "4ee12341ef33"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Resuming"
+          },
+          "404": {
+            "description": "No such press"
+          },
+          "409": {
+            "description": "Already running"
           }
         }
       }

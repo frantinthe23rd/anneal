@@ -143,6 +143,9 @@ class PressStore:
                           (limit,), fetch=True) or []
         return [self._row(r) for r in rows]
 
+    def delete(self, pid):
+        self._exec("DELETE FROM presses WHERE id = ?", (pid,))
+
     @staticmethod
     def _row(r):
         def j(v, default):
@@ -176,18 +179,42 @@ class Press:
         if pid in self._cancelled:
             raise RuntimeError("cancelled")
 
-    def run(self, pid):
+    def sweep_interrupted(self):
+        """Mark presses whose worker died as interrupted.
+
+        A press lives in sqlite but runs in a thread. If the gateway restarts
+        mid-run the record survives and the worker does not, leaving a job that
+        claims to be recording and never will be. Anything non-terminal at
+        startup is by definition orphaned.
+        """
+        stuck = [p for p in self.store.recent(200)
+                 if p["state"] in ("planning", "lyrics", "music", "art")]
+        for p in stuck:
+            done = sum(1 for t in p["tracks"] if t.get("state") == "done")
+            self.store.update(p["id"], state="interrupted",
+                              stage_note="interrupted at '%s' — %d/%d track(s) done"
+                                         % (p["state"], done, len(p["tracks"])))
+        if stuck:
+            self.log("marked %d interrupted press(es) from a previous run" % len(stuck))
+        return len(stuck)
+
+    def run(self, pid, resume=False):
         try:
-            self._run(pid)
+            self._run(pid, resume=resume)
         except Exception as exc:
             state = "cancelled" if str(exc) == "cancelled" else "failed"
             self.log("press %s %s: %s" % (pid, state, exc))
             self.store.update(pid, state=state, error=str(exc), stage_note="")
 
     # -- stages -----------------------------------------------------------
-    def _run(self, pid):
+    def _run(self, pid, resume=False):
         press = self.store.get(pid)
         req = press["request"]
+        # Resuming reuses the plan and keeps finished tracks; only the missing
+        # work is redone. A five-track album is twenty minutes, so restarting
+        # from scratch because of one lost track is not acceptable.
+        if resume and press.get("plan") and press.get("tracks"):
+            return self._resume(pid, press, req)
         count = max(1, min(int(req.get("tracks", 1)), 8))
         single = count == 1
 
@@ -295,6 +322,62 @@ class Press:
         self._write_manifest(pid, plan, tracks, cover, req)
         self.store.update(pid, state="done", stage_note="%d/%d track(s) recorded" % (ok, len(tracks)))
         self.log("press %s finished: %d/%d tracks" % (pid, ok, len(tracks)))
+
+    def _resume(self, pid, press, req):
+        plan, tracks = press["plan"], press["tracks"]
+        self.log("press %s resuming — %d/%d track(s) already done"
+                 % (pid, sum(1 for t in tracks if t.get("state") == "done"), len(tracks)))
+
+        if not req.get("instrumental"):
+            self.store.update(pid, state="lyrics")
+            for i, t in enumerate(tracks):
+                if t.get("lyrics") or t.get("state") == "done":
+                    continue
+                self._check(pid)
+                self.store.update(pid, stage_note="Writing lyrics %d/%d — %s"
+                                  % (i + 1, len(tracks), t["title"]))
+                t["lyrics"] = (self.call_text(LYRIC_PROMPT.format(
+                    album=plan["title"], concept=plan.get("concept", ""),
+                    title=t["title"], theme=t.get("theme", ""),
+                    style=t.get("style", req["prompt"])), 900) or "").strip()
+                self.store.update(pid, tracks=json.dumps(tracks))
+
+        self.store.update(pid, state="music")
+        for i, t in enumerate(tracks):
+            if t.get("state") == "done" and t.get("file"):
+                continue
+            self._check(pid)
+            self.store.update(pid, stage_note="Recording %d/%d — %s"
+                              % (i + 1, len(tracks), t["title"]))
+            try:
+                takes = self.call_music({
+                    "prompt": t.get("style", req["prompt"]),
+                    "lyrics": t.get("lyrics") or "[instrumental]",
+                    "audio_duration": t.get("duration", req.get("duration", 90)),
+                    "batch_size": 1, "quality": req.get("quality", "draft"),
+                    "audio_format": req.get("audio_format", "flac"), "thinking": True,
+                })
+                t["file"] = (takes[0] or {}).get("file") if takes else None
+                t["state"] = "done" if t["file"] else "failed"
+            except Exception as exc:
+                t["state"], t["error"] = "failed", str(exc)[:200]
+            self.store.update(pid, tracks=json.dumps(tracks))
+
+        cover = press.get("cover")
+        if req.get("art", True) and not (cover or {}).get("path"):
+            self._check(pid)
+            self.store.update(pid, state="art", stage_note="Painting the cover")
+            try:
+                cover = self.call_image(plan.get("cover_art") or req["prompt"],
+                                        req.get("art_size", "1024x1024"))
+            except Exception as exc:
+                cover = {"error": str(exc)[:200]}
+            self.store.update(pid, cover=json.dumps(cover))
+
+        ok = sum(1 for t in tracks if t.get("state") == "done")
+        self._write_manifest(pid, plan, tracks, cover, req)
+        self.store.update(pid, state="done", stage_note="%d/%d track(s) recorded" % (ok, len(tracks)))
+        self.log("press %s resumed to completion: %d/%d" % (pid, ok, len(tracks)))
 
     def _write_manifest(self, pid, plan, tracks, cover, req):
         """Write the tracklist beside the audio, so the record is self-describing
