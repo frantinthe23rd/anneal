@@ -68,7 +68,10 @@ class TestEnvelopeContract(LiveCase):
     def test_health_describes_every_service(self):
         _, _, body, _ = self.get("/health")
         services = body["data"]["services"]
-        self.assertEqual(sorted(services), ["image", "music", "speech", "text"])
+        # Against the registry, not a copied literal. This is the third time a
+        # frozen list here went stale the moment a service was added.
+        import services as registry
+        self.assertEqual(sorted(services), sorted(registry.SERVICES))
         for name, svc in services.items():
             self.assertIn(svc["state"], ("cold", "heating", "hot"), name)
             self.assertIsInstance(svc["running"], bool, name)

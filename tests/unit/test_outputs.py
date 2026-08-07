@@ -53,7 +53,7 @@ class TestPaths(OutputsCase):
         for kind in outputs.KINDS:
             self.assertEqual(os.path.basename(outputs.kind_dir(kind)), kind)
             self.assertTrue(os.path.isdir(outputs.kind_dir(kind)))
-        self.assertEqual(os.path.basename(outputs.kind_dir("video")), "other")
+        self.assertEqual(os.path.basename(outputs.kind_dir("hologram")), "other")
         self.assertEqual(os.path.basename(outputs.kind_dir(None)), "other")
 
 
@@ -156,7 +156,7 @@ class TestListing(OutputsCase):
     def test_unknown_kind_falls_back_to_everything(self):
         # Current behaviour, asserted so a change to it is a deliberate one:
         # an unrecognised `kind` widens the query rather than emptying it.
-        self.assertEqual(outputs.listing(kind="video")["total"], 3)
+        self.assertEqual(outputs.listing(kind="hologram")["total"], 3)
 
     def test_sidecars_and_dotfiles_are_not_themselves_items(self):
         self.write("music", ".DS_Store")

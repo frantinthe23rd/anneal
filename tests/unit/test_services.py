@@ -163,7 +163,7 @@ class TestServiceTable(unittest.TestCase):
         # Only one heavy service fits in 16 GB, so this flag is what decides
         # whether a request evicts another model.
         self.assertEqual(sorted(n for n, s in SERVICES.items() if s["heavy"]),
-                         ["image", "music"])
+                         ["image", "music", "video"])
 
     def test_heavy_services_can_be_asked_whether_they_are_busy(self):
         # Without a busy_path the idle reaper would kill a running generation.

@@ -142,6 +142,7 @@ CONTENT_TYPES = {
     # handler adds Content-Disposition: attachment and a CSP on top, so three
     # separate things would have to fail for a generated file to execute.
     ".svg": "image/svg+xml",
+    ".mp4": "video/mp4", ".webm": "video/webm",
 }
 
 HOP_BY_HOP = {
@@ -1498,6 +1499,18 @@ class Handler(BaseHTTPRequestHandler):
                     "voice": req.get("voice"), "speed": req.get("speed"),
                     "service": "speech", "request": req,
                 })
+
+            elif route.startswith("/v1/videos"):
+                payload = json.loads(response_body.decode("utf-8"))
+                for item in payload.get("data") or []:
+                    # Written straight into outputs/video by the backend, so
+                    # this only attaches the metadata — same as images.
+                    outputs.adopt("video", item.get("path"), {
+                        "prompt": req.get("prompt", ""), "seed": item.get("seed"),
+                        "frames": item.get("frames"), "seconds": item.get("seconds"),
+                        "backend": item.get("backend"), "service": "video",
+                        "request": dict(req, seed=item.get("seed")),
+                    })
 
             elif route.startswith("/v1/images"):
                 payload = json.loads(response_body.decode("utf-8"))
