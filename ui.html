@@ -2517,15 +2517,45 @@ function buildPlayer(p, plan) {
   return frag;
 }
 
+const coverCache = {};
+
+/* Everything about a record that is visible. If this has not changed there is
+   nothing to redraw, and redrawing anyway is what made the list flash on every
+   poll — and threw away the drawer, the cover and the transport with it. */
+function pressSignature(p) {
+  const plan = p.plan || {};
+  return JSON.stringify([
+    p.state, p.stage, p.error, plan.title, plan.artist, plan.concept,
+    (p.cover || {}).path,
+    (p.tracks || []).map((t) => [t.n, t.title, t.state, t.duration, !!t.file]),
+  ]);
+}
+
 function renderPresses() {
   const box = $("albums");
-  box.textContent = "";
   // Records have their own tab now; they used to be shown under All/Music,
   // which is why this filtered on "music" and showed nothing once the Library
   // became per-tab.
   const show = libKind === "press" ? presses : [];
   box.classList.toggle("hidden", show.length === 0);
-  show.forEach((p) => {
+
+  // Reconcile against what is already on screen. A card whose signature is
+  // unchanged is left completely alone — not re-created, not re-ordered, not
+  // re-fetched — so a poll is invisible unless something actually happened.
+  const existing = {};
+  Array.from(box.children).forEach((c) => { existing[c.dataset.pressId] = c; });
+  const wanted = new Set(show.map((p) => p.id));
+  Object.keys(existing).forEach((id) => {
+    if (!wanted.has(id)) { existing[id].remove(); delete existing[id]; }
+  });
+
+  show.forEach((p, position) => {
+    const already = existing[p.id];
+    if (already && already.dataset.sig === pressSignature(p)) {
+      // Nothing changed. Keep it, and keep its place.
+      if (box.children[position] !== already) box.insertBefore(already, box.children[position] || null);
+      return;
+    }
     const plan = p.plan || {};
     const wrap = el("div", "album");
     wrap.dataset.pressId = p.id;
@@ -2541,10 +2571,19 @@ function renderPresses() {
     if (coverPath) {
       const img = document.createElement("img");
       img.className = "art"; img.alt = plan.title || "cover"; img.loading = "lazy";
-      // Fetched through the API so the auth header applies.
-      api("/v1/outputs/file?path=" + encodeURIComponent(coverPath), { raw: true })
-        .then((b) => { const u = URL.createObjectURL(b); blobUrls.push(u); img.src = u; })
-        .catch(() => {});
+      // Cached by path. This used to refetch on every rebuild, which with a
+      // poll every eight seconds meant re-downloading every cover on the page
+      // — and a visible flash as each one arrived.
+      if (coverCache[coverPath]) {
+        img.src = coverCache[coverPath];
+      } else {
+        api("/v1/outputs/file?path=" + encodeURIComponent(coverPath), { raw: true })
+          .then((b) => {
+            const u = URL.createObjectURL(b); blobUrls.push(u);
+            coverCache[coverPath] = u; img.src = u;
+          })
+          .catch(() => {});
+      }
       img.style.cursor = "zoom-in";
       img.title = "View full size";
       img.onclick = (e) => {
@@ -2688,7 +2727,9 @@ function renderPresses() {
     body.appendChild(acts);
     body.appendChild(det);
     wrap.appendChild(body);
-    box.appendChild(wrap);
+    wrap.dataset.sig = pressSignature(p);
+    if (already) box.replaceChild(wrap, already);
+    else box.insertBefore(wrap, box.children[position] || null);
   });
   // The cards exist now, so the playing one can be marked. buildPlayer runs
   // per card and cannot see the finished list.
@@ -2699,9 +2740,10 @@ async function loadLibrary() {
   if (libKind === "press") {          // records come from their own store
     libItems = [];
     renderLibrary();
-    loadPresses();
+    pollRecords(true);                // keeps ticking while they are on screen
     return;
   }
+  pollRecords(false);
   try {
     const d = (await api("/v1/outputs?limit=300&kind=" + libKind)).data;
     libItems = d.items || [];
@@ -3459,6 +3501,28 @@ async function runPress() {
   }
 }
 
+/* A standing poll, independent of whether *this* tab started a press.
+   followPress() only existed after a submit in this session, so a reload, a
+   press started from another tab, or simply the followed press finishing while
+   a queued one took over all left the list frozen — showing the first record
+   for ever until you reloaded by hand. It also stopped as soon as the followed
+   press finished, which is precisely when the next one starts.
+
+   Cheap: /v1/press is answered from sqlite and wakes nothing. renderPresses()
+   now leaves unchanged cards untouched, so a tick with no news costs one
+   request and no repaint. */
+let recordsPoll = null;
+function pollRecords(on) {
+  if (recordsPoll) { clearInterval(recordsPoll); recordsPoll = null; }
+  if (!on) return;
+  loadPresses();
+  recordsPoll = setInterval(() => {
+    // Only while they are actually on screen, and only for a visible tab.
+    if (document.hidden || currentPage !== "studio" || libKind !== "press") return;
+    loadPresses();
+  }, 6000);
+}
+
 function followPress(id) {
   if (pressPoll) clearInterval(pressPoll);
   const tick = async () => {
@@ -3476,10 +3540,12 @@ function followPress(id) {
         openPresses.add(id);
       }
       await loadPresses();
-      if (["done", "failed", "cancelled"].includes(p.state)) {
+      if (["done", "failed", "cancelled", "awaiting-review"].includes(p.state)) {
+        // Stop following *this* press. The standing poll keeps the list live,
+        // which is what was missing when a queued press took over next.
         clearInterval(pressPoll); pressPoll = null;
-        setStatus(p.state === "done" ? p.stage : (p.error || p.state),
-                  p.state === "done" ? "" : "err");
+        const ok = p.state === "done" || p.state === "awaiting-review";
+        setStatus(ok ? p.stage : (p.error || p.state), ok ? "" : "err");
         loadLibrary();
       }
     } catch (_) { /* keep polling; a failed poll is not a failed job */ }
