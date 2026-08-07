@@ -431,11 +431,34 @@ Remember this evicts the music model.
 | GET | `/v1/voices` | speech | List voices |
 | POST | `/v1/images/generations` | image | Generate images |
 | GET | `/v1/images/file?path=` | image | Download a generated image |
+| POST | `/v1/vector` | text (light) | Draw an SVG icon. **Experimental** — see below |
 | GET | `/health` | **no** | Per-service state |
 | GET | `/supervisor/status` | **no** | Idle seconds, memory, in-flight count |
 | POST | `/supervisor/start` | yes | Pre-warm; blocks until ready |
 | POST | `/supervisor/stop` | **no** | Unload now, free the RAM |
 | GET | `/docs`, `/openapi.json` | **no** | Interactive docs and raw spec |
+
+### 7a. Vector — the one fast endpoint, and its honest limits
+
+`POST /v1/vector {"prompt": "a compass rose", "style": "line", "size": 48}`
+returns SVG source in **2–7 seconds**. It runs on the text model, which is
+light and coexists with a heavy one, so unlike every other generative endpoint
+here it evicts nothing and cold-starts nothing (unless chat itself is cold).
+That makes it the only endpoint an agent can reasonably call in a loop.
+
+Everything returned has been through a sanitiser: single `<svg>` root, allowlist
+of drawing elements, no `<script>`, no `<style>`, no `<foreignObject>`, no `on*`
+handlers, no SMIL, and no `href`/`url()` outside a local `#fragment`.
+`sanitised_out` in the response lists anything that was taken — if it is
+non-empty, the model emitted something it should not have, which is worth
+logging on your side too.
+
+**Do not ship this into a product yet.** Measured on the model that fits this
+hardware, output is well-formed 5 times in 5 and a recognisable icon 0 times in
+5: a gear rendered as a plain circle, a compass rose as a single dot, a health
+bar as one solid rectangle. The README has the full table. Two attempts are made
+per request; `422` means both failed to parse, which is a generation failure and
+not something to retry indefinitely.
 
 ---
 

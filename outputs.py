@@ -13,10 +13,11 @@ elsewhere and it is still self-describing, and losing an index can't orphan
 anything.
 
     outputs/
-      music/  2026-08-06T09-14-02_warm-lo-fi-hip-hop_a1b2c3.mp3
-              2026-08-06T09-14-02_warm-lo-fi-hip-hop_a1b2c3.mp3.json
-      speech/ ...
-      images/ ...
+      music/   2026-08-06T09-14-02_warm-lo-fi-hip-hop_a1b2c3.mp3
+               2026-08-06T09-14-02_warm-lo-fi-hip-hop_a1b2c3.mp3.json
+      speech/  ...
+      images/  ...
+      vectors/ ...   SVG drawn by the text model (#18)
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ import uuid
 
 import paths
 
-KINDS = ("music", "speech", "images")
+KINDS = ("music", "speech", "images", "vectors")
 SIDECAR_SUFFIX = ".json"
 
 

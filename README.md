@@ -28,6 +28,13 @@ the spec itself is served locally. Say so if you want it vendored.
 | Image | FLUX.1-schnell 4-bit via [mflux](https://github.com/filipstrand/mflux) | Apache-2.0 | Up to ~1536px |
 | Text | Gemma 4 e4b 4-bit via [mlx-lm](https://github.com/ml-explore/mlx-lm) | Apache-2.0 | Chat completions, streaming |
 
+**Vector** (`POST /v1/vector`) draws an SVG icon with the text model — markup,
+so it is text generation: two to seven seconds, no new weights, no heavy slot,
+nothing evicted. **Experimental, and honestly so**: on the model that fits here
+the output is reliably well-formed and reliably not a recognisable icon. See
+[Vector output](#vector-output) before building on it. Everything it returns is
+sanitised first — a `<script>` inside an SVG a game loads is a real hazard.
+
 **Press** chains all four: one brief becomes a title, an artist name, a
 tracklist with varied lengths, lyrics, the music and a cover.
 `POST /v1/press {"prompt": "...", "tracks": 4}`, then poll `/v1/press?id=`.
@@ -339,6 +346,50 @@ labels them "(planned)".
 
 Set `bpm` and `key_scale` explicitly on the request if you want them to mean
 something.
+
+## Vector output
+
+`POST /v1/vector {"prompt": "a compass rose", "style": "line", "size": 48}`
+returns SVG source, saves it under `outputs/vectors/` with a sidecar, and lists
+it in the Library under `kind=vectors`. Styles are `flat`, `line`, `duotone`
+and `geometric`. `mode: "trace"` — vectorising the image model's output — is
+specified in [#18](https://github.com/frantinthe23rd/anneal/issues/18) and
+returns `501`: it needs `vtracer` or `potrace`, and neither is installed.
+
+**Everything returned is sanitised.** The reply is parsed, must have a single
+`<svg>` root, and is reduced to an allowlist of drawing elements and
+attributes. Removed: `<script>`, `<style>`, `<foreignObject>`, every `on*`
+handler, SMIL animation, and any `href` or `url()` that is not a local
+`#fragment`. A `DOCTYPE` or `ENTITY` declaration is refused before parsing,
+because ElementTree is documented as vulnerable to entity expansion. The
+response reports what was taken in `sanitised_out`. On top of that, downloads
+carry `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff` and
+`Content-Security-Policy: default-src 'none'; sandbox`, so three separate
+things would have to fail for a generated file to execute anything.
+
+### Well-formed is not good
+
+Measured on `gemma-4-e4b-it-4bit`, across gear, heart, compass rose, health bar
+and shield:
+
+| | Well-formed | Recognisable as the subject |
+| --- | --- | --- |
+| temperature 0.9, plain instructions | 1/5 | — |
+| temperature 0.2, rules naming the observed failures | **5/5** | **0/5** |
+| the same, plus two worked examples | 5/5 | 1/5 at best |
+
+Each well-formed result was rendered and looked at. The gear came back as a
+plain filled circle. The compass rose was a single dot — its lines had no
+stroke, so they drew nothing. The health bar was one solid rectangle, its three
+segments abutting in the same colour. The heart was a blob. Few-shot examples
+improved the *markup* — right line style, strokes present — and did not change
+whether the drawing resembles its subject.
+
+So the plumbing works and the capability does not, and that is why there is no
+Vector tab in the UI. The ceiling here looks like the model rather than the
+prompt: a larger text model ([#9](https://github.com/frantinthe23rd/anneal/issues/9))
+is the obvious thing to retest against. This is the same trap as the audio
+below — a number moving the right way is not evidence the output is good.
 
 ### Verifying generated audio
 

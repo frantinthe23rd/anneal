@@ -52,6 +52,7 @@ from services import SERVICES, MUSIC_TIERS, DEFAULT_MUSIC_TIER, resolve  # noqa:
 from jobstore import JobStore  # noqa: E402
 import outputs  # noqa: E402
 import paths  # noqa: E402
+import vector  # noqa: E402
 from builder import Press, PressStore  # noqa: E402
 
 LISTEN_HOST = os.environ.get("SUPERVISOR_HOST", "127.0.0.1")
@@ -134,6 +135,11 @@ CONTENT_TYPES = {
     ".mp3": "audio/mpeg", ".flac": "audio/flac", ".wav": "audio/wav",
     ".opus": "audio/opus", ".aac": "audio/aac", ".m4a": "audio/mp4",
     ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp",
+    # SVG is a document, not a picture: navigating to one runs whatever is in
+    # it. vector.py sanitises before anything is written, and the download
+    # handler adds Content-Disposition: attachment and a CSP on top, so three
+    # separate things would have to fail for a generated file to execute.
+    ".svg": "image/svg+xml",
 }
 
 HOP_BY_HOP = {
@@ -581,9 +587,15 @@ def _local_json(path, payload=None, method=None, timeout=1800):
         conn.close()
 
 
-def press_text(prompt, max_tokens=900):
+def press_text(prompt, max_tokens=900, temperature=0.9):
+    """0.9 is right for lyrics and titles, where sameness is the failure mode.
+
+    It is wrong for anything that has to parse — see /v1/vector, which asks for
+    markup and passes 0.2. Measured: at 0.9 this model produced well-formed SVG
+    once in five attempts; at 0.2, four times in five.
+    """
     d = _local_json("/v1/text", {"prompt": prompt, "max_tokens": max_tokens,
-                                 "temperature": 0.9, "thinking": False})
+                                 "temperature": temperature, "thinking": False})
     return ((d or {}).get("data") or {}).get("text", "")
 
 
@@ -1048,6 +1060,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(os.path.getsize(path)))
         self.send_header("Content-Disposition",
                          'attachment; filename="%s"' % os.path.basename(path))
+        # Only SVG can execute anything, and it is sanitised before it is
+        # written — but this response serves generated content from the same
+        # origin as the UI, and that is worth a belt as well as braces. Inert
+        # for every other type here.
+        self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
         with open(path, "rb") as fh:
             while True:
@@ -1175,6 +1193,100 @@ class Handler(BaseHTTPRequestHandler):
             log("client disconnected during album download")
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
+
+    # -- vector -----------------------------------------------------------
+    def _send_vector(self, payload):
+        """Draw an SVG with the text model (#18).
+
+        The first Anneal capability that is genuinely fast: SVG is markup, so
+        this is text generation. Gemma is light, coexists with a heavy model,
+        and answers in seconds — nothing is evicted and nothing cold-starts
+        unless chat itself is cold.
+
+        Nothing generated is returned or written until `vector.sanitise` has
+        been through it. A `<script>` inside an SVG a game loads is a real
+        hazard, so what the model drew and what a caller receives are two
+        different documents by construction.
+        """
+        prompt = (payload.get("prompt") or "").strip()
+        if not prompt:
+            self._send_json({"code": 400, "error": "'prompt' is required"}, 400)
+            return
+        if len(prompt) > MAX_PROMPT_CHARS:
+            self._send_json({"code": 400, "error": "prompt is %d characters, over the %d "
+                             "character limit" % (len(prompt), MAX_PROMPT_CHARS)}, 400)
+            return
+
+        mode = (payload.get("mode") or "draw").lower()
+        if mode != "draw":
+            # `trace` is the other half of #18 and needs vtracer or potrace,
+            # neither of which is installed. Say which, rather than 400ing with
+            # "unknown mode" and leaving the caller to guess.
+            self._send_json({
+                "code": 501,
+                "error": "mode %r is not implemented. 'draw' uses the text model and is "
+                         "available now; 'trace' would vectorise the image model's output "
+                         "and needs vtracer or potrace installed on the host — neither is."
+                         % mode}, 501)
+            return
+
+        style = (payload.get("style") or vector.DEFAULT_STYLE).lower()
+        try:
+            size = max(8, min(int(payload.get("size") or 24), 1024))
+        except (TypeError, ValueError):
+            size = 24
+
+        started = time.time()
+        drawn = vector.build_prompt(prompt, style, size)
+        last_error, attempts = None, 0
+        # Two attempts. A small instruct model returns something unparseable
+        # often enough to be worth one retry, and at a couple of seconds a go
+        # that is cheaper than making the caller decide.
+        for attempts in (1, 2):
+            try:
+                # Low temperature, unlike every other text call here. This asks
+                # for markup that has to parse, and sampling variety is the
+                # enemy of that — measured 1-in-5 well-formed at 0.9 against
+                # 4-in-5 at 0.2 on the same five subjects.
+                reply = press_text(drawn, max_tokens=1400, temperature=0.2)
+            except Exception as exc:
+                self._send_json({"code": 502, "error": "text service failed: %s" % exc}, 502)
+                return
+            try:
+                svg, removed = vector.sanitise(vector.extract(reply), size=size)
+                break
+            except vector.SvgRejected as exc:
+                last_error = str(exc)
+                log("vector: attempt %d rejected — %s" % (attempts, last_error))
+        else:
+            self._send_json({
+                "code": 422,
+                "error": "the model did not produce usable SVG after 2 attempts: %s"
+                         % last_error,
+                "hint": "shorter, more geometric subjects work best — this path is good "
+                        "at icons and poor at illustration",
+            }, 422)
+            return
+
+        if removed:
+            # Worth logging rather than only reporting: a model that keeps
+            # emitting script is a thing to know about the model.
+            log("vector: sanitised out %s" % ", ".join(removed[:8]))
+
+        meta = {"prompt": prompt, "service": "vector", "mode": mode, "style": style,
+                "size": size, "model": TEXT_MODEL_PATH, "attempts": attempts,
+                "sanitised_out": removed, "seconds": round(time.time() - started, 1),
+                "request": dict(payload)}
+        path = outputs.save_bytes("vectors", svg.encode("utf-8"), ".svg", meta)
+
+        self._send_json({"data": {
+            "svg": svg,
+            "path": path,
+            "url": ("/v1/outputs/file?path=" + urllib.parse.quote(path, safe="")) if path else None,
+            "style": style, "size": size, "attempts": attempts,
+            "sanitised_out": removed,
+            "seconds": meta["seconds"],
+        }, "code": 200, "error": None})
 
     @staticmethod
     def _path_from_file_url(file_url):
@@ -1802,6 +1914,16 @@ class Handler(BaseHTTPRequestHandler):
             pid = payload.get("id") or payload.get("press_id")
             PRESS.cancel(pid)
             self._send_json({"data": {"cancelled": pid}, "code": 200, "error": None})
+            return
+
+        if route == "/v1/vector":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            payload, _ = self._body()
+            if payload is None:
+                return              # 413 already sent
+            self._send_vector(payload)
             return
 
         if route == "/v1/text":

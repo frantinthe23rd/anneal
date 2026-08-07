@@ -48,6 +48,10 @@
     {
       "name": "press",
       "description": "One brief to a finished single or album: plan, lyrics, music and cover."
+    },
+    {
+      "name": "vector",
+      "description": "SVG drawn by the text model. Experimental — fast and safe, but the drawings are frequently not recognisable as their subject on the model that fits this hardware. See the endpoint description."
     }
   ],
   "paths": {
@@ -1078,6 +1082,83 @@
           },
           "409": {
             "description": "Already running"
+          }
+        }
+      }
+    },
+    "/v1/vector": {
+      "post": {
+        "tags": [
+          "vector"
+        ],
+        "summary": "Draw an SVG icon with the text model",
+        "description": "**Experimental. Read the quality note before building on this.**\n\nSVG is markup, so this is a text-generation task: 2-7 seconds on an already-warm Gemma, no new weights, no heavy slot, and nothing evicted. It is the only fast endpoint Anneal has.\n\n**Measured quality.** On `gemma-4-e4b-it-4bit`, the model that fits 16 GB, output is reliably *well-formed* at temperature 0.2 (5/5 across gear, heart, compass rose, health bar, shield) and reliably *not a recognisable icon*: the gear rendered as a plain circle, the compass rose as a single dot, the health bar as one solid rectangle. Adding worked examples improved the markup and not the drawing. Treat this as plumbing that works and a capability that does not yet.\n\n**Everything returned is sanitised.** The reply is parsed, checked for a single `<svg>` root, and reduced to an allowlist of drawing elements and attributes. `<script>`, `<style>`, `<foreignObject>`, every `on*` handler, SMIL animation, and any `href` or `url()` that is not a local `#fragment` are removed, and a DOCTYPE or ENTITY declaration is refused before parsing. `sanitised_out` reports what was taken. A `<script>` inside an SVG a game loads is a real hazard, so what the model drew and what you receive are two different documents by construction.\n\nThe result is also saved under `outputs/vectors/` with a sidecar, like every other output, and is listed by `GET /v1/outputs?kind=vectors`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "prompt"
+                ],
+                "properties": {
+                  "prompt": {
+                    "type": "string",
+                    "description": "What to draw. Short and geometric works best.",
+                    "example": "a compass rose"
+                  },
+                  "style": {
+                    "type": "string",
+                    "enum": [
+                      "flat",
+                      "line",
+                      "duotone",
+                      "geometric"
+                    ],
+                    "default": "flat"
+                  },
+                  "size": {
+                    "type": "integer",
+                    "default": 24,
+                    "minimum": 8,
+                    "maximum": 1024,
+                    "description": "Sets the viewBox. The output carries no absolute width or height, so it scales wherever it is used."
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "draw"
+                    ],
+                    "default": "draw",
+                    "description": "Only 'draw' is implemented. 'trace' would vectorise the image model's output and needs vtracer or potrace on the host; neither is installed, and it returns 501."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "SVG source, the saved path, and what the sanitiser removed"
+          },
+          "400": {
+            "description": "Missing prompt, or a prompt over ANNEAL_MAX_PROMPT_CHARS"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "413": {
+            "description": "Request body over ANNEAL_MAX_REQUEST_BYTES"
+          },
+          "422": {
+            "description": "The model did not produce usable SVG in two attempts. A generation failure, reported rather than patched up."
+          },
+          "501": {
+            "description": "mode 'trace' is not implemented on this host"
+          },
+          "502": {
+            "description": "The text service failed"
           }
         }
       }
