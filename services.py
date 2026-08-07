@@ -153,7 +153,8 @@ SERVICES = {
 
 # Routes the gateway answers itself. They must never resolve to a backend, or
 # the proxy would try to forward them and 404.
-GATEWAY_ROUTES = ("/v1/press", "/v1/press/download", "/v1/press/resume", "/v1/outputs", "/v1/music/tiers", "/supervisor", "/health")
+GATEWAY_ROUTES = ("/v1/press", "/v1/press/download", "/v1/press/resume", "/v1/outputs",
+                  "/v1/music/tiers", "/v1/sprites", "/v1/vector", "/supervisor", "/health")
 
 
 def resolve(path: str):

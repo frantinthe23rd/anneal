@@ -12,6 +12,8 @@ from __future__ import annotations
 import os
 import unittest
 
+from tests.context import REPO_ROOT  # noqa: F401
+
 import services
 from services import GATEWAY_ROUTES, MUSIC_TIERS, SERVICES, resolve
 
@@ -49,6 +51,20 @@ class TestResolve(unittest.TestCase):
             for route in spec["routes"]:
                 self.assertEqual(resolve(route), name,
                                  "%s declares %s but it resolves elsewhere" % (name, route))
+
+    def test_every_route_the_gateway_answers_itself_is_declared(self):
+        """GATEWAY_ROUTES is what stops the proxy forwarding a route the gateway
+        handles in-process. /v1/sprites resolved to None only by luck — no
+        service prefix happens to match it — which is not the same as being
+        declared, and would stop being true the moment a service claimed /v1/s…
+        """
+        import re
+        src = open(os.path.join(REPO_ROOT, "supervisor.py"), encoding="utf-8").read()
+        handled = set(re.findall(r'route == "(/v1/[a-z/]+)"', src))
+        for route in sorted(handled):
+            if resolve(route) is None and not any(
+                    route == g or route.startswith(g + "/") for g in GATEWAY_ROUTES):
+                self.fail("%s is answered by the gateway but not in GATEWAY_ROUTES" % route)
 
     def test_gateway_routes_never_resolve_to_a_backend(self):
         """These are answered in-process. If one resolved to a service the proxy
