@@ -7,7 +7,7 @@
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
 <link rel="mask-icon" href="/assets/favicon.svg" color="#ff5f1f">
 <meta name="theme-color" content="#100d0c" id="themeColor">
-<meta name="description" content="Local, on-demand generation — music, speech, images, text, sprite animation and video on one machine, usable by hand or over its API.">
+<meta name="description" content="Local, on-demand generation — music, speech, images and text on one machine, usable by hand or over its API.">
 <script>
 /* Resolve the theme before the first paint. This has to be a blocking script in
    the head and cannot move down with the rest of the JS: set `data-theme` any
@@ -554,25 +554,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .item .meta { color: var(--faint); font-family: var(--mono); font-size: 11.5px; white-space: nowrap; }
 .item audio { width: 100%; margin-top: 4px; }
 .item img { width: 100%; border-radius: 7px; display: block; margin-top: 4px; background: var(--bg); }
-.item video { width: 100%; border-radius: 7px; display: block; margin-top: 4px; background: #000; }
 
-/* Animation frames read left to right, so they scroll rather than wrap — a
-   grid loses the order that is the whole point of a frame sequence. */
-.item .frames { display: flex; gap: 8px; margin-top: 6px; overflow-x: auto; padding-bottom: 6px; }
-.item .frame { position: relative; flex: 0 0 auto; width: 116px; border-radius: 7px;
-  border: 1px solid var(--line); overflow: hidden;
-  /* A checkerboard, because these are matted PNGs and transparency has to be
-     legible: against a flat plate a hole left by the matting reads as part of
-     the sprite. This is how every image editor shows alpha, for that reason. */
-  background-color: #6b6259;
-  background-image:
-    linear-gradient(45deg, rgba(255,255,255,.10) 25%, transparent 25%, transparent 75%, rgba(255,255,255,.10) 75%),
-    linear-gradient(45deg, rgba(255,255,255,.10) 25%, transparent 25%, transparent 75%, rgba(255,255,255,.10) 75%);
-  background-size: 14px 14px; background-position: 0 0, 7px 7px;
-}
-.item .frame img { margin: 0; border-radius: 0; background: none; }
-.item .frame .fi { position: absolute; top: 3px; left: 5px; font-family: var(--mono);
-  font-size: 10px; color: #fff; background: rgba(0,0,0,.55); border-radius: 4px; padding: 0 4px; }
 .item .foot { display: flex; align-items: center; gap: 14px; margin-top: 10px; flex-wrap: wrap; }
 .item .foot a, .item .foot button {
   color: var(--muted); font-size: 12px; text-decoration: none; background: none; border: 0; padding: 0;
@@ -857,7 +839,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
   <div class="hlead">
     <img class="heromark" src="/assets/brand/anneal-mark.svg" width="168" height="168" alt="">
     <h1>Anneal</h1>
-    <p class="lede">Music, speech, images, text, sprite animation and video — generated <b>entirely on this machine</b>.
+    <p class="lede">Music, speech, images and text — generated <b>entirely on this machine</b>.
        Nothing you write or make leaves it.</p>
 
     <div class="strip" id="heroStrip"></div>
@@ -968,15 +950,16 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
   <div class="panel modebar" id="modebar">
     <div class="tabs" role="tablist">
       <!-- Music and Press sit together: Press is the album-length version of
-           the same thing, and they share the one heavy model. Speech and Image
-           are the other modalities, Animation and Video are the two that make
-           motion, and Chat is the side channel. -->
+           the same thing, and they share the one heavy model. Speech, Image and
+           Video are the other modalities, and Chat is the side channel.
+           Sprites (/v1/sprites) deliberately has no tab: it is for game-dev
+           agents calling the API, and a frame sequence is not something anyone
+           was going to sit and make by hand. Video was removed entirely —
+           see the Credits note and #20. -->
       <button class="tab" role="tab" data-mode="music"  aria-selected="true">Music</button>
       <button class="tab" role="tab" data-mode="press"  aria-selected="false">Press</button>
       <button class="tab" role="tab" data-mode="speech" aria-selected="false">Speech</button>
       <button class="tab" role="tab" data-mode="image"  aria-selected="false">Image</button>
-      <button class="tab" role="tab" data-mode="sprite" aria-selected="false">Animation</button>
-      <button class="tab" role="tab" data-mode="video"  aria-selected="false">Video</button>
       <button class="tab" role="tab" data-mode="chat"   aria-selected="false">Chat</button>
     </div>
   </div>
@@ -1113,70 +1096,6 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
                 Changing the prompt has little effect — measured: asking a brass watch to become
                 silver returned the same brass watch. For a different subject, generate afresh.</div>
             </div>
-          </div>
-        </section>
-
-        <!-- ANIMATION (sprites) -->
-        <section data-panel="sprite" class="hidden">
-          <label class="f" for="spPrompt">Describe the character</label>
-          <textarea id="spPrompt" placeholder="a small round green slime with big eyes"></textarea>
-          <div class="hint">Describe it as you would to an artist. "a small round green slime with
-            big eyes" works; "slime" does not.</div>
-
-          <div class="field">
-            <label class="f" for="spPoses">Poses <span style="text-transform:none;letter-spacing:0">(one per line, optional)</span></label>
-            <textarea id="spPoses" class="code" placeholder="idle&#10;crouched to jump&#10;stretched mid-air&#10;landing splat"></textarea>
-            <div class="hint"><b>This is the field that produces motion.</b> Left blank, the frames come
-              back as the same character in near-identical poses — good as a character set, useless as
-              a walk cycle. Naming the poses gives real movement, at the cost of more design drift
-              between frames.</div>
-          </div>
-
-          <div class="field grid2">
-            <div>
-              <label class="f" for="spFrames">Frames</label>
-              <input type="number" id="spFrames" value="4" min="2" max="8">
-            </div>
-            <div>
-              <label class="f" for="spStyle">Style</label>
-              <input type="text" id="spStyle" value="flat pixel art" placeholder="flat pixel art">
-            </div>
-          </div>
-          <div class="hint">Frames is a request, not a promise — the model routinely returns one more
-            or one fewer, and the result tells you what you actually got. Ignored when poses are given.</div>
-        </section>
-
-        <!-- VIDEO -->
-        <section data-panel="video" class="hidden">
-          <label class="f" for="vPrompt">Describe the shot</label>
-          <textarea id="vPrompt" placeholder="a lighthouse beam sweeping across a stormy sea at night"></textarea>
-          <div class="hint">Describe <b>motion</b>, not just a scene — it is a video model.</div>
-
-          <div class="field grid2">
-            <div>
-              <label class="f" for="vSize">Size</label>
-              <select id="vSize">
-                <option value="480x272">480 × 272 — quick</option>
-                <option value="832x480" selected>832 × 480 — default</option>
-                <option value="1280x704">1280 × 704 — slow</option>
-              </select>
-            </div>
-            <div>
-              <label class="f" for="vFrames">Frames</label>
-              <input type="number" id="vFrames" value="17" min="5" max="33" step="4">
-            </div>
-          </div>
-          <div class="field">
-            <label class="f" for="vSteps">Steps</label>
-            <input type="number" id="vSteps" value="20" min="5" max="50">
-          </div>
-          <div class="hint">Frames snap to the next 4n+1, which is what the model requires.</div>
-
-          <div class="field">
-            <div class="hint" id="vWarn"><b>Minutes, not seconds.</b> Measured here: 9 frames at
-              480 × 272 and 20 steps took 3 minutes 9 seconds, with a peak memory footprint of 22 GB —
-              so it pages hard, and it evicts music. This is the small 1.3B model: the output is
-              coherent rather than good.</div>
           </div>
         </section>
 
@@ -1559,6 +1478,8 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
         <tr><td><code>POST</code></td><td><code>/v1/audio/speech</code></td><td>Speech, returns audio</td></tr>
         <tr><td><code>GET</code></td><td><code>/v1/voices</code></td><td>Voice list (wakes the speech model)</td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/images/generations</code></td><td>Image, as a path or base64</td></tr>
+        <tr><td><code>POST</code></td><td><code>/v1/sprites</code></td><td>An animation set as separate transparent PNGs. <b>API only</b></td></tr>
+        <tr><td><code>POST</code></td><td><code>/v1/vector</code></td><td>An SVG icon. <b>Experimental</b> — see the README</td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/chat/completions</code></td><td>OpenAI-shaped chat, streaming</td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/text</code></td><td>One-shot completion</td></tr>
         <tr><td><code>POST GET DELETE</code></td><td><code>/v1/press</code></td><td>Start, poll or remove a press</td></tr>
@@ -1614,7 +1535,7 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
     <div class="banner">
       <span class="eyebrow">About</span>
       <h2>What this is</h2>
-      <p>A single Apple silicon Mac that makes music, speech, images, text, sprite animation and video on demand, for anyone
+      <p>A single Apple silicon Mac that makes music, speech, images and text on demand, for anyone
          on the tailnet and for anything that can make an HTTP request. Built by Jon Moseley.</p>
     </div>
 
@@ -1837,7 +1758,7 @@ async function httpError(res) {
    image model wearing a different hat, so the `image` chip is already telling
    the truth about what is loaded. A chip per *tab* rather than per *model*
    would claim two models where there is one. */
-const SERVICE_ORDER = ["music", "speech", "text", "image", "video"];
+const SERVICE_ORDER = ["music", "speech", "text", "image"];
 function forgeServices() {
   // `health` also carries host stats under __system, which is not a model and
   // must not become a chip. The underscores were already saying that; nothing
@@ -1846,9 +1767,8 @@ function forgeServices() {
   return SERVICE_ORDER.filter((n) => known.includes(n))
     .concat(known.filter((n) => !SERVICE_ORDER.includes(n)));
 }
-const SERVICE_FOR_MODE = { music: "music", speech: "speech", image: "image", chat: "text",
-                           // Animation is the image model wearing a different hat.
-                           sprite: "image", video: "video" };
+const SERVICE_FOR_MODE = { music: "music", speech: "speech", image: "image",
+                           chat: "text" };
 let health = {};
 
 async function refreshHealth() {
@@ -2004,8 +1924,7 @@ function addResult(r) { results.unshift(r); renderResults(); return r; }
 /* The session list belongs to the tab you are on, the same way the Library
    does. Everything landed in one pile before, so generating a track and then
    switching to Image left the track sitting under the Image tab. */
-const RESULT_KIND_FOR_MODE = { music: "music", speech: "speech", image: "image",
-                               sprite: "sprite", video: "video" };
+const RESULT_KIND_FOR_MODE = { music: "music", speech: "speech", image: "image" };
 
 function shownResults() {
   const kind = RESULT_KIND_FOR_MODE[mode];
@@ -2040,43 +1959,14 @@ function renderResults() {
       const i = document.createElement("img");
       i.src = r.image; i.alt = r.prompt; i.loading = "lazy";
       item.appendChild(i);
-    } else if (r.video) {
-      const v = document.createElement("video");
-      v.controls = true; v.loop = true; v.muted = true; v.src = r.video;
-      v.setAttribute("playsinline", "");
-      item.appendChild(v);
-    } else if (r.frames) {
-      // A strip, not a grid: these are animation frames and reading them in
-      // order is the point. The checkerboard is what makes transparency legible
-      // — on a flat plate a matting hole looks like part of the sprite.
-      const strip = el("div", "frames");
-      r.frames.forEach((f) => {
-        const cell = el("div", "frame");
-        const i = document.createElement("img");
-        i.src = f.url; i.alt = r.prompt + " frame " + f.index; i.loading = "lazy";
-        cell.appendChild(i);
-        cell.appendChild(el("span", "fi", String(f.index)));
-        strip.appendChild(cell);
-      });
-      item.appendChild(strip);
     }
 
     if (!r.pending && !r.failed) {
       const foot = el("div", "foot");
-      if (r.frames) {
-        // No single file to hand over — each frame is its own PNG.
-        r.frames.forEach((f) => {
-          const a = document.createElement("a");
-          a.href = f.url; a.download = (r.filename || "frame") + "-" + f.index + ".png";
-          a.textContent = "Frame " + f.index;
-          foot.appendChild(a);
-        });
-      } else {
-        const dl = document.createElement("a");
-        dl.href = r.audio || r.image || r.video; dl.download = r.filename || "anneal-output";
-        dl.textContent = "Download";
-        foot.appendChild(dl);
-      }
+      const dl = document.createElement("a");
+      dl.href = r.audio || r.image; dl.download = r.filename || "anneal-output";
+      dl.textContent = "Download";
+      foot.appendChild(dl);
       if (r.kind === "image" && r.path) {
         const v = el("button", null, "Vary this");
         v.title = "Generate a variation that keeps this composition";
@@ -2099,8 +1989,6 @@ const EMPTY_LINE = {
   speech: "Nothing spoken yet. Write a line and press Forge.",
   image:  "No images yet. Describe one and press Forge.",
   press:  "No records yet. Write a brief and press Press.",
-  sprite: "No frames yet. Describe a character and press Forge.",
-  video:  "No clips yet. Describe a shot and press Forge — then wait, it takes minutes.",
 };
 function setEmptyLine(m) {
   const n = $("emptyLine");
@@ -2112,7 +2000,6 @@ function coldWarning(service) {
   if (s && s.running) return null;
   if (service === "music") return "Music is cold — loading the model takes about 3–4 minutes before generation even starts.";
   if (service === "image") return "Image is cold — loading the model takes 30–60 seconds before generation starts.";
-  if (service === "video") return "Video is cold, and slow even warm — expect minutes. It will evict whichever heavy model is loaded.";
   return null;
 }
 
@@ -2131,8 +2018,6 @@ async function run() {
   try {
     if (mode === "music") await runMusic();
     else if (mode === "speech") await runSpeech();
-    else if (mode === "sprite") await runSprites();
-    else if (mode === "video") await runVideo();
     else await runImage();
   } catch (e) {
     if (e && e.status === 409) {
@@ -2299,66 +2184,6 @@ async function runImage() {
     });
   }
   clearVary();
-  hideStatus();
-}
-
-/* --- animation (sprites) ------------------------------------------------- */
-/* One image generation containing every frame, cut into transparent PNGs.
-   Separate generations of "the same character" produce different characters,
-   which is why this is one request rather than N. */
-async function runSprites() {
-  const prompt = $("spPrompt").value.trim();
-  if (!prompt) { setStatus("Describe the character first.", "warn"); return; }
-  const poses = $("spPoses").value.split("\n").map((p) => p.trim()).filter(Boolean);
-
-  setStatus(coldWarning("image") || "Generating the sheet…", coldWarning("image") ? "warn" : "",
-            { bar: true });
-
-  const body = { prompt, style: $("spStyle").value.trim() || "flat pixel art" };
-  if (poses.length) body.poses = poses;
-  else body.frames = Number($("spFrames").value) || 4;
-
-  const res = await api("/v1/sprites", { method: "POST", body });
-  const d = res.data || {};
-  const frames = [];
-  for (const f of d.frames || []) {
-    const blob = await api(f.url, { raw: true });
-    const url = URL.createObjectURL(blob); blobUrls.push(url);
-    frames.push({ url, index: f.index, width: f.width, height: f.height, path: f.file });
-  }
-  addResult({
-    kind: "sprite", prompt, frames, filename: slug(prompt) + "-frames",
-    // The count is the thing worth stating: it is routinely not what was asked.
-    meta: frames.length + " frame" + (frames.length === 1 ? "" : "s") +
-          (d.requested_frames && d.requested_frames !== frames.length
-             ? " (asked for " + d.requested_frames + ")" : ""),
-    took: fmtElapsed(),
-  });
-  hideStatus();
-}
-
-/* --- video --------------------------------------------------------------- */
-async function runVideo() {
-  const prompt = $("vPrompt").value.trim();
-  if (!prompt) { setStatus("Describe the shot first.", "warn"); return; }
-  const [w, h] = $("vSize").value.split("x").map(Number);
-
-  setStatus(coldWarning("video") || "Generating — this takes minutes.", "warn", { bar: true });
-
-  const res = await api("/v1/videos/generations", { method: "POST", body: {
-    prompt, width: w, height: h,
-    frames: Number($("vFrames").value) || 17,
-    steps: Number($("vSteps").value) || 20,
-  }});
-  for (const v of res.data || []) {
-    const url = "/v1/outputs/file?path=" + encodeURIComponent(v.path);
-    const blob = await api(url, { raw: true });
-    const objUrl = URL.createObjectURL(blob); blobUrls.push(objUrl);
-    addResult({
-      kind: "video", prompt, video: objUrl, filename: slug(prompt) + ".mp4",
-      meta: w + "×" + h + " · " + v.frames + " frames", seed: v.seed, path: v.path,
-    });
-  }
   hideStatus();
 }
 
@@ -2813,7 +2638,6 @@ function renderLibrary() {
     // By file type, not by kind: sprites are images too, and keying on
     // kind === "images" gave a sprite frame a broken audio player.
     const isPic = /\.(png|jpe?g|webp|gif|svg)$/i.test(it.name || "");
-    const isVid = /\.(mp4|webm|mov)$/i.test(it.name || "");
     const open = el("button", null, isPic ? "Show image" : "Play");
     open.className = "iconbtn";
     open.onclick = async () => {
@@ -2825,11 +2649,6 @@ function renderLibrary() {
         if (isPic) {
           const img = document.createElement("img"); img.src = url; img.alt = it.prompt;
           holder.appendChild(img);
-        } else if (isVid) {
-          const v = document.createElement("video");
-          v.controls = true; v.loop = true; v.muted = true; v.src = url; v.autoplay = true;
-          v.setAttribute("playsinline", "");
-          holder.appendChild(v);
         } else {
           const a = document.createElement("audio"); a.controls = true; a.src = url; a.autoplay = true;
           holder.appendChild(a);
@@ -2973,8 +2792,8 @@ function applyRequest(kind, req) {
    tabs already name the kind, so the old filter row restated them one level
    down — and never had a Press filter at all, which left finished records
    reachable only by scrolling past everything else. */
-const LIB_KIND_FOR_MODE = { music: "music", speech: "speech", image: "images", press: "press",
-                            sprite: "sprites", video: "video" };
+const LIB_KIND_FOR_MODE = { music: "music", speech: "speech", image: "images",
+                            press: "press" };
 const LIB_TITLE = { music: "Saved tracks", speech: "Saved speech", image: "Saved images",
                     press: "Records" };
 

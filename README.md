@@ -36,7 +36,6 @@ it uses are all served from `assets/`.
 | Speech | [Kokoro-82M](https://huggingface.co/prince-canuma/Kokoro-82M) via [mlx-audio](https://github.com/Blaizzy/mlx-audio) | Apache-2.0 | 28 voices, en/uk |
 | Image | FLUX.1-schnell 4-bit via [mflux](https://github.com/filipstrand/mflux) | Apache-2.0 | Up to ~1536px, plus variations of an earlier image |
 | Text | Gemma 4 e4b 4-bit via [mlx-lm](https://github.com/ml-explore/mlx-lm) | Gemma Terms of Use | Chat completions, streaming |
-| Video | [Wan 2.1 T2V-1.3B](https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B) 4-bit via [mlx-video](https://github.com/Blaizzy/mlx-video) | Apache-2.0 | Short clips, slowly. Optional — weights are a separate download |
 
 (The Gemma row previously said Apache-2.0 here. That was wrong: the *tooling* is
 Apache/MIT, but Google's weights are under the Gemma Terms of Use. Full
@@ -58,7 +57,10 @@ Results appear in the Library as a record you can play through, and
 a zip — audio, cover and tracklist. Masters are FLAC, so lossy formats are
 transcoded from the original rather than from another lossy copy.
 
-**Sprites** (`POST /v1/sprites`) turns a brief into an animation set: separate
+**Sprites** (`POST /v1/sprites`) is **API-only, deliberately** — there is no
+Studio tab, because a frame sequence is not something anyone sits and makes by
+hand. It exists for game-dev agents calling the API. It turns a brief into an
+animation set: separate
 transparent PNGs, one per frame, plus an atlas giving each frame's position on
 the sheet it came from. The whole set comes out of **one** image generation,
 which is the design rather than an optimisation — generating four sprites
@@ -76,24 +78,6 @@ near-identical, so passing `poses` (`["idle", "crouched to jump", "mid-air",
 "landing splat"]`) is what produces real animation, at the cost of more design
 drift between frames. That trade-off is the temporal-coherence problem video
 models exist to solve, met halfway. See [INTEGRATION.md](INTEGRATION.md#6c-sprites-an-animation-set-that-stays-the-same-character).
-
-**Video** (`POST /v1/videos/generations`) generates a short clip. Measured: 9
-frames at 480x272 and 20 steps took **3 min 9 s**, with a peak footprint of
-**22 GB** — so it works and it pages hard, the same regime as the music model.
-[#20](https://github.com/frantinthe23rd/anneal/issues/20) asked for under 10 GB
-and that is not met: the 4-bit transformer is 837 MB, but the UMT5-XXL text
-encoder is bf16 at 11.4 GB because mlx-video does not quantise it. Output is
-coherent rather than good — it is the small variant. It is optional: the weights
-are a ~16 GB download plus a conversion step, and until both are done the
-endpoint answers 503 saying which is missing.
-
-The model is **pluggable**, which matters more than the particular model. Wan 2.1
-T2V-1.3B is what fits 16 GB; `ANNEAL_VIDEO_BACKEND` and `ANNEAL_VIDEO_MODEL_DIR`
-swap in Wan 14B or LTX-2 on a bigger machine without touching code. That also
-makes the licence a per-model property rather than a decision baked into the
-build: the default is Apache-2.0, and a use-restricted model is a deliberate
-opt-in. Worth knowing when comparing — LTX-2 is widely described as Apache and
-actually ships under a community licence with a revenue threshold.
 
 **Using it by hand?** Open the web UI at **`/`** — prompt window, output view,
 and a forge strip showing which models are hot.
@@ -239,8 +223,6 @@ Everything bulky is on the **Storage SSD**; the internal disk holds only these s
 | `/Volumes/Storage/AIMusic/models` | ACE-Step weights (15 GB — turbo 4.5, sft 4.5, planning LMs 4.8, Qwen3 embedder 1.1, VAE 0.3) |
 | `/Volumes/Storage/AIMusic/hf-cache` | FLUX 9.0 GB, Gemma 4.8 GB, Kokoro 0.3 GB |
 | `/Volumes/Storage/AIMusic/gen-venv` | venv for speech + image (mlx-audio, mflux) — 1.3 GB |
-| `/Volumes/Storage/AIMusic/video-venv` | venv for video (mlx-video) — kept apart from gen-venv, which is pinned |
-| `/Volumes/Storage/AIMusic/models/Wan2.1-T2V-1.3B{,-mlx}` | video weights: the PyTorch download (~16 GB) and the 4-bit MLX conversion. Optional |
 | `/Volumes/Storage/AIMusic/uv-cache`, `uv-python` | wheel cache + Python 3.12 (4.3 GB) |
 | `/Volumes/Storage/AIMusic/outputs/{music,speech,images,vectors,sprites}` | **everything generated**, prompt-named, with JSON sidecars |
 | `/Volumes/Storage/AIMusic/supervisor.log` | supervisor lifecycle log |
@@ -298,7 +280,7 @@ that.
 
 - **Music / Speech / Image** tabs, prompt box, and the options that matter per mode.
 - **Forge strip** in the header shows every model `/health` reports — music,
-  speech, chat, image and video — as **cold**, **heating** or **hot**, with the
+  speech, chat and image — as **cold**, **heating** or **hot**, with the
   true footprint once
   loaded. Updated from `/health`, which never wakes anything. "Heating" matters:
   the process answers long before the weights are in, and reporting that as
@@ -490,10 +472,6 @@ Useful knobs:
 | `SUPERVISOR_PORT` | `8001` | Public port |
 | `ACESTEP_LM_MODEL_PATH` | `acestep-5Hz-lm-0.6B` | Prompt/lyric planning LM |
 | `ANNEAL_MIN_FREE_MB` | `1200` | Refuse to load a heavy model below this much free RAM |
-| `ANNEAL_VIDEO_BACKEND` | `wan` | Which video model family: `wan` or `ltx` |
-| `ANNEAL_VIDEO_MODEL_DIR` | `$AIMUSIC_ROOT/models/Wan2.1-T2V-1.3B-mlx` | Converted MLX weights for the Wan backend |
-| `ANNEAL_VIDEO_PYTHON` | `$AIMUSIC_ROOT/video-venv/bin/python` | Interpreter for the video backend. Separate from gen-venv, which is pinned |
-| `VIDEO_TIMEOUT` | `5400` | Seconds before a generation is abandoned |
 | `ANNEAL_SPRITE_PYTHON` | `$AIMUSIC_ROOT/tools-venv/bin/python` | Interpreter used to cut and matte sprite sheets. Needs rembg, so it is deliberately not the pinned environment that serves the models |
 | `UV_BIN`, `TS_BIN`, `TAILNET_HOST` | auto-detected | Override only if detection picks wrong |
 
@@ -501,59 +479,6 @@ Tool paths and the tailnet hostname are resolved at startup rather than
 hardcoded, and Tailscale is optional — without it Anneal serves on loopback
 only. The OpenAPI `servers` block is generated per host, so `/openapi.json`
 always advertises the machine actually serving it.
-
-## Video: an optional install
-
-Video is off by default because the weights are a separate ~16 GB download and a
-conversion step, and most people running this will not want either. Nothing else
-here depends on it; without the weights the endpoint answers 503 explaining which
-half is missing.
-
-```bash
-# 1. Its own environment. mlx-video pulls librosa and numba, and gen-venv is
-#    pinned because it serves music, speech and images.
-uv venv --python 3.12 $AIMUSIC_ROOT/video-venv
-VIRTUAL_ENV=$AIMUSIC_ROOT/video-venv uv pip install \
-  "numba>=0.60" "librosa>=0.10.2" "git+https://github.com/Blaizzy/mlx-video.git"
-
-# 2. The published checkpoint. PyTorch, ~16 GB, mostly the UMT5-XXL text encoder.
-HF_HUB_DISABLE_XET=1 $AIMUSIC_ROOT/video-venv/bin/hf download \
-  Wan-AI/Wan2.1-T2V-1.3B --local-dir $AIMUSIC_ROOT/models/Wan2.1-T2V-1.3B
-
-# 3. Convert to 4-bit MLX. This is what makes it fit; takes a while.
-$AIMUSIC_ROOT/video-venv/bin/python -m mlx_video.models.wan_2.convert \
-  --checkpoint-dir $AIMUSIC_ROOT/models/Wan2.1-T2V-1.3B \
-  --output-dir $AIMUSIC_ROOT/models/Wan2.1-T2V-1.3B-mlx \
-  --quantize --bits 4
-
-# 4. The tokenizer. mlx-video asks for "google/umt5-xxl" by name, and the
-#    gateway runs with HF_HUB_OFFLINE=1, so it has to already be in the cache.
-HF_HUB_OFFLINE=0 HF_HOME=$AIMUSIC_ROOT/hf-cache \
-  $AIMUSIC_ROOT/video-venv/bin/hf download google/umt5-xxl \
-  --include "*.json" "*.model" "spiece*"
-```
-
-Step 3 needs **torch** in `video-venv` — the published text encoder is a `.pth`
-and nothing else can read it. `uv pip install torch` into that venv first; it is
-only used for the conversion, never at run time.
-
-The `numba>=0.60` pin is not decoration: without it the resolver walks back to
-numba 0.53, whose llvmlite refuses to build on anything past Python 3.9, and the
-install fails with an error that names neither package clearly.
-
-Once the converted directory exists the service starts on demand like any other.
-`GET /health` reports `model_ready` and, when it is not, `model_problem` saying
-whether the download or the conversion is what is missing.
-
-The original checkpoint can be deleted after conversion if disk is tight — only
-the `-mlx` directory (12 GB) is used at run time.
-
-**What to expect.** 9 frames at 480x272 and 20 steps: 3 min 9 s, peak footprint
-22 GB. Text encoding is 123 s of that, and it is also the memory spike — the
-transformer quantises to 837 MB but UMT5-XXL stays bf16 at 11.4 GB, which
-mlx-video does not quantise. A pre-quantised int8 UMT5 would bring the peak under
-[#20](https://github.com/frantinthe23rd/anneal/issues/20)'s 10 GB target; that
-has not been done.
 
 ## Music quality tiers
 

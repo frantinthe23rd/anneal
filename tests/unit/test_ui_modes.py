@@ -41,8 +41,7 @@ class TestEveryTabIsFullyWired(unittest.TestCase):
         self.modes = set(re.findall(r'data-mode="(\w+)"', self.src))
 
     def test_the_tabs_are_the_ones_expected(self):
-        self.assertEqual(self.modes, {"music", "press", "speech", "image",
-                                      "sprite", "video", "chat"})
+        self.assertEqual(self.modes, {"music", "press", "speech", "image", "chat"})
 
     def test_every_tab_has_a_panel(self):
         panels = set(re.findall(r'data-panel="(\w+)"', self.src))
@@ -59,7 +58,7 @@ class TestEveryTabIsFullyWired(unittest.TestCase):
     def test_every_generating_tab_filters_its_own_session_output(self):
         """Missing here, a result files itself under whichever tab you switch to
         next — which is exactly the bug RESULT_KIND_FOR_MODE was added to fix."""
-        for mode in ("music", "speech", "image", "sprite", "video"):
+        for mode in ("music", "speech", "image"):
             self.assertIn(mode, table(self.src, "RESULT_KIND_FOR_MODE"), mode)
 
     def test_every_tab_maps_to_a_library_kind(self):
@@ -69,10 +68,6 @@ class TestEveryTabIsFullyWired(unittest.TestCase):
     def test_every_generating_tab_has_an_empty_line(self):
         for mode in self.modes - {"chat"}:
             self.assertIn(mode, table(self.src, "EMPTY_LINE"), mode)
-
-    def test_the_dispatcher_reaches_the_new_modes(self):
-        for mode in ("sprite", "video"):
-            self.assertRegex(self.src, r'mode === "%s"' % mode)
 
     def test_the_library_kinds_are_real_kinds(self):
         import outputs
@@ -88,7 +83,8 @@ class TestEveryTabIsFullyWired(unittest.TestCase):
 
 class TestTheForgeStripIsNotAFrozenList(unittest.TestCase):
     """It was, and it silently omitted `video` the day video was added — the
-    same frozen-literal failure the test suite has now fixed three times."""
+    same frozen-literal failure the test suite has now fixed three times. Video
+    is gone, the lesson is not: the strip must still come from /health."""
 
     def setUp(self):
         self.src = source()
@@ -124,19 +120,27 @@ class TestTheHonestClaims(unittest.TestCase):
     def setUp(self):
         self.src = source()
 
-    def test_the_animation_panel_says_frames_are_not_guaranteed(self):
-        """Measured twice: asking for four returned five. A UI that presents the
-        number as a setting teaches the wrong thing."""
-        self.assertRegex(self.src, r"Frames is a request, not a promise")
+    def test_sprites_are_still_discoverable_on_the_api_page(self):
+        """The Animation tab was removed because a frame sequence is not
+        something anyone sits and makes by hand — it is for game-dev agents
+        calling the API. That makes the API page the *only* place a user can
+        find out the endpoint exists, so it has to be listed there. It was
+        not, before the tab went."""
+        self.assertIn("/v1/sprites", self.src)
 
-    def test_the_animation_panel_says_poses_are_what_produce_motion(self):
-        self.assertRegex(self.src, r"the field that produces motion")
+    def test_no_dead_animation_code_survives_the_tab(self):
+        """A removed tab leaves a run handler, a render branch and CSS that
+        nothing can reach. lint-ui.py sees unresolved ids, not unreachable
+        branches, so this is the check that notices."""
+        for dead in ("runSprites", "r.frames", ".item .frames"):
+            self.assertNotIn(dead, self.src, dead)
 
-    def test_the_video_panel_states_the_measured_cost(self):
-        """A three-minute wait with a 22 GB footprint has to be said before the
-        button is pressed, not discovered."""
-        self.assertIn("3 minutes 9 seconds", self.src)
-        self.assertIn("22 GB", self.src)
+    def test_no_dead_video_code_survives_its_removal(self):
+        """Video was removed after measuring it: 9 frames in 3 min 9 s at a
+        22 GB peak. What is left behind is a run handler, a <video> branch and
+        a service chip that nothing can reach."""
+        for dead in ("runVideo", "r.video", "/v1/videos"):
+            self.assertNotIn(dead, self.src, dead)
 
 
 if __name__ == "__main__":

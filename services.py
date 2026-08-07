@@ -27,11 +27,6 @@ AIMUSIC_ROOT = os.environ.get("AIMUSIC_ROOT", "/Volumes/Storage/AIMusic")
 ACESTEP_DIR = os.environ.get("ACESTEP_DIR", os.path.join(AIMUSIC_ROOT, "ACE-Step-1.5"))
 UV_BIN = os.environ.get("UV_BIN", "/opt/homebrew/bin/uv")
 GEN_PYTHON = os.path.join(AIMUSIC_ROOT, "gen-venv", "bin", "python")
-# Video runs in its own environment. mlx-video drags librosa and numba behind
-# it, and gen-venv is version-pinned because it serves music, speech and images
-# — an upgrade there must never be blocked by a video dependency.
-VIDEO_PYTHON = os.environ.get(
-    "ANNEAL_VIDEO_PYTHON", os.path.join(AIMUSIC_ROOT, "video-venv", "bin", "python"))
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -74,11 +69,6 @@ COLD_START_SECONDS = {
     "speech": _int("SPEECH_COLD_START", 8),
     "text": _int("TEXT_COLD_START", 20),
     "image": _int("IMAGE_COLD_START", 45),
-    # Weights load per request (the backend generates in a subprocess so Metal
-    # actually gives the memory back), so there is no separate cold start to
-    # speak of — but the first *result* is minutes away either way, and this is
-    # what the interface warns on. See video_server.py.
-    "video": _int("VIDEO_COLD_START", 120),
 }
 
 
@@ -144,25 +134,6 @@ SERVICES = {
         "busy_path": None,
         "log": os.path.join(AIMUSIC_ROOT, "text-server.log"),
         "health_path": "/v1/models",   # mlx_lm has no /health
-    },
-    # The slowest service here by a wide margin: ten minutes is a normal result,
-    # not a stall. Pluggable by design — ANNEAL_VIDEO_BACKEND picks the family
-    # and ANNEAL_VIDEO_MODEL_DIR the weights, so Wan 1.3B here and Wan 14B or
-    # LTX-2 on a 32 GB machine is configuration rather than a rewrite. See #20.
-    "video": {
-        "routes": ["/v1/videos"],
-        "port": _int("VIDEO_PORT", 8015),
-        "cmd": [VIDEO_PYTHON, os.path.join(HERE, "video_server.py")],
-        "cwd": HERE,
-        "env": {},
-        "port_env": "VIDEO_PORT",
-        "heavy": True,
-        "ready_timeout": _int("VIDEO_READY_TIMEOUT", 300),
-        # Short, because it holds the heavy slot and nothing else can load
-        # while it does. The weights are not resident between requests anyway.
-        "idle_timeout": _int("VIDEO_IDLE_TIMEOUT", 300),
-        "busy_path": "/busy",
-        "log": os.path.join(AIMUSIC_ROOT, "video-server.log"),
     },
     "image": {
         "routes": ["/v1/images"],

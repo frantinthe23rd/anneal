@@ -14,7 +14,6 @@ and release the memory when idle.
 | Text | Gemma 4 E4B 4-bit | synchronous or streamed | seconds |
 | **Press** | all four, in one call | async: submit → poll → download zip | 4 min – 1 hour |
 | Sprites | FLUX.1-schnell + rembg | synchronous, returns paths | 2–3 min |
-| Video | Wan 2.1 T2V-1.3B (4-bit MLX) | synchronous, returns a path | 3 min for 9 frames at 480x272 |
 
 **Interactive API docs are hosted at
 <https://jons-mac-mini.pangolin-darter.ts.net/docs>**, with the raw spec at
@@ -626,74 +625,6 @@ runs — one image generation plus a few seconds to cut. It evicts music.
 poses; the image cost minutes and is in the library either way, so it is handed
 back rather than thrown away.
 
-## 6d. Video: the slowest thing here, and a pluggable model
-
-`POST /v1/videos/generations` generates a short clip locally.
-
-```bash
-curl -X POST "$ANNEAL_URL/v1/videos/generations" \
-  -H "Authorization: Bearer $ANNEAL_KEY" \
-  -H 'Content-Type: application/json' \
-  -d '{"prompt":"a lighthouse beam sweeping across a stormy sea","frames":17}'
-```
-
-→ `{"data": [{"path": "…/outputs/video/…mp4", "seconds": 612.4, "seed": 4471, "backend": "wan", "frames": 17}]}`
-
-| Field | Default | Notes |
-| --- | --- | --- |
-| `prompt` | — | Required. Describe *motion*, not just a scene. |
-| `frames` | `17` | Snapped up to the next 4n+1, which is what Wan requires. Capped at 33. |
-| `width`, `height` | `832`, `480` | Up to 1280x720 total pixels. |
-| `steps` | model default | |
-| `seed` | random | Returned either way. |
-| `negative_prompt` | model default | Wan ships one in its config. |
-
-**Budget minutes, not seconds.** Measured end to end through the gateway: **9
-frames at 480x272 and 20 steps took 3 minutes 9 seconds**. Set the client timeout
-in tens of minutes; the server's own ceiling is 90.
-
-**It does not meet the memory criterion [#20](https://github.com/frantinthe23rd/anneal/issues/20)
-set, and you should know that before relying on it.** That issue asked for a
-4-bit MLX port with a peak footprint **under ~10 GB**, and was explicit that the
-number to measure is `phys_footprint` during generation, not weights on disk.
-Measured: the peak was **22 GB** — the same paging regime as the music model.
-
-The 4-bit transformer is only 837 MB. The entire problem is the UMT5-XXL text
-encoder, which mlx-video converts at bf16 and does not quantise: 11.4 GB on disk,
-and 123 s of the 168 s run was text encoding. A pre-quantised int8 UMT5 exists
-and would bring this under the line; wiring one in is the obvious next step and
-has not been done.
-
-So: half the criteria were met. The 4-bit MLX port exists and works; the
-footprint target does not. It runs, and it pages hard.
-
-**1.3B is the small variant.** Output is coherent — stable composition, real
-frame-to-frame motion, not noise — and it is not good. At 480x272 and 20 steps
-expect a suggestion of the scene rather than the scene.
-
-**The model is pluggable, and that is the design.** `ANNEAL_VIDEO_BACKEND`
-selects the family, `ANNEAL_VIDEO_MODEL_DIR` the weights. Wan 1.3B here, Wan 14B
-or LTX-2 on a 32 GB machine, without touching code. Two families already differ
-enough to justify it: Wan takes a pre-converted `--model-dir`, LTX-2 resolves
-`--model-repo` itself, so the backend table holds an argv builder per family
-rather than a flag mapping.
-
-It also turns the licence into a per-model property. The default is Apache-2.0.
-LTX-2 is available but not the default, because it is widely described as Apache
-and actually ships under a community licence with a revenue threshold — "Apache"
-in a blog post is not "Apache" in the repository, and the same check is what
-ruled out MiniMax H3.
-
-**The weights are not part of the install.** A ~16 GB download plus a conversion
-step, and the converted model is another 12 GB; see README. Until both are done
-the endpoint answers 503 saying which is missing, rather than failing somewhere
-inside MLX. Video also runs in its own `video-venv` — mlx-video drags librosa,
-numba and (for conversion) torch behind it, and the environment that serves
-music, speech and images is version-pinned.
-
-Heavy: it evicts music or the image model, one generation at a time. Results land
-in the library under kind `video`.
-
 ## 7. Endpoint summary
 
 | Method | Path | Wakes model? | Purpose |
@@ -710,7 +641,6 @@ in the library under kind `video`.
 | POST | `/v1/text` | text | One-shot prompt in, text out |
 | POST | `/v1/vector` | text (light) | Draw an SVG icon. **Experimental** — see below |
 | POST | `/v1/sprites` | image | An animation set as separate transparent PNGs |
-| POST | `/v1/videos/generations` | video | A short clip. Minutes, not seconds |
 | POST | `/v1/press` | in stages | Start a record: plan, lyrics, music, cover |
 | GET | `/v1/press?id=` | **no** | Poll a press, or list recent ones without `id` |
 | GET | `/v1/press/download?id=` | **no** | The whole record as a zip, transcoded on request |

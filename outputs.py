@@ -31,7 +31,7 @@ import uuid
 
 import paths
 
-KINDS = ("music", "speech", "images", "vectors", "sprites", "video")
+KINDS = ("music", "speech", "images", "vectors", "sprites")
 SIDECAR_SUFFIX = ".json"
 
 

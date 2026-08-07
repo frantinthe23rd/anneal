@@ -56,10 +56,6 @@
     {
       "name": "sprites",
       "description": "Sprite sheets for game work: one FLUX generation containing every frame, cut into separate matted PNGs with transparency."
-    },
-    {
-      "name": "video",
-      "description": "Wan 2.1 T2V-1.3B (4-bit MLX) — text to video. The slowest thing here by a wide margin, and the model is pluggable."
     }
   ],
   "paths": {
@@ -1275,98 +1271,6 @@
           },
           "504": {
             "description": "Cutting the sheet exceeded ten minutes."
-          }
-        }
-      }
-    },
-    "/v1/videos/generations": {
-      "post": {
-        "tags": [
-          "video"
-        ],
-        "summary": "Generate a short video clip",
-        "description": "Text to video, locally. Synchronous, and slow enough that it needs saying twice: **9 frames at 480x272 and 20 steps took 3 minutes 9 seconds** on the reference machine. Bigger requests scale from there. Set your client timeout in tens of minutes; the server's ceiling is 90.\n\n**It does not meet the memory criterion issue #20 set, and that is worth knowing before you rely on it.** #20 asked for a peak footprint under ~10 GB. Measured with `footprint` during the run above, the peak was **22 GB** — the same paging regime as the music model. The 4-bit transformer is only 837 MB; the entire problem is the UMT5-XXL text encoder, which mlx-video converts at bf16 and does not quantise, at 11.4 GB on disk. Text encoding alone was 123 s of a 168 s run. It works, it is usable, and it pages hard.\n\n**1.3B is the small variant.** Output at this size and step count is coherent — stable composition, real frame-to-frame motion — and it is not good. Expect a suggestion of the scene rather than the scene.\n\n**The model is pluggable and that is deliberate.** `ANNEAL_VIDEO_BACKEND` picks the family and `ANNEAL_VIDEO_MODEL_DIR` the weights, so Wan 1.3B here and Wan 14B or LTX-2 on a 32 GB machine is configuration rather than a rewrite. It also makes the licence a per-model property: the default is Apache-2.0, and anything use-restricted is a deliberate opt-in. Worth knowing that \"Apache\" in a blog post is not always Apache in the repository — LTX-2 is widely described that way and ships under a community licence with a revenue threshold, which is why it is available but not the default.\n\n**Frame counts are snapped to 4n+1**, which is what Wan requires. The CLI enforces it too, but only after loading the weights — minutes of nothing followed by an argument error — so it is snapped up front. Note that the encoded mp4 may still carry a different frame count than requested; read the file, not the request.\n\nHeavy: it evicts music or the image model, and only one generation runs at a time. Results land in the library under kind `video`.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "prompt"
-                ],
-                "properties": {
-                  "prompt": {
-                    "type": "string",
-                    "description": "What to show. Describe motion, not just a scene — it is a video model."
-                  },
-                  "frames": {
-                    "type": "integer",
-                    "default": 17,
-                    "maximum": 33,
-                    "description": "Snapped up to the next 4n+1. Capped because longer requests are indistinguishable from a hang."
-                  },
-                  "width": {
-                    "type": "integer",
-                    "default": 832
-                  },
-                  "height": {
-                    "type": "integer",
-                    "default": 480
-                  },
-                  "steps": {
-                    "type": "integer",
-                    "description": "Diffusion steps. Omit for the model's own default."
-                  },
-                  "seed": {
-                    "type": "integer",
-                    "description": "Omit for a random one; it is returned either way."
-                  },
-                  "negative_prompt": {
-                    "type": "string",
-                    "description": "Wan uses a default negative prompt from its config when this is omitted."
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "An mp4 on disk.",
-            "content": {
-              "application/json": {
-                "example": {
-                  "created": 1786113498,
-                  "data": [
-                    {
-                      "path": "/Volumes/Storage/AIMusic/outputs/video/a_lighthouse_in_a_storm-4471.mp4",
-                      "seconds": 612.4,
-                      "seed": 4471,
-                      "backend": "wan",
-                      "frames": 17
-                    }
-                  ],
-                  "code": 200,
-                  "error": null
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "No prompt, too many frames, or too many pixels."
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
-          },
-          "409": {
-            "description": "Another heavy model is mid-generation."
-          },
-          "503": {
-            "description": "The weights are not present or not converted. They are a separate ~16 GB download plus a conversion step; the message says which is missing."
-          },
-          "504": {
-            "description": "The generation exceeded VIDEO_TIMEOUT (90 minutes by default)."
           }
         }
       }
