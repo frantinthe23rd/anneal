@@ -2914,7 +2914,10 @@ function saveChat() {
 
 function clearChat() {
   chatLog = [];
-  chatNodes = [];
+  // Deliberately not zeroing chatNodes here. renderChat detects a reset by
+  // seeing more nodes than messages, and clearing the list first makes both
+  // zero — so the teardown never ran and every message stayed on screen while
+  // the model behind it was gone.
   try { localStorage.removeItem(CHAT_KEY); } catch (_) { /* already gone */ }
   renderChat();
 }

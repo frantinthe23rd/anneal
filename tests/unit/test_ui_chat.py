@@ -88,6 +88,16 @@ class ChatPersistenceTest(unittest.TestCase):
         stream = run[run.index("for (const line of lines)"):run.index("reply.pending = false;\n    saveChat();")]
         self.assertNotIn("saveChat", stream)
 
+    def test_clearing_leaves_the_rebuild_signal_intact(self):
+        """renderChat tears the transcript down when it holds more nodes than
+        messages. clearChat zeroed both, so the signal vanished and the old
+        messages stayed on screen after New conversation."""
+        fn = self.src[self.src.index("function clearChat()"):]
+        fn = fn[:fn.index("\n}")]
+        self.assertNotIn("chatNodes = []", fn,
+                         "zeroing chatNodes here hides the reset from renderChat")
+        self.assertIn("renderChat()", fn)
+
     def test_discarding_asks_first(self):
         """It was free to discard when a reload destroyed it anyway."""
         handler = self.src[self.src.index('$("cClear").onclick'):]
