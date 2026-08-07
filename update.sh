@@ -8,6 +8,8 @@
 #
 #   ./update.sh --check     what would change (default, read-only)
 #   ./update.sh --deps      rebuild gen-venv from gen-venv.lock.txt
+#   ./update.sh --smoke-deep  also generate on the patched high tier and
+#                             check the result is music, not noise
 #   ./update.sh --models    re-fetch weights at the pinned revisions
 #   ./update.sh --smoke     just run the smoke test against what's installed
 set -euo pipefail
@@ -119,6 +121,31 @@ smoke() {
     if "$HERE/generate.py" "smoke test tone" --instrumental --duration 20 \
         --out /tmp >/dev/null 2>&1; then echo "ok"; else echo "FAILED"; fails=$((fails+1)); fi
 
+    # The patched non-turbo path is the one that has shipped garbled audio
+    # twice, and nothing else here would notice: the patches only assert that
+    # their anchors still match, not that the result is still music. This
+    # generates on the high tier and looks at the waveform. Opt-in, because it
+    # costs ~3 minutes on top of an already slow smoke run.
+    if [[ "${DEEP:-}" == "yes" ]]; then
+        echo -n "  music (high tier, patched path) ... "
+        rm -rf /tmp/anneal-deep && mkdir -p /tmp/anneal-deep
+        if "$HERE/generate.py" "solo piano, sparse, with pauses" --instrumental \
+            --duration 20 --quality high --format flac \
+            --out /tmp/anneal-deep >/dev/null 2>&1; then
+            deep_file=$(ls -t /tmp/anneal-deep/*.flac 2>/dev/null | head -1)
+            if [[ -z "$deep_file" ]]; then
+                echo "FAILED (no output)"; fails=$((fails+1))
+            elif "$HERE/tools/check-audio.py" "$deep_file" >/tmp/anneal-deep.txt 2>&1; then
+                echo "ok"; sed -n '1p' /tmp/anneal-deep.txt
+            else
+                echo "FAILED — the patched path produced something that is not music"
+                cat /tmp/anneal-deep.txt; fails=$((fails+1))
+            fi
+        else
+            echo "FAILED (generation)"; fails=$((fails+1))
+        fi
+    fi
+
     echo
     if [[ $fails -eq 0 ]]; then
         echo "All three services generated successfully."
@@ -134,5 +161,6 @@ case "$MODE" in
     --deps)   deps ;;
     --models) models ;;
     --smoke)  smoke ;;
-    *) echo "usage: $0 [--check|--deps|--models|--smoke]" >&2; exit 2 ;;
+    --smoke-deep) DEEP=yes smoke ;;
+    *) echo "usage: $0 [--check|--deps|--models|--smoke|--smoke-deep]" >&2; exit 2 ;;
 esac

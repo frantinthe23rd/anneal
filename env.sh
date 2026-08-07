@@ -84,6 +84,12 @@ if [[ -z "${TS_BIN:-}" ]]; then
 fi
 export TS_BIN="${TS_BIN:-}"
 
+# Reach beyond loopback is opt-in: `loopback` (default) or `tailnet`. The
+# supervisor binds 127.0.0.1 regardless — this only decides whether
+# start-api.sh configures `tailscale serve`. An existing serve config is never
+# touched, so this changes fresh installs and not working ones.
+export ANNEAL_EXPOSE="${ANNEAL_EXPOSE:-loopback}"
+
 # Ask Tailscale for this machine's name instead of baking one host in. Empty is
 # fine — it only affects the URL printed at startup.
 # Deliberately no early-exiting filter (`grep -m1`, `head -1`) in this pipeline.

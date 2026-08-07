@@ -57,11 +57,27 @@ for _ in $(seq 1 30); do
     sleep 1
 done
 
-# Expose on the tailnet only (loopback -> tailscale). Never on the local LAN.
-# Tailscale is optional: without it Anneal simply stays loopback-only.
-if [[ -z "$TS_BIN" ]]; then
-    echo "Tailscale not found — serving on loopback only."
-elif ! "$TS_BIN" serve status 2>/dev/null | grep -q "127.0.0.1:${SUPERVISOR_PORT}"; then
+# Reach beyond loopback is opt-in. The supervisor only ever binds 127.0.0.1;
+# what puts Anneal on the tailnet is `tailscale serve`, and configuring that
+# automatically means a fresh clone exposes itself to everyone on the tailnet
+# without being asked. That is a surprising default for something a stranger
+# just downloaded, so it now takes ANNEAL_EXPOSE=tailnet.
+#
+# An existing serve configuration is left alone either way: it lives in
+# Tailscale, not here, so machines already set up keep working and the check
+# below simply finds it and says so.
+ALREADY_SERVED=""
+if [[ -n "$TS_BIN" ]] && "$TS_BIN" serve status 2>/dev/null | grep -q "127.0.0.1:${SUPERVISOR_PORT}"; then
+    ALREADY_SERVED="yes"
+fi
+
+if [[ -n "$ALREADY_SERVED" ]]; then
+    echo "Tailnet: already configured, left as it is."
+elif [[ "${ANNEAL_EXPOSE:-loopback}" != "tailnet" ]]; then
+    echo "Loopback only. Set ANNEAL_EXPOSE=tailnet to serve on the tailnet."
+elif [[ -z "$TS_BIN" ]]; then
+    echo "ANNEAL_EXPOSE=tailnet but Tailscale was not found — staying on loopback."
+else
     echo "Configuring tailscale serve..."
     "$TS_BIN" serve --bg --https=443 "http://127.0.0.1:${SUPERVISOR_PORT}" 2>/dev/null \
         || "$TS_BIN" serve --bg --http="${SUPERVISOR_PORT}" "http://127.0.0.1:${SUPERVISOR_PORT}"
@@ -69,7 +85,8 @@ fi
 
 echo
 echo "Local:   http://127.0.0.1:${SUPERVISOR_PORT}"
-[[ -n "$TS_BIN" ]] && echo "Tailnet: https://${TAILNET_HOST}"
+[[ -n "$TS_BIN" && ( -n "$ALREADY_SERVED" || "${ANNEAL_EXPOSE:-loopback}" == "tailnet" ) ]] \
+    && echo "Tailnet: https://${TAILNET_HOST}"
 echo "Status:  curl -s http://127.0.0.1:${SUPERVISOR_PORT}/supervisor/status"
 echo "Logs:    $LOG  and  $AIMUSIC_ROOT/api-server.log"
 echo
