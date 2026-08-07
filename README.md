@@ -413,6 +413,68 @@ curl -X POST -H "Authorization: Bearer $ACESTEP_API_KEY" -H 'Content-Type: appli
 curl -X POST -H "Authorization: Bearer $ACESTEP_API_KEY" localhost:8001/supervisor/stop  # stop everything
 ```
 
+## Surviving a reboot
+
+Nothing started Anneal at boot until recently. After a restart the tailnet URL
+was still up — that configuration lives in Tailscale's own state and survives on
+its own — proxying to a dead port, which from outside is indistinguishable from
+a crash.
+
+```bash
+./service.sh install     # start at login, restart if it dies
+./service.sh status      # installed? loaded? answering?
+./service.sh uninstall   # stop doing that
+```
+
+`install` stops a hand-started gateway first, then bootstraps the LaunchAgent and
+**verifies it by seeing whether the job actually comes up** rather than by
+checking a box. It exits non-zero with the launchd exit code and the log tail if
+it does not.
+
+**The permission this needs, and why it is arranged the way it is.** Models,
+venvs and outputs live on an external volume, and macOS blocks a LaunchAgent
+from touching one *entirely* — measured with a probe agent that could not even
+`ls` the directory. So boot persistence requires Full Disk Access however it is
+arranged. The question is what holds the grant.
+
+Granting it to `/bin/bash` works and is what most guides suggest. It also means
+every shell script anything on this machine runs — including one piped from a
+URL — inherits full disk access. Instead, `service.sh` puts an **ad-hoc signed
+private copy** at `~/Library/Anneal/anneal-bash` and the LaunchAgent runs
+`anneal-bash boot.sh`. The grant applies to that copy alone. macOS prompts for it
+the first time launchd runs it; the ad-hoc signature is what makes prompting
+possible, since plain `/bin/bash` cannot prompt and is simply denied.
+
+Three details that cost time and are now handled:
+
+- Copying a signed system binary invalidates its signature and macOS **SIGKILLs**
+  the copy before it runs a line. It is re-signed ad-hoc after every copy.
+- `launchd` opens `StandardOutPath` itself, before the job runs and before any
+  grant applies to it, so a log path on the external volume fails the spawn with
+  `EX_CONFIG` and no diagnostic anywhere. The launchd log lives in
+  `~/Library/Logs/Anneal/`; the supervisor's own log still sits beside the models.
+- A pre-flight "can I read the volume?" check run from your terminal inherits
+  *that terminal's* access and reported success while the real agent was denied
+  everything. It is now used only to rule out, never to confirm.
+
+`boot.sh` is the launchd entry point and differs from `start-api.sh` in two ways
+that matter: it **waits** for the external volume rather than failing (launchd
+starts login items well before an external disk mounts), and it **execs** the
+supervisor so the pid launchd supervises is the real one. `start-api.sh`
+backgrounds and exits, which is right for a human and would make `KeepAlive`
+restart it forever.
+
+`stop-api.sh` unloads the job before killing anything, so a deliberate stop is
+not undone a second later; `start-api.sh` bootstraps it back, so a stop/start
+cycle does not quietly leave the machine without persistence it was configured
+to have.
+
+**It starts at login, not at boot** — a LaunchAgent, not a daemon. A daemon runs
+with nobody signed in but also with no user session, and `tailscale serve` is
+configured per user; getting that wrong gives you a gateway that starts at boot
+and is reachable by nobody. If you need it up before login, enable automatic
+login for this user rather than adding a second code path.
+
 ## Configuration
 
 `env.sh` is tracked and holds all non-secret settings. The API key lives in

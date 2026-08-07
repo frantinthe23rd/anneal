@@ -17,6 +17,26 @@ if [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
     exit 0
 fi
 
+# stop-api.sh unloads the launchd job so its KeepAlive cannot undo the stop.
+# Restore it here, so the pair stays symmetrical and a stop/start cycle does not
+# quietly leave the machine without boot persistence it was configured to have.
+LABEL="com.anneal.gateway"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+if [[ -f "$PLIST" ]] && ! launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then
+    echo "Restoring launchd job $LABEL ..."
+    launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null || true
+    # launchd starts it via boot.sh (RunAtLoad), so there is nothing else to do.
+    for _ in $(seq 1 30); do
+        curl -fsS -m 2 "http://127.0.0.1:${SUPERVISOR_PORT}/health" >/dev/null 2>&1 && break
+        sleep 1
+    done
+    if curl -fsS -m 2 "http://127.0.0.1:${SUPERVISOR_PORT}/health" >/dev/null 2>&1; then
+        echo "Started by launchd. http://127.0.0.1:${SUPERVISOR_PORT}"
+        exit 0
+    fi
+    echo "launchd did not bring it up; starting directly instead." >&2
+fi
+
 if [[ ! -d "$AIMUSIC_ROOT" ]]; then
     echo "ERROR: $AIMUSIC_ROOT not found — is the Storage SSD mounted?" >&2
     exit 1
