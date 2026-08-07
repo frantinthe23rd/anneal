@@ -2217,9 +2217,18 @@ const fmtDur = (s) => Math.floor(s / 60) + ":" + String(Math.round(s % 60)).padS
    leaving a fixed value in place afterwards is what clipped long tracklists and
    any Details block opened inside one. Once the transition has run, the cap is
    released so the drawer sizes to whatever it now contains. */
+/* Which records are open, by id rather than by DOM class.
+   renderPresses() rebuilds every album element from scratch, and the poll runs
+   it every 8 seconds while a press is being followed — so a class on the node
+   is state with a lifetime of one refresh, and drawers snapped shut under you
+   while you were reading them. */
+const openPresses = new Set();
+
 function toggleDrawer(wrap) {
   const body = wrap.querySelector(".body");
   const opening = !wrap.classList.contains("open");
+  const id = wrap.dataset.pressId;
+  if (id) { if (opening) openPresses.add(id); else openPresses.delete(id); }
   body.classList.remove("done");
   if (opening) {
     wrap.classList.add("open");
@@ -2399,6 +2408,13 @@ function renderPresses() {
   show.forEach((p) => {
     const plan = p.plan || {};
     const wrap = el("div", "album");
+    wrap.dataset.pressId = p.id;
+    if (openPresses.has(p.id)) {
+      // Restored open rather than animated open: `done` is what releases the
+      // drawer's max-height, and without it a restored drawer clips whatever
+      // has grown inside it since.
+      wrap.classList.add("open");
+    }
 
     const hd = el("div", "hd");
     const coverPath = p.cover && p.cover.path;
@@ -2435,6 +2451,7 @@ function renderPresses() {
     wrap.appendChild(hd);
 
     const body = el("div", "body");
+    if (openPresses.has(p.id)) body.classList.add("done");
     if (plan.concept) body.appendChild(el("div", "concept", plan.concept));
     if (p.state === "interrupted") {
       const w = el("div", "prog", (p.stage || "Interrupted") +
@@ -3289,6 +3306,9 @@ function autoGrow(t) {
    Fire and follow. The job outlives the page, so this only starts it and then
    polls; closing the tab does not cancel anything. */
 let pressPoll = null;
+// Records opened for you rather than by you. Kept apart so that closing one
+// stays closed: it is removed from openPresses and never re-added.
+const autoOpened = new Set();
 
 async function runPress() {
   const prompt = $("pPrompt").value.trim();
@@ -3315,10 +3335,17 @@ function followPress(id) {
     try {
       const p = (await api("/v1/press?id=" + id)).data;
       setStatus(p.stage || p.state, p.state === "failed" ? "err" : "", { bar: true });
+      // Follow the record being built, so its progress is visible without
+      // hunting — but only claim it once. Re-opening on every poll would
+      // reopen a drawer you had deliberately closed.
+      if (!autoOpened.has(id)) {
+        // Guarded on autoOpened, not openPresses: guarding on the latter would
+        // re-open on the next tick anything you had just closed, which is the
+        // behaviour this is fixing.
+        autoOpened.add(id);
+        openPresses.add(id);
+      }
       await loadPresses();
-      // Open the record being built so progress is visible without hunting.
-      const first = document.querySelector("#albums .album");
-      if (first) first.classList.add("open");
       if (["done", "failed", "cancelled"].includes(p.state)) {
         clearInterval(pressPoll); pressPoll = null;
         setStatus(p.state === "done" ? p.stage : (p.error || p.state),
