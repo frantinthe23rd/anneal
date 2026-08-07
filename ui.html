@@ -608,7 +608,22 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .album .player button:hover:not(:disabled) { border-color: var(--line-2); color: var(--text); }
 .album .player .now { flex: 1; min-width: 0; color: var(--muted); font-size: 12.5px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.album .player .tm { color: var(--faint); font-family: var(--mono); font-size: 11.5px; }
+.album .player .tm { color: var(--faint); font-family: var(--mono); font-size: 11.5px;
+  font-variant-numeric: tabular-nums; }
+
+/* Seek bar. Styled rather than native because the native track is a different
+   colour in every browser and this sits on the record's own plate. */
+.album .seek { -webkit-appearance: none; appearance: none; width: 100%; height: 4px;
+  margin: 0 0 10px; padding: 0; border-radius: 2px; background: var(--line);
+  cursor: pointer; display: block; }
+.album .seek:disabled { cursor: default; opacity: .45; }
+.album .seek::-webkit-slider-thumb { -webkit-appearance: none; appearance: none;
+  width: 11px; height: 11px; border-radius: 50%; background: var(--heat-1);
+  border: 0; cursor: pointer; }
+.album .seek::-moz-range-thumb { width: 11px; height: 11px; border-radius: 50%;
+  background: var(--heat-1); border: 0; cursor: pointer; }
+.album .seek:disabled::-webkit-slider-thumb { background: var(--faint); }
+.album .seek:focus-visible { outline: 2px solid var(--heat-1); outline-offset: 3px; }
 .album li.cur { background: var(--quench-wash); }
 .album li.cur .nm { color: var(--text); font-weight: 600; }
 .album li .nm { cursor: pointer; }
@@ -2338,14 +2353,31 @@ function buildPressDetails(p, plan) {
   return det;
 }
 
-/* A small album player: play/pause, skip, click a row to jump, and auto-advance
-   so a record plays through rather than a track at a time. */
+/* One <audio> for the whole page, and one blob cache, both outside any render.
+   renderPresses() empties #albums and rebuilds every card on each poll, so a
+   player that created its own element left the previous one playing: detached,
+   still audible, and unreachable — navigating away or simply waiting for a
+   refresh gave you music with no control anywhere on the page that could stop
+   it. The element now outlives the render; the controls are rebuilt around it
+   and read their state back off it. */
+const album = { audio: new Audio(), pressId: null, index: -1, blobs: {} };
+
+/* Called on anything that takes the records out of view. Leaving a record
+   playing into a page it is no longer visible on is the bug, not a feature. */
+function stopAlbum() {
+  album.audio.pause();
+  album.pressId = null;
+  album.index = -1;
+}
+
+/* A small album player: play/pause, skip, seek, click a row to jump, and
+   auto-advance so a record plays through rather than a track at a time. */
 function buildPlayer(p, plan) {
   const frag = document.createDocumentFragment();
   const tracks = (p.tracks || []).filter((t) => t.file);
-  const audio = document.createElement("audio");
-  const cache = {};
-  let cur = -1;
+  const audio = album.audio;
+  const mine = () => album.pressId === p.id;
+  let cur = mine() ? album.index : -1;
 
   const bar = el("div", "player");
   const prev = el("button", null, "⏮");
@@ -2356,6 +2388,24 @@ function buildPlayer(p, plan) {
   [prev, toggle, next].forEach((b) => { if (!tracks.length) b.disabled = true; });
   bar.append(prev, toggle, next, now, time);
   frag.appendChild(bar);
+
+  // Progress, and seekable — a twenty-minute record with no way to scrub is a
+  // tape deck. Disabled until something is loaded, so it never looks live when
+  // there is nothing behind it.
+  const seek = document.createElement("input");
+  seek.type = "range"; seek.className = "seek";
+  seek.min = 0; seek.max = 1000; seek.value = 0; seek.step = 1;
+  seek.setAttribute("aria-label", "Playback position");
+  seek.disabled = !tracks.length;
+  let scrubbing = false;
+  seek.oninput = () => { scrubbing = true; };
+  seek.onchange = (e) => {
+    e.stopPropagation();
+    scrubbing = false;
+    if (audio.duration) audio.currentTime = (seek.value / 1000) * audio.duration;
+  };
+  seek.onclick = (e) => e.stopPropagation();     // don't toggle the drawer
+  frag.appendChild(seek);
 
   const ol = document.createElement("ol");
   const rows = [];
@@ -2387,25 +2437,45 @@ function buildPlayer(p, plan) {
   });
   frag.appendChild(ol);
 
+  // Keyed on the file, not the index: the cache outlives the render and the
+  // indices are per-card, so keying on `i` would serve one record's track to
+  // another the moment two were open.
   async function blobFor(i) {
-    if (!cache[i]) {
-      const blob = await api(tracks[i].file, { raw: true });
-      cache[i] = URL.createObjectURL(blob);
-      blobUrls.push(cache[i]);
+    const key = tracks[i].file;
+    if (!album.blobs[key]) {
+      const blob = await api(key, { raw: true });
+      album.blobs[key] = URL.createObjectURL(blob);
+      blobUrls.push(album.blobs[key]);
     }
-    return cache[i];
+    return album.blobs[key];
   }
 
   async function play(i) {
     if (i < 0 || i >= tracks.length) return;
-    if (i !== cur) {
+    if (i !== cur || !mine()) {
       now.textContent = "Loading — " + tracks[i].title;
       try { audio.src = await blobFor(i); } catch (e) { now.textContent = "Failed: " + e.message; return; }
       cur = i;
-      rows.forEach((r, n) => r && r.classList.toggle("cur", n === i));
+      album.pressId = p.id;
+      album.index = i;
+      markRow(i);
       now.textContent = tracks[i].n + ". " + tracks[i].title;
     }
     audio.play();
+  }
+
+  function markRow(i) {
+    rows.forEach((r, n) => r && r.classList.toggle("cur", n === i));
+  }
+
+  function paintTime() {
+    if (!mine()) { time.textContent = ""; seek.value = 0; return; }
+    // Chromium reports duration late for a FLAC blob, so for the first second
+    // or two there is a current time and no total. Showing elapsed alone is
+    // better than a blank field, which reads as broken.
+    const total = isFinite(audio.duration) && audio.duration ? audio.duration : 0;
+    time.textContent = fmtDur(audio.currentTime) + (total ? " / " + fmtDur(total) : "");
+    if (!scrubbing) seek.value = total ? Math.round((audio.currentTime / total) * 1000) : 0;
   }
 
   toggle.onclick = (e) => {
@@ -2414,14 +2484,29 @@ function buildPlayer(p, plan) {
   };
   prev.onclick = (e) => { e.stopPropagation(); play(cur <= 0 ? 0 : cur - 1); };
   next.onclick = (e) => { e.stopPropagation(); play(cur + 1); };
+  // Assigned, not added: the element is shared and outlives this card, so a
+  // rebuild must replace the previous card's handlers rather than stack on top
+  // of them. The newest card is the visible one and owns the controls.
   audio.onplay = () => { toggle.textContent = "⏸"; };
   audio.onpause = () => { toggle.textContent = "▶"; };
   // Auto-advance: a record should play through on its own.
-  audio.onended = () => { if (cur + 1 < tracks.length) play(cur + 1); else toggle.textContent = "▶"; };
-  audio.ontimeupdate = () => {
-    if (!audio.duration) return;
-    time.textContent = fmtDur(audio.currentTime) + " / " + fmtDur(audio.duration);
+  audio.onended = () => {
+    if (cur + 1 < tracks.length) play(cur + 1);
+    else { toggle.textContent = "▶"; album.index = -1; }
   };
+  audio.ontimeupdate = paintTime;
+  audio.onloadedmetadata = paintTime;   // the total arrives after playback starts
+  audio.ondurationchange = paintTime;
+
+  // Restore, rather than reset. A poll lands every few seconds while a record
+  // plays; before this, each one produced a fresh set of controls reading
+  // "Ready" over audio that was already halfway through a track.
+  if (mine() && cur >= 0 && tracks[cur]) {
+    markRow(cur);
+    now.textContent = tracks[cur].n + ". " + tracks[cur].title;
+    toggle.textContent = audio.paused ? "▶" : "⏸";
+    paintTime();
+  }
   return frag;
 }
 
@@ -3491,6 +3576,9 @@ let currentPage = "studio";
 
 function showPage(name, { link = true } = {}) {
   if (name !== "studio" && !DOC_PAGES[name]) name = "studio";
+  // Records are only visible in the Studio. Playing on into Guide, API or
+  // About left audio running with every control that could stop it off-screen.
+  if (name !== "studio") stopAlbum();
   currentPage = name;
   const studio = name === "studio";
   $("modebar").classList.toggle("hidden", !studio);
@@ -3692,6 +3780,7 @@ $("btnDocs").onclick = () => window.open("/docs", "_blank");
 /* ------------------------------------------------------------------- wiring */
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.onclick = () => {
+    if (mode === "press" && tab.dataset.mode !== "press") stopAlbum();
     mode = tab.dataset.mode;
     document.querySelectorAll(".tab").forEach((t) => t.setAttribute("aria-selected", String(t === tab)));
     document.querySelectorAll("[data-panel]").forEach((p) => p.classList.toggle("hidden", p.dataset.panel !== mode));
