@@ -948,11 +948,14 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
        a trap. -->
   <div class="panel modebar" id="modebar">
     <div class="tabs" role="tablist">
+      <!-- Music and Press sit together: Press is the album-length version of
+           the same thing, and they share the one heavy model. Speech and Image
+           are the other modalities, and Chat is the side channel. -->
       <button class="tab" role="tab" data-mode="music"  aria-selected="true">Music</button>
+      <button class="tab" role="tab" data-mode="press"  aria-selected="false">Press</button>
       <button class="tab" role="tab" data-mode="speech" aria-selected="false">Speech</button>
       <button class="tab" role="tab" data-mode="image"  aria-selected="false">Image</button>
       <button class="tab" role="tab" data-mode="chat"   aria-selected="false">Chat</button>
-      <button class="tab" role="tab" data-mode="press"  aria-selected="false">Press</button>
     </div>
   </div>
 
