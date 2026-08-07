@@ -38,7 +38,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS presses (
     id         TEXT PRIMARY KEY,
     request    TEXT NOT NULL,
-    state      TEXT NOT NULL,     -- planning | lyrics | music | art | done | failed | cancelled
+    state      TEXT NOT NULL,     -- planning | lyrics | awaiting-review | music | art
+                                --   | done | failed | cancelled | interrupted | queued
     stage_note TEXT,
     plan       TEXT,              -- album concept from the planning model
     tracks     TEXT,              -- per-track state and results
@@ -227,8 +228,70 @@ class Press:
 
     # Non-terminal states a worker is actually inside. `queued` is deliberately
     # not here: it has no worker, so it is neither running nor interrupted.
+    # Deliberately excludes "awaiting-review": a press paused for a human holds
+    # no model and must not hold the queue either, or one person going to lunch
+    # blocks every other press behind them. See #14 and #22.
     RUNNING_STATES = ("planning", "lyrics", "music", "art")
     TERMINAL_STATES = ("done", "failed", "cancelled", "interrupted")
+    # Not running, not finished. sweep_interrupted() must leave it alone: it has
+    # nothing behind it by design, which is exactly what the sweep looks for.
+    REVIEW_STATE = "awaiting-review"
+
+    @staticmethod
+    def wants_review(request):
+        """One-shot stays the default; #22 asked for both, not a replacement."""
+        return bool((request or {}).get("review"))
+
+    def amend(self, pid, plan_patch, track_patches):
+        """Patch the plan and the lyrics of a press waiting to be reviewed.
+
+        A patch, not a replacement. Sending a title must not blank the `voice`
+        the whole record's vocal consistency hangs on, and an unrecognised track
+        number is dropped rather than appended — a typo should not add a track
+        the music stage then records.
+        """
+        press = self.store.get(pid)
+        if not press:
+            raise ValueError("no such press")
+        if press["state"] != self.REVIEW_STATE:
+            raise ValueError("press is %r, not awaiting review" % press["state"])
+
+        fields = {}
+        if plan_patch:
+            plan = dict(press.get("plan") or {})
+            plan.update({k: v for k, v in plan_patch.items() if v is not None})
+            fields["plan"] = json.dumps(plan)
+        if track_patches:
+            tracks = list(press.get("tracks") or [])
+            by_n = {t.get("n"): t for t in tracks}
+            for patch in track_patches:
+                target = by_n.get(patch.get("n"))
+                if not target:
+                    continue                      # unknown track: ignore, never append
+                for key in ("title", "theme", "style", "lyrics"):
+                    if patch.get(key) is not None:
+                        target[key] = patch[key]
+            fields["tracks"] = json.dumps(tracks)
+        if fields:
+            self.store.update(pid, **fields)
+        return self.store.get(pid)
+
+    def approve(self, pid):
+        """Reviewed and accepted — put it back in the queue for the music stage.
+
+        Back in the *queue*, not straight into running: it released the slot
+        when it parked and something else may hold it now.
+        """
+        press = self.store.get(pid)
+        if not press:
+            raise ValueError("no such press")
+        if press["state"] != self.REVIEW_STATE:
+            raise ValueError("press is %r, not awaiting review" % press["state"])
+        with self._queue_lock:
+            self.store.update(pid, state="queued",
+                              stage_note="Approved — waiting for the model")
+        self.start_next()
+        return self.store.get(pid)
 
     def spawn(self, pid, resume=False):
         """Start the worker. Replaced in tests, and by the gateway with a thread."""
@@ -315,12 +378,17 @@ class Press:
             if not waiting:
                 return None
             pid = waiting[0]["id"]
+            # A press that already has a plan is one that was reviewed and
+            # approved (or interrupted). Re-running from the top would discard
+            # the edits the human just made, which is the whole point of #22.
+            press = waiting[0]
+            resume = bool(press.get("plan") and press.get("tracks"))
             # Leave 'queued' here rather than waiting for the worker's first
             # write. Otherwise there is a window where the press has been handed
             # the machine but still reports as waiting, with no position — which
             # is exactly when a caller is polling hardest.
             self.store.update(pid, state="planning", stage_note="starting")
-            self.spawn(pid)
+            self.spawn(pid, resume=resume)
             return pid
 
     def finish(self, pid, state, **fields):
@@ -513,6 +581,18 @@ class Press:
                     density=LYRIC_DENSITY[self.lyric_density(t, req)]), 900) or "").strip()
                 t["state"] = "lyrics-done"
                 self.store.update(pid, tracks=json.dumps(tracks))
+
+        # 2a. Park for review, if asked. Between the two cheap stages that
+        # decide what the record will be and the expensive one that makes it —
+        # planning and lyrics are under a minute, the music is twenty. The slot
+        # is released here, so a press waiting on a human blocks nothing.
+        if self.wants_review(req) and not resume:
+            self.store.update(pid, state=self.REVIEW_STATE,
+                              stage_note="Waiting for review — check the plan and lyrics")
+            self.log("press %s parked for review" % pid)
+            self.finish(pid, self.REVIEW_STATE,
+                        stage_note="Waiting for review — check the plan and lyrics")
+            return
 
         # 3. All music, so the music model loads once.
         self.store.update(pid, state="music")

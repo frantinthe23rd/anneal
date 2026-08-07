@@ -882,7 +882,7 @@
           "press"
         ],
         "summary": "Start a press",
-        "description": "Start a record: plan, lyrics, music, cover, in that order so each heavy model loads exactly once.\n\n**At most one press runs at a time.** Press assumes it owns the model ordering for its whole run, so a second submission is *queued* rather than started or refused — refusing would lose the brief you just typed. A queued press comes back with `state: \"queued\"`, a 1-based `queue_position` and a rough `estimated_start_seconds`; poll `/v1/press?id=` and both appear there too until it starts.\n\nThe queue survives a restart. Anything waiting is still waiting, the press that was mid-run is marked `interrupted` and can be resumed, and the next one starts on its own.\n\n**The lead vocalist is pinned across the record.** The planner names the singer once and every track's music prompt carries it, because each track is a separate generation and a per-track style line describes genre and mood rather than who is singing. Without it a brief asking for a female lead returned male vocals on most tracks. This makes the *request* consistent; nothing in this path conditions on a speaker, so expect the same described singer rather than an identical voice.\n\n**Lyric density follows the genre.** An electronic record came back with full verse-chorus-verse on every track, because one lyric instruction was sent to every genre alike. Club music does not work that way — the vocal is a hook and a handful of lines. The planner is now asked how wordy each track should be, and where it does not answer, the density is derived from the track's style line and then the brief. Send `lyric_density` (`sparse` | `moderate` | `full`) to decide for the whole record yourself.",
+        "description": "Start a record: plan, lyrics, music, cover, in that order so each heavy model loads exactly once.\n\n**At most one press runs at a time.** Press assumes it owns the model ordering for its whole run, so a second submission is *queued* rather than started or refused — refusing would lose the brief you just typed. A queued press comes back with `state: \"queued\"`, a 1-based `queue_position` and a rough `estimated_start_seconds`; poll `/v1/press?id=` and both appear there too until it starts.\n\nThe queue survives a restart. Anything waiting is still waiting, the press that was mid-run is marked `interrupted` and can be resumed, and the next one starts on its own.\n\n**The lead vocalist is pinned across the record.** The planner names the singer once and every track's music prompt carries it, because each track is a separate generation and a per-track style line describes genre and mood rather than who is singing. Without it a brief asking for a female lead returned male vocals on most tracks. This makes the *request* consistent; nothing in this path conditions on a speaker, so expect the same described singer rather than an identical voice.\n\n**Lyric density follows the genre.** An electronic record came back with full verse-chorus-verse on every track, because one lyric instruction was sent to every genre alike. Club music does not work that way — the vocal is a hook and a handful of lines. The planner is now asked how wordy each track should be, and where it does not answer, the density is derived from the track's style line and then the brief. Send `lyric_density` (`sparse` | `moderate` | `full`) to decide for the whole record yourself.\n\n**Review before the expensive stage.** Send `review: true` and the press stops between lyrics and music — after the two cheap stages that decide what the record will be (under a minute) and before the one that makes it (twenty). The tracklist, the artist, the concept and every lyric can be edited, then it resumes. One-shot is still the default.",
         "requestBody": {
           "required": true,
           "content": {
@@ -943,6 +943,11 @@
                       "full"
                     ],
                     "description": "Override how wordy the lyrics are, for every track. Omit to let each track be judged from its own style — which is usually what you want on an album that mixes genres. `sparse` is a hook and two or three lines; `full` is verses that carry a story."
+                  },
+                  "review": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Stop after planning and lyrics and wait to be reviewed, instead of running straight through. The press parks in state `awaiting-review` and **releases the queue** while it waits, so a human taking their time blocks nothing. Amend and continue with POST /v1/press/review."
                   }
                 }
               },
@@ -1117,6 +1122,84 @@
           },
           "409": {
             "description": "Already running"
+          }
+        }
+      }
+    },
+    "/v1/press/review": {
+      "post": {
+        "tags": [
+          "press"
+        ],
+        "summary": "Amend and/or approve a press waiting for review",
+        "description": "For a press in state `awaiting-review`. Amendments are **patches**: fields you do not send are left alone, so changing a title cannot blank the `voice` that pins the singer across the record. A track is matched on `n`; an unrecognised number is ignored rather than appended, because a typo should not add a track the music stage then records.\n\nSend `approve: true` to continue. Amend and approve can be the same call — which is what pressing \"looks good\" after an edit actually is.\n\nApproving puts the press back in the **queue** rather than straight into running: it gave up the heavy slot when it parked and something else may hold it now. It resumes into the music stage with the edits, and does not re-plan.\n\nAnything not awaiting review — already recording, finished, or never paused — is a 409.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "The press id."
+                  },
+                  "plan": {
+                    "type": "object",
+                    "description": "Patch for the album plan — any of title, artist, concept, voice, cover_art."
+                  },
+                  "tracks": {
+                    "type": "array",
+                    "description": "Per-track patches, each keyed by `n`. Any of title, theme, style, lyrics.",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "n": {
+                          "type": "integer"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "theme": {
+                          "type": "string"
+                        },
+                        "style": {
+                          "type": "string"
+                        },
+                        "lyrics": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "approve": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Continue into the music stage. Omit to save edits and keep waiting."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The press record, as GET /v1/press?id= returns it."
+          },
+          "400": {
+            "description": "No id, or plan/tracks of the wrong shape."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "No such press."
+          },
+          "409": {
+            "description": "The press is not awaiting review."
           }
         }
       }

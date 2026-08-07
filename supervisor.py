@@ -2096,6 +2096,41 @@ class Handler(BaseHTTPRequestHandler):
             self._make_sprites(payload, interpreter)
             return
 
+        if route == "/v1/press/review":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            payload, _ = self._body()
+            if payload is None:
+                return              # 413 already sent
+            pid = (payload.get("id") or "").strip()
+            if not pid:
+                self._send_json({"code": 400, "error": "'id' is required"}, 400)
+                return
+            if not PRESSES.get(pid):
+                self._send_json({"code": 404, "error": "no such press"}, 404)
+                return
+            tracks = payload.get("tracks")
+            if tracks is not None and not isinstance(tracks, list):
+                self._send_json({"code": 400, "error": "'tracks' must be a list"}, 400)
+                return
+            plan = payload.get("plan")
+            if plan is not None and not isinstance(plan, dict):
+                self._send_json({"code": 400, "error": "'plan' must be an object"}, 400)
+                return
+            try:
+                # Amend first, then approve, so one call can do both — which is
+                # what a reviewer pressing "looks good" after an edit does.
+                if plan or tracks:
+                    PRESS.amend(pid, plan, tracks)
+                record = PRESS.approve(pid) if payload.get("approve") else PRESSES.get(pid)
+            except ValueError as exc:
+                # Not awaiting review: it is running, finished, or never paused.
+                self._send_json({"code": 409, "error": str(exc)}, 409)
+                return
+            self._send_json({"data": record, "code": 200, "error": None})
+            return
+
         if route == "/v1/press":
             if not self._authorized():
                 self._send_json({"code": 401, "error": "unauthorized"}, 401)

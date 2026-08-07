@@ -287,6 +287,45 @@ to `full`: writing the most words possible is the failure being corrected. Send
 instead. As with the voice, this constrains the *request*; it does not guarantee
 the model obeys.
 
+**Review before the expensive stage.** Press is one-shot by default: a brief in,
+twenty minutes later a record out. If the tracklist is wrong or a lyric is weak
+the whole run is wasted, and on this hardware that is a real cost.
+
+Send `review: true` and it stops between lyrics and music — after the two cheap
+stages that decide what the record will be, before the one that makes it.
+
+```bash
+# 1. Submit, asking to review.
+curl -X POST "$ANNEAL_URL/v1/press" -H "Authorization: Bearer $ANNEAL_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"a winter album about leaving a coastal town","tracks":4,"review":true}'
+
+# 2. Poll until state is "awaiting-review", then read plan and tracks.
+curl "$ANNEAL_URL/v1/press?id=0f2c…" -H "Authorization: Bearer $ANNEAL_KEY"
+
+# 3. Fix what is wrong and continue. Amend and approve in one call.
+curl -X POST "$ANNEAL_URL/v1/press/review" -H "Authorization: Bearer $ANNEAL_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"id":"0f2c…",
+       "plan":{"artist":"The Salt Line"},
+       "tracks":[{"n":3,"title":"Low Tide","lyrics":"[verse]\nBetter words here"}],
+       "approve":true}'
+```
+
+**Amendments are patches.** Fields you do not send are left alone — changing a
+title cannot blank the `voice` that pins the singer across the record. Tracks
+match on `n`, and an unrecognised number is ignored rather than appended: a typo
+should not add a track the music stage then records.
+
+**A press waiting for review releases the queue.** It holds no model and no
+slot, so someone taking an hour over the lyrics blocks nothing behind them. That
+also means approving puts it back in the *queue* rather than straight into
+running — something else may hold the slot by then. It resumes into the music
+stage with your edits and does not re-plan.
+
+Omit `approve` to save edits and keep waiting. Anything not awaiting review —
+already recording, finished, never paused — is a 409.
+
 **Downloading.** `GET /v1/press/download?id=…&format=mp3&bitrate=320k` returns
 the whole record as a zip: audio, cover and tracklist. Masters are FLAC, so a
 lossy format is transcoded from the original rather than from another lossy copy.
@@ -687,6 +726,7 @@ back rather than thrown away.
 | GET | `/v1/press?id=` | **no** | Poll a press, or list recent ones without `id` |
 | GET | `/v1/press/download?id=` | **no** | The whole record as a zip, transcoded on request |
 | POST | `/v1/press/resume` | in stages | Finish a press left `interrupted` by a restart |
+| POST | `/v1/press/review` | **no** | Amend and/or approve a press paused for review |
 | POST | `/v1/press/cancel` | **no** | Stop a press deliberately; keeps finished tracks |
 | DELETE | `/v1/press?id=` | **no** | Remove a record; `&files=1` takes its audio too |
 | GET | `/v1/outputs` | **no** | The library, filterable by `kind` |
