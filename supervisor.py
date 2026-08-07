@@ -998,6 +998,79 @@ def sheet_prompt(subject, frames=4, style="flat pixel art", poses=None):
             % (subject.strip(), int(frames), plan, style.strip()))
 
 
+# How a sprite set is made. Two methods, and the licence is a row attribute
+# because one of them is not the licence everything else here uses.
+#
+#   sheet   — one schnell generation containing every pose, then cut. Free,
+#             Apache-2.0, already installed. Keeps the character identical and
+#             produces very little motion; naming poses moves it at the cost of
+#             design drift. Both measured.
+#   kontext — one base sprite, then one *directed edit* per pose against it.
+#             Identity comes from the reference image and the pose is an
+#             instruction, so the two stop fighting. Costs a 9.6 GB download and
+#             a non-commercial licence.
+SPRITE_METHODS = {
+    "sheet": {
+        "licence": "Apache-2.0 (FLUX.1-schnell)",
+        "needs_model": False,
+        "label": "One generation, cut into frames",
+    },
+    "kontext": {
+        "licence": "FLUX.1 [dev] Non-Commercial License — the model may not be "
+                   "used commercially without a licence from Black Forest Labs. "
+                   "Outputs are your own.",
+        "needs_model": True,
+        "label": "One base sprite, then a directed edit per pose",
+    },
+}
+DEFAULT_SPRITE_METHOD = os.environ.get("ANNEAL_SPRITE_METHOD", "sheet")
+KONTEXT_MODEL = os.environ.get(
+    "ANNEAL_KONTEXT_MODEL", "akx/FLUX.1-Kontext-dev-mflux-4bit")
+
+
+def kontext_prompt(pose):
+    """Edit one sprite into one pose, changing nothing else.
+
+    Everything except the pose is spelled out as unchanged, because Kontext
+    edits what you mention and drifts on what you do not — and a sprite whose
+    palette shifts between frames is the failure the sheet method already has.
+    """
+    return ("change only the pose: the same character, now %s. "
+            "Identical character design, colours, proportions, outfit and art "
+            "style. Keep the plain flat white background with no scenery, and "
+            "keep the character fully in frame." % pose.strip())
+
+
+def sprite_method_problem(method, model_path=None):
+    """Why this host cannot use this method, or None."""
+    spec = SPRITE_METHODS.get(method)
+    if not spec:
+        return "unknown method %r" % method
+    if not spec.get("needs_model"):
+        return None
+    try:
+        from huggingface_hub import snapshot_download  # noqa: F401
+    except ImportError:
+        pass
+    path = model_path or _kontext_local_path()
+    if not path or not os.path.isdir(path):
+        return ("the kontext model is not installed (~9.6 GB, and a "
+                "non-commercial licence). See 'Sprite animation' in README.md.")
+    return None
+
+
+def _kontext_local_path():
+    """Where the converted Kontext weights live, without reaching the network."""
+    root = os.environ.get("HF_HOME", os.path.join(AIMUSIC_ROOT, "hf-cache"))
+    base = os.path.join(root, "hub", "models--" + KONTEXT_MODEL.replace("/", "--"),
+                        "snapshots")
+    if not os.path.isdir(base):
+        return None
+    for name in sorted(os.listdir(base)):
+        return os.path.join(base, name)
+    return None
+
+
 def sprite_limits(payload):
     """Reject what cannot work, before spending minutes on the image model."""
     if not (payload.get("prompt") or "").strip():
@@ -1015,6 +1088,15 @@ def sprite_limits(payload):
             return "'poses' must be a list of strings, one per frame"
         if len(poses) > MAX_SPRITE_FRAMES:
             return "'poses' cannot be longer than %d" % MAX_SPRITE_FRAMES
+    method = payload.get("method") or DEFAULT_SPRITE_METHOD
+    if method not in SPRITE_METHODS:
+        return ("unknown 'method' %r — one of: %s"
+                % (method, ", ".join(SPRITE_METHODS)))
+    if method == "kontext" and not [p for p in (poses or []) if p.strip()]:
+        # Without an instruction per frame there is nothing to edit towards,
+        # and falling back to a frame count would produce N identical copies.
+        return ("'poses' is required for method 'kontext' — each pose is the "
+                "instruction for one frame")
     return None
 
 
@@ -2081,6 +2163,25 @@ class Handler(BaseHTTPRequestHandler):
             problem = sprite_limits(payload)
             if problem:
                 self._send_json({"code": 400, "error": problem}, 400)
+                return
+            method = payload.get("method") or DEFAULT_SPRITE_METHOD
+            problem = sprite_method_problem(method)
+            if problem:
+                self._send_json({"code": 503, "error": problem,
+                                 "method": method,
+                                 "licence": SPRITE_METHODS[method]["licence"]}, 503)
+                return
+            if method == "kontext":
+                # The weights are here but the edit path is not wired yet.
+                # Refusing plainly beats accepting and quietly doing something
+                # else — three endpoints have shipped from this repo doing
+                # something other than what they claimed.
+                self._send_json({
+                    "code": 501,
+                    "error": "method 'kontext' is not wired up yet — the image "
+                             "backend needs an edit endpoint first. Use the "
+                             "default 'sheet' method.",
+                }, 501)
                 return
             interpreter = sprite_python()
             if not interpreter:
