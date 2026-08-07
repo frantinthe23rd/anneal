@@ -9,7 +9,7 @@ and release the memory when idle.
 | Service | Model | Shape | Typical time |
 | --- | --- | --- | --- |
 | Music | ACE-Step 1.5 | async: submit → poll → download | 1.5–3 min |
-| Speech | Kokoro-82M | synchronous, returns bytes | 1–2 s |
+| Speech | Kokoro-82M, or Qwen3-TTS CustomVoice for directed delivery | synchronous, returns bytes | 1–2 s, or a few |
 | Image | FLUX.1-schnell 4-bit | synchronous, returns bytes | ~2 min |
 | Text | Gemma 4 E4B 4-bit | synchronous or streamed | seconds |
 | **Press** | all four, in one call | async: submit → poll → download zip | 4 min – 1 hour |
@@ -486,6 +486,48 @@ scale linearly — chunk anything book-length and concatenate client-side.
 
 This is the OpenAI `/v1/audio/speech` shape, so most OpenAI TTS client code
 works by changing the base URL, key, and voice name.
+
+### Two speech models, chosen by the voice
+
+There is no model parameter. The two voice sets do not overlap, so naming a
+voice picks the model — and an existing caller keeps working untouched.
+
+| | voices | size | per line | direction |
+| --- | --- | --- | --- | --- |
+| **Kokoro** (default) | 28, `af_*` `am_*` `bf_*` `bm_*` | 350 MB | 1–2 s | none |
+| **Qwen3-TTS CustomVoice** | `serena` `vivian` `uncle_fu` `ryan` `aiden` `ono_anna` `sohee` `eric` `dylan` | 2.3 GB | a few seconds | `instruct` |
+
+```bash
+curl -X POST "$ANNEAL_URL/v1/audio/speech" \
+  -H "Authorization: Bearer $ANNEAL_KEY" -H 'Content-Type: application/json' \
+  -d '{"input":"Get back! The whole tunnel is coming down on top of us!",
+       "voice":"ryan",
+       "instruct":"Shouting a desperate warning, panicked and breathless."}' \
+  --output line.wav
+```
+
+**`instruct` directs the performance, not the person.** The speaker is fixed by
+`voice`, so the same character can be panicked in one line and quietly furious
+in the next. Measured on one voice across three directions: RMS 0.080 panicked,
+0.054 calm, **0.021** for "quietly furious" — it goes *quieter* for quiet fury
+rather than simply adding energy.
+
+**Sending `instruct` with a Kokoro voice is a 400, deliberately.** Kokoro has no
+expressive control at all — verified against the installed package, its
+`generate()` takes text, voice, speed and a language code and nothing else. A
+caller who sent a direction and got flat delivery would have no way to tell
+whether the model tried and failed or the field was dropped, so the error says
+so and names the voices that can.
+
+**Why not a written voice description.** The VoiceDesign variant of the same
+family takes a description instead of a speaker name, which sounds better until
+you use it: it designs a fresh voice on every call, so a character comes back as
+a different person on the next line. A same-seed checksum test said it was
+stable — it was, but only for identical text, which is not the case that
+matters. Identity and performance have to be separate knobs.
+
+`GET /v1/voices` returns every voice with its `backend` and `supports_instruct`.
+Build the control from that rather than a hardcoded list.
 
 ## 6b. Images
 

@@ -34,6 +34,7 @@ it uses are all served from `assets/`.
 | --- | --- | --- | --- |
 | Music | [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) | MIT | Songs with vocals, instrumentals, covers, continuation — up to 10 min. Two quality tiers. |
 | Speech | [Kokoro-82M](https://huggingface.co/prince-canuma/Kokoro-82M) via [mlx-audio](https://github.com/Blaizzy/mlx-audio) | Apache-2.0 | 28 voices, en/uk |
+| Speech, directed | [Qwen3-TTS CustomVoice](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice) 4-bit via mlx-audio | Apache-2.0 | 9 named voices that take a written performance direction |
 | Image | FLUX.1-schnell 4-bit via [mflux](https://github.com/filipstrand/mflux) | Apache-2.0 | Up to ~1536px, plus variations of an earlier image |
 | Text | Gemma 4 e4b 4-bit via [mlx-lm](https://github.com/ml-explore/mlx-lm) | Gemma Terms of Use | Chat completions, streaming |
 
@@ -78,6 +79,15 @@ near-identical, so passing `poses` (`["idle", "crouched to jump", "mid-air",
 "landing splat"]`) is what produces real animation, at the cost of more design
 drift between frames. That trade-off is the temporal-coherence problem video
 models exist to solve, met halfway. See [INTEGRATION.md](INTEGRATION.md#6c-sprites-an-animation-set-that-stays-the-same-character).
+
+**Speech comes in two flavours, chosen by the voice you name.** Kokoro is the
+default — 350 MB, a second or two, 28 voices, and no expressive control at all;
+that is not an oversight in the wrapper, it is the whole of what the model
+exposes. The nine Qwen3-TTS CustomVoice speakers take an `instruct` describing
+the performance — "panicked and breathless", "quietly furious" — with the
+speaker held fixed, so a character can carry a scene. Sending a direction to a
+Kokoro voice is a 400 rather than a silent no-op, because flat delivery is
+indistinguishable from a model that tried and failed.
 
 **Using it by hand?** Open the web UI at **`/`** — prompt window, output view,
 and a forge strip showing which models are hot.
@@ -472,6 +482,7 @@ Useful knobs:
 | `SUPERVISOR_PORT` | `8001` | Public port |
 | `ACESTEP_LM_MODEL_PATH` | `acestep-5Hz-lm-0.6B` | Prompt/lyric planning LM |
 | `ANNEAL_MIN_FREE_MB` | `1200` | Refuse to load a heavy model below this much free RAM |
+| `SPEECH_QWEN_MODEL` | `mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-4bit` | The directed-speech model, loaded only when one of its voices is asked for |
 | `ANNEAL_SPRITE_PYTHON` | `$AIMUSIC_ROOT/tools-venv/bin/python` | Interpreter used to cut and matte sprite sheets. Needs rembg, so it is deliberately not the pinned environment that serves the models |
 | `UV_BIN`, `TS_BIN`, `TAILNET_HOST` | auto-detected | Override only if detection picks wrong |
 

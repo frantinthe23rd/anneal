@@ -274,7 +274,7 @@
           "speech"
         ],
         "summary": "Synthesize speech",
-        "description": "Synchronous — returns audio bytes directly. About 1–2 seconds per sentence once warm.\n\nKokoro is small enough that it can stay loaded alongside a heavy model.",
+        "description": "Synchronous — returns audio bytes directly. About 1–2 seconds per sentence once warm.\n\nKokoro is small enough that it can stay loaded alongside a heavy model.\n\n**Two models, chosen by the voice you name.** The voice sets are separate, so there is no model parameter and nothing to keep in sync.\n\n- **Kokoro** (28 voices, `af_*`/`am_*`/`bf_*`/`bm_*`) — 350 MB, a second or two, and no expressive control whatsoever. Its generate() takes text, voice, speed and a language code; all of them were already exposed. The default, and the right choice for narration and bulk.\n- **Qwen3-TTS CustomVoice** (`serena`, `vivian`, `uncle_fu`, `ryan`, `aiden`, `ono_anna`, `sohee`, `eric`, `dylan`) — 2.3 GB, a few seconds, and takes an `instruct` describing the performance.\n\n`instruct` is a written direction — \"panicked and breathless\", \"quietly furious, through gritted teeth\". The speaker is fixed by `voice`; only the delivery changes. **Sending it with a Kokoro voice is a 400, not a silent no-op**: flat delivery is indistinguishable from a model that tried and failed, so the error names the voices that can do it.\n\nIdentity and performance are separate on purpose. The VoiceDesign variant of the same family, which builds a voice from a written description instead, was tried and rejected — it designs a fresh voice per call, so a character came back as a different person on the next line of dialogue. A same-seed checksum test said it was stable; it was, but only for identical text.\n\n`GET /v1/voices` reports every voice with its `backend` and `supports_instruct`, and answers from a registry without loading anything.",
         "requestBody": {
           "required": true,
           "content": {
@@ -310,7 +310,7 @@
             }
           },
           "400": {
-            "description": "Missing input, unknown voice, or unsupported format"
+            "description": "No input, an unknown voice, an unsupported format, or 'instruct' sent to a voice that has no expressive control."
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -324,7 +324,7 @@
           "speech"
         ],
         "summary": "List available voices",
-        "description": "Voice ids encode language and gender: `a`=American, `b`=British; `f`=female, `m`=male.",
+        "description": "Every voice, with the model behind it and whether it accepts a written direction. Answered from a registry — it loads no weights, which matters now that one of the two models is 2.3 GB.",
         "responses": {
           "200": {
             "description": "Voice ids",
@@ -332,16 +332,22 @@
               "application/json": {
                 "example": {
                   "data": {
+                    "default": "af_heart",
                     "voices": [
-                      "af_heart",
-                      "af_bella",
-                      "am_michael",
-                      "bf_emma",
-                      "bm_george"
-                    ],
-                    "default": "af_heart"
+                      {
+                        "name": "af_heart",
+                        "backend": "kokoro",
+                        "supports_instruct": false
+                      },
+                      {
+                        "name": "ryan",
+                        "backend": "qwen",
+                        "supports_instruct": true
+                      }
+                    ]
                   },
-                  "code": 200
+                  "code": 200,
+                  "error": null
                 }
               }
             }

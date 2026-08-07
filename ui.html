@@ -1065,6 +1065,13 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
               <input type="number" id="sSpeed" value="1.0" min="0.5" max="2" step="0.05">
             </div>
           </div>
+
+          <div class="field" id="sDirectWrap">
+            <label class="f" for="sInstruct">Direction</label>
+            <input type="text" id="sInstruct"
+                   placeholder="Shouting a desperate warning, panicked and breathless.">
+            <div class="hint" id="sDirectHint"></div>
+          </div>
           <div class="hint">Voice prefixes: <b>a</b> American, <b>b</b> British · <b>f</b> female, <b>m</b> male.</div>
         </section>
 
@@ -2144,17 +2151,22 @@ async function runMusic() {
 async function runSpeech() {
   const text = $("sText").value.trim();
   if (!text) { setStatus("Enter some text first.", "warn"); return; }
-  setStatus("Synthesising…", "", { bar: true });
+  const instruct = $("sInstruct").disabled ? "" : $("sInstruct").value.trim();
+  setStatus(instruct ? "Synthesising — directed voices take a few seconds…" : "Synthesising…",
+            "", { bar: true });
 
   const blob = await api("/v1/audio/speech", {
     method: "POST", raw: true,
-    body: { input: text, voice: $("sVoice").value, speed: Number($("sSpeed").value) || 1, response_format: "mp3" },
+    body: Object.assign(
+      { input: text, voice: $("sVoice").value,
+        speed: Number($("sSpeed").value) || 1, response_format: "mp3" },
+      instruct ? { instruct } : {}),
   });
   const url = URL.createObjectURL(blob); blobUrls.push(url);
   addResult({
     kind: "speech", prompt: text.length > 160 ? text.slice(0, 160) + "…" : text,
     audio: url, filename: slug(text) + ".mp3",
-    meta: $("sVoice").value, took: fmtElapsed(),
+    meta: $("sVoice").value + (instruct ? " · directed" : ""), took: fmtElapsed(),
   });
   hideStatus();
 }
@@ -3776,6 +3788,8 @@ $("btnKey").onclick = () => openGate();
 $("btnDocs").onclick = () => window.open("/docs", "_blank");
 
 /* ------------------------------------------------------------------- wiring */
+$("sVoice").addEventListener("change", syncDirection);
+
 document.querySelectorAll(".tab").forEach((tab) => {
   tab.onclick = () => {
     if (mode === "press" && tab.dataset.mode !== "press") stopAlbum();
@@ -3906,9 +3920,11 @@ document.addEventListener("keydown", (e) => {
 });
 
 /* -------------------------------------------------------------------- boot */
-/* Kokoro's voice list is fixed by the model, so ship it inline. Fetching
+/* Both voice lists are fixed by their models, so ship them inline. Fetching
    /v1/voices at boot would wake the speech backend on every page load, which
-   is exactly the behaviour the on-demand design exists to avoid. */
+   is exactly the behaviour the on-demand design exists to avoid — and it is
+   now a 2.3 GB load, not a 350 MB one. Reconciled against the server once
+   speech is already hot, which is free. */
 const VOICES = [
   "af_heart", "af_alloy", "af_aoede", "af_bella", "af_jessica", "af_kore",
   "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
@@ -3916,20 +3932,59 @@ const VOICES = [
   "am_onyx", "am_puck", "am_santa",
   "bf_alice", "bf_emma", "bf_isabella", "bf_lily",
   "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
+  // Qwen3-TTS CustomVoice — these are the ones that take a Direction.
+  "serena", "vivian", "uncle_fu", "ryan", "aiden", "ono_anna",
+  "sohee", "eric", "dylan",
 ];
 const DEFAULT_VOICE = "af_heart";
+// Voices that take a written direction. Seeded so the control is honest before
+// /v1/voices has been reached, then replaced by whatever the server reports —
+// the server is the source of truth about its own capabilities.
+let DIRECTED_VOICES = new Set(["serena", "vivian", "uncle_fu", "ryan", "aiden",
+                               "ono_anna", "sohee", "eric", "dylan"]);
 let voicesRefreshed = false;
 
+/* Accepts either the old flat list of names or the current list of
+   {name, backend, supports_instruct} objects, so a stale server does not
+   empty the control. */
 function fillVoices(list, def) {
   const sel = $("sVoice");
   const keep = sel.value;
   sel.textContent = "";
-  list.forEach((v) => {
-    const o = document.createElement("option");
-    o.value = v; o.textContent = v;
-    if (v === (keep || def)) o.selected = true;
-    sel.appendChild(o);
+  const rich = list.length && typeof list[0] === "object";
+  if (rich) DIRECTED_VOICES = new Set(list.filter((v) => v.supports_instruct).map((v) => v.name));
+
+  const groups = [["Plain — fast", (v) => !DIRECTED_VOICES.has(nameOf(v))],
+                  ["Directed — slower, takes a Direction", (v) => DIRECTED_VOICES.has(nameOf(v))]];
+  groups.forEach(([label, pick]) => {
+    const members = list.filter(pick);
+    if (!members.length) return;
+    const g = document.createElement("optgroup");
+    g.label = label;
+    members.forEach((v) => {
+      const name = nameOf(v);
+      const o = document.createElement("option");
+      o.value = name; o.textContent = name;
+      if (name === (keep || def)) o.selected = true;
+      g.appendChild(o);
+    });
+    sel.appendChild(g);
   });
+  syncDirection();
+}
+
+function nameOf(v) { return typeof v === "string" ? v : v.name; }
+
+/* Direction only exists for the voices that have it, and the server refuses it
+   for the rest rather than ignoring it — so the form says which is which
+   instead of letting someone type into a field that cannot work. */
+function syncDirection() {
+  const directed = DIRECTED_VOICES.has($("sVoice").value);
+  $("sInstruct").disabled = !directed;
+  if (!directed) $("sInstruct").value = "";
+  $("sDirectHint").textContent = directed
+    ? "How it should be performed — \"panicked and breathless\", \"quietly furious\". The voice stays the same; only the delivery changes."
+    : "This voice has no expressive control. Pick one from \u201cDirected\u201d to describe a performance.";
 }
 
 /* Only reconcile against the server once speech is already hot — free then. */
