@@ -16,6 +16,25 @@ than mocking them, with `SUPERVISOR_PORT` redirected to a closed port so a
 mistake cannot reach the real gateway, and a final assertion that no service
 epoch moved.
 
+## Pruning old output
+
+```bash
+tools/prune.py --older-than 90              # what would go
+tools/prune.py --older-than 90 --delete     # actually go
+```
+
+Nothing removes generated work automatically, and that is a decision rather than
+an omission: generation is not deterministic, so a deleted take cannot be
+regenerated and an automatic policy that removes the wrong one is unrecoverable.
+`/health` reports `storage` — bytes and file counts per kind, plus free space on
+the volume — so the problem is visible without anything acting on it.
+
+Two safeguards, both tested. It deletes nothing without `--delete`. And it will
+not orphan a record: Press stores its tracks and cover by path, so removing
+those by age alone leaves an album in the Library that cannot play — referenced
+files are skipped unless you pass `--include-pressed`, and the summary says how
+many were spared.
+
 ## Linting the UI
 
 ```bash

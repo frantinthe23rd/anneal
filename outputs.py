@@ -110,6 +110,58 @@ def adopt(kind, existing_path, meta):
     return existing_path
 
 
+# ------------------------------------------------------------------- disk
+# Retention is deliberately manual: generation is not deterministic, so a
+# deleted take cannot be regenerated, and an automatic policy that removes one
+# is unrecoverable. What is automated instead is *knowing* — the size is
+# reported so nobody discovers the problem by running out of disk.
+#
+# Cached, because /health is polled every few seconds by every open tab and
+# walking the tree that often would be silly.
+_USAGE_CACHE = {"at": 0.0, "value": None}
+_USAGE_TTL = 60.0
+
+
+def usage(now=None):
+    """Bytes and file counts per kind, plus free space on the volume."""
+    now = time.time() if now is None else now
+    cached = _USAGE_CACHE
+    if cached["value"] is not None and now - cached["at"] < _USAGE_TTL:
+        return cached["value"]
+
+    per = {}
+    total = 0
+    files = 0
+    for kind in KINDS:
+        d = os.path.join(root(), kind)
+        size = count = 0
+        try:
+            for name in os.listdir(d):
+                if name.endswith(SIDECAR_SUFFIX):
+                    continue          # metadata travels with the file, not counted as one
+                try:
+                    size += os.path.getsize(os.path.join(d, name))
+                    count += 1
+                except OSError:
+                    continue
+        except OSError:
+            pass
+        per[kind] = {"bytes": size, "files": count}
+        total += size
+        files += count
+
+    free = None
+    try:
+        st = os.statvfs(root())
+        free = st.f_bavail * st.f_frsize
+    except OSError:
+        pass
+
+    value = {"bytes": total, "files": files, "by_kind": per, "volume_free_bytes": free}
+    _USAGE_CACHE.update({"at": now, "value": value})
+    return value
+
+
 # ------------------------------------------------------------------ listing
 def _entry(path, kind):
     try:

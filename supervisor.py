@@ -1034,6 +1034,9 @@ class Handler(BaseHTTPRequestHandler):
             "supervisor": "ok",
             "services": {name: svc.status() for name, svc in SERVICE_OBJECTS.items()},
             "system": system_memory(),
+            # Nothing prunes outputs/ automatically — see tools/prune.py for
+            # why. Reporting the size is the half that can be automated safely.
+            "storage": outputs.usage(),
         }
 
     # -- local endpoints --------------------------------------------------
