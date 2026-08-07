@@ -2903,7 +2903,30 @@ function plainMath(src) {
    and inline code are untouched — a shell sample full of $VARIABLES is not
    maths and must not be treated as any. Only $$…$$, \[…\] and \(…\) are
    recognised; a single $ is far too common in prose and shell to claim. */
-const MATH_PATTERN = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)/;
+const MATH_PATTERN =
+  /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|\$([^$\n]+?)\$/;
+
+/* A lone $ is the delimiter the model actually reaches for — `$\text{H}_2\text{O}$`
+   turns up constantly — and it is also a shell variable, a price and a jQuery
+   call. So the delimiter alone does not earn the claim; the content has to look
+   like maths as well.
+
+   Two signals do nearly all the work. LaTeX never pads its delimiters, so
+   `$ x $` is prose about money and `$x$` might not be. And real inline maths
+   almost always carries a command or a script marker — \text, \frac, ^, _ —
+   whereas `$HOME`, `$5` and `$ANNEAL_KEY` carry none. Requiring both keeps
+   `echo $HOME $PATH` intact, since the span between those two dollars ends in a
+   space and holds no command. */
+function looksLikeMath(body, after) {
+  if (!body || /^\s|\s$/.test(body)) return false;   // LaTeX does not pad its delimiters
+  if (body.length > 200) return false;               // a runaway match, not an equation
+  // If the closing $ is itself the start of another word, it was never a
+  // closing delimiter: `ANNEAL_URL=$URL and ANNEAL_KEY=$KEY` spans two shell
+  // variables, and the underscores inside it look like subscripts.
+  if (after && /[\w$]/.test(after)) return false;
+  if (/[A-Z][A-Z0-9_]{2,}/.test(body)) return false;  // SCREAMING_SNAKE is an env var
+  return /\\[a-zA-Z]/.test(body) || /[\^_]/.test(body);
+}
 
 function renderMathIn(root) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
@@ -2918,9 +2941,18 @@ function renderMathIn(root) {
     const frag = document.createDocumentFragment();
     let rest = node.nodeValue, m;
     while ((m = rest.match(MATH_PATTERN))) {
+      // A single-$ candidate that does not look like maths is left alone: emit
+      // it verbatim and carry on scanning after it, rather than swallowing it.
+      if (m[4] !== undefined && !looksLikeMath(m[4], rest[m.index + m[0].length])) {
+        frag.appendChild(document.createTextNode(rest.slice(0, m.index + m[0].length)));
+        rest = rest.slice(m.index + m[0].length);
+        continue;
+      }
       if (m.index > 0) frag.appendChild(document.createTextNode(rest.slice(0, m.index)));
       const display = m[1] !== undefined || m[2] !== undefined;
-      const body = m[1] !== undefined ? m[1] : (m[2] !== undefined ? m[2] : m[3]);
+      const body = m[1] !== undefined ? m[1]
+        : m[2] !== undefined ? m[2]
+        : m[3] !== undefined ? m[3] : m[4];
       const span = el(display ? "div" : "span", display ? "math block" : "math");
       if (typeof katex !== "undefined") {
         try {
