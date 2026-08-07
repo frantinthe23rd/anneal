@@ -317,10 +317,23 @@ class TestMusicRequestDefaults(PressCase):
         self.assertEqual(self.music.calls[0]["quality"], "high")
         self.assertEqual(self.music.calls[0]["audio_format"], "mp3")
 
-    def test_the_music_prompt_is_the_tracks_style_not_the_brief(self):
+    def test_the_music_prompt_is_the_tracks_style_plus_the_records_voice(self):
+        """Deliberate change of behaviour, not a regression.
+
+        This asserted that the prompt was the track's style *alone*. That was
+        the bug: a brief asking for a British female lead produced male vocals
+        on three of four tracks, because style is defined as genre, instruments,
+        mood and tempo and never mentions a singer — so each track, being its
+        own generation, got whatever voice the model chose.
+        """
         self.run_press({"prompt": "a brief", "tracks": 3})
-        self.assertEqual([c["prompt"] for c in self.music.calls],
-                         ["post-punk", "shoegaze", "ambient"])
+        prompts = [c["prompt"] for c in self.music.calls]
+        for style, prompt in zip(["post-punk", "shoegaze", "ambient"], prompts):
+            self.assertTrue(prompt.startswith(style), prompt)
+        # Whatever the fake planner said about the voice, every track carries
+        # the same one — that is the property worth holding.
+        clauses = {p.split("Lead vocal:")[-1] for p in prompts if "Lead vocal:" in p}
+        self.assertLessEqual(len(clauses), 1, "the singer changed between tracks")
 
 
 class TestFailureHandling(PressCase):

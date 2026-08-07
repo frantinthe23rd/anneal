@@ -253,7 +253,17 @@ human-readable progress and `tracks[]` filling in as each one lands.
 | `duration` | `90` | Target seconds per track; the planner varies around it. |
 | `duration_min` / `duration_max` | 60% / 150% of `duration` | Bounds for that variation. |
 | `quality` | `draft` | `draft` or `high`, as for music. |
-| `instrumental` | `false` | Skips the lyric stage. |
+| `instrumental` | `false` | Skips the lyric stage, and no vocal clause is added. |
+
+**Say who is singing in the brief.** The planner names the lead vocalist once for
+the whole record and every track's music prompt carries it. That matters because
+each track is its own generation, and a per-track style line describes genre,
+instruments and mood rather than a performer — a brief asking for a British
+female lead previously came back with male vocals on three tracks of four.
+
+It makes the request consistent, not the performance: nothing in this path
+conditions on a speaker, so expect the same *described* singer rather than an
+identical voice across tracks.
 | `art` | `true` | Generate a cover. This is the only stage needing the image model. |
 | `art_size` | `1024x1024` | Cover dimensions. |
 | `audio_format` | `flac` | Master format. Downloads transcode from it. |

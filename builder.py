@@ -59,11 +59,12 @@ Reply with ONLY a JSON object, no commentary, in exactly this shape:
 {{
   "title": "album or song title",
   "artist": "invented band or artist name that suits the music",
+  "voice": "the lead vocalist in a few words — gender, accent, timbre. The SAME performer sings every track. Say 'instrumental' only if the brief asks for no vocals",
   "concept": "one sentence on the through-line",
   "cover_art": "a vivid visual description for the cover, no text or lettering in the image",
   "tracks": [
     {{"title": "track title", "theme": "what this song is about, one line",
-      "style": "genre, instruments, mood, tempo feel",
+      "style": "genre, instruments, mood, tempo feel. Do NOT describe the singer here — the voice field covers that for every track",
       "duration_seconds": 90}}
   ]
 }}
@@ -324,6 +325,35 @@ class Press:
             self.log("marked %d interrupted press(es) from a previous run" % len(stuck))
         return len(stuck)
 
+    @staticmethod
+    def track_prompt(plan, track, request):
+        """The style for one track, with the record's voice pinned to it.
+
+        A brief like "British female lead vocal" shapes the plan and then used
+        to vanish: the music prompt was the planner's per-track `style` alone,
+        which is defined as genre, instruments, mood and tempo and says nothing
+        about who is singing. Each track is a separate generation, so with no
+        voice in the prompt the model chose one per track — three of four came
+        back male on a brief that asked for female.
+
+        The voice is therefore appended to every track rather than trusted to
+        appear in each style line, and the brief itself is the fallback when the
+        planner omits it. This makes the request consistent; it cannot make the
+        performance identical, because nothing in this path conditions on a
+        speaker. Expect the same *described* singer, not the same voice.
+        """
+        style = (track.get("style") or request.get("prompt") or "").strip()
+        voice = (plan.get("voice") or "").strip()
+        if not voice:
+            # The planner did not answer, so carry the brief through verbatim
+            # rather than dropping the only statement of intent there is.
+            voice = (request.get("prompt") or "").strip()
+        if not voice or voice.lower().startswith("instrumental"):
+            return style
+        if request.get("instrumental"):
+            return style
+        return "%s. Lead vocal: %s" % (style.rstrip(". "), voice)
+
     def run(self, pid, resume=False):
         try:
             self._run(pid, resume=resume)
@@ -422,7 +452,7 @@ class Press:
             self.store.update(pid, stage_note="Recording %d/%d — %s"
                               % (i + 1, len(tracks), t["title"]))
             payload = {
-                "prompt": t["style"],
+                "prompt": self.track_prompt(plan, t, req),
                 "lyrics": t["lyrics"] or "[instrumental]",
                 "audio_duration": t["duration"],
                 "batch_size": 1,
@@ -488,7 +518,7 @@ class Press:
                               % (i + 1, len(tracks), t["title"]))
             try:
                 takes = self.call_music({
-                    "prompt": t.get("style", req["prompt"]),
+                    "prompt": self.track_prompt(plan, t, req),
                     "lyrics": t.get("lyrics") or "[instrumental]",
                     "audio_duration": t.get("duration", req.get("duration", 90)),
                     "batch_size": 1, "quality": req.get("quality", "draft"),

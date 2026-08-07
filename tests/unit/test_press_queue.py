@@ -135,6 +135,43 @@ class TestRestart(QueueCase):
         self.press.start_next()
         self.assertEqual(self.started, [second])
 
+class TestVoiceConsistency(QueueCase):
+    """One record, one singer (#28 follow-up).
+
+    A brief asking for a British female lead came back with male vocals on
+    three of four tracks. The music prompt was the planner's per-track `style`
+    alone, which is defined as genre, instruments, mood and tempo — it says
+    nothing about who is singing, and each track is a separate generation, so
+    the model chose a voice per track.
+    """
+
+    def prompt(self, plan, track, req):
+        return builder.Press.track_prompt(plan, track, req)
+
+    def test_the_voice_is_appended_to_every_track(self):
+        plan = {"voice": "a British woman, warm alto"}
+        for style in ("melancholy folk", "uptempo indie rock", "sparse piano ballad"):
+            out = self.prompt(plan, {"style": style}, {"prompt": "a brief"})
+            self.assertIn("a British woman, warm alto", out, style)
+            self.assertIn(style, out)
+
+    def test_the_brief_carries_through_when_the_planner_omits_a_voice(self):
+        """The 0.6B planner does not always answer the schema. Dropping the
+        only statement of intent there is would be the worst response to that."""
+        out = self.prompt({}, {"style": "folk"}, {"prompt": "british female led vocals"})
+        self.assertIn("british female led vocals", out)
+
+    def test_an_instrumental_record_gets_no_vocal_clause(self):
+        self.assertNotIn("Lead vocal",
+                         self.prompt({"voice": "instrumental"}, {"style": "ambient"},
+                                     {"prompt": "x"}))
+        self.assertNotIn("Lead vocal",
+                         self.prompt({"voice": "a tenor"}, {"style": "ambient"},
+                                     {"prompt": "x", "instrumental": True}))
+
+    def test_a_track_without_a_style_falls_back_to_the_brief(self):
+        out = self.prompt({"voice": "a tenor"}, {}, {"prompt": "a winter album"})
+        self.assertIn("a winter album", out)
 
 if __name__ == "__main__":
     unittest.main()
