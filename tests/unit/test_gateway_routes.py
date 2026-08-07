@@ -98,8 +98,15 @@ class TestEnvelope(GatewayCase):
         self.assertIn("system", data)
 
     def test_supervisor_status_matches_health(self):
+        """Both are _status_payload(), so they cannot diverge.
+
+        This used to assert a frozen list of keys, which made it a test of what
+        the payload was on the day it was written rather than of the property
+        its name claims — adding `storage` to health broke it while the two
+        endpoints still agreed perfectly.
+        """
         self.assertEqual(sorted(self.assert_ok_envelope("/supervisor/status")),
-                         ["services", "supervisor", "system"])
+                         sorted(self.assert_ok_envelope("/health")))
 
     def test_music_tiers(self):
         data = self.assert_ok_envelope("/v1/music/tiers")
