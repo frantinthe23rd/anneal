@@ -191,7 +191,18 @@ that.
 - Results stack newest-first with inline playback or preview and a download link.
 - **Chat** is a plain conversation with the local Gemma model, streamed. Reasoning
   is off by default — Gemma 4 will otherwise spend a short budget thinking before
-  answering — with a checkbox to show it.
+  answering — with a checkbox to show it. Each reply has a **Copy** button:
+  chat is the one mode whose output is text you take somewhere else, and it
+  copies the reply without the reasoning.
+
+  The transcript **survives a reload**, kept in `localStorage` alongside the
+  preferences and the key. The server still holds no conversation state — that
+  property is unchanged — but the browser now does, which on a shared machine
+  is worth knowing. It is bounded (roughly 500 KB, oldest turns dropped first,
+  reasoning shed before whole messages) because the quota is ~5 MB and
+  exceeding it throws. "New conversation" asks before discarding, and Settings'
+  **Forget key, preferences and chat history** clears it. One conversation, not
+  a list — see [#16](https://github.com/frantinthe23rd/anneal/issues/16).
 - **Write for me** in the lyrics block drafts lyrics from the style prompt,
   streaming into the box. Click again to stop; your text is restored on failure.
 - **Library** switches to everything the server has kept — filter by kind, play

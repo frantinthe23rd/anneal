@@ -284,8 +284,16 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .item.failed { border-color: rgba(224,87,74,.4); }
 .msg { background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px; padding: 12px 14px; }
 .msg.user { background: rgba(255,95,31,.06); border-color: rgba(255,95,31,.22); }
-.msg .who { display: block; color: var(--muted); font-size: 10.5px; letter-spacing: .1em;
-  text-transform: uppercase; margin-bottom: 6px; }
+.msg .msghead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; min-height: 18px; }
+.msg .who { color: var(--muted); font-size: 10.5px; letter-spacing: .1em;
+  text-transform: uppercase; }
+/* Present but recessive: the reply is what you are reading, not the button.
+   Full contrast on hover or keyboard focus, and always visible on touch, where
+   there is no hover to reveal it. */
+.msg .iconbtn.tiny { margin-left: auto; padding: 2px 8px; font-size: 11px; line-height: 1.6;
+  opacity: .35; transition: opacity var(--t-fast) var(--ease); }
+.msg:hover .iconbtn.tiny, .msg .iconbtn.tiny:focus-visible { opacity: 1; }
+@media (hover: none) { .msg .iconbtn.tiny { opacity: .8; } }
 .msg .body { white-space: pre-wrap; word-break: break-word; font-size: 14px; }
 .msg .think { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line);
   color: var(--faint); font-size: 12.5px; white-space: pre-wrap; }
@@ -1643,9 +1651,86 @@ async function writeLyrics() {
 
 /* ----------------------------------------------------------------- chat
    A conversation with the same local model the lyric writer uses. Streams, and
-   keeps history client-side so the server stays stateless. */
+   keeps history client-side so the server stays stateless.
+
+   The transcript persists to localStorage. That does not make the server
+   stateful — it stays the one mode that keeps nothing — but it does mean a
+   reload no longer silently destroys the only copy of a conversation. It is
+   also, deliberately, a browser-visible copy: "Forget everything" in Settings
+   clears it along with the key and the preferences.
+
+   Bounded, because localStorage has a ~5 MB quota and setItem *throws* when it
+   is exceeded, which would otherwise take out whatever ran next. Oldest turns
+   go first, and reasoning is dropped before messages are, since it is the
+   bulkiest part and the least worth keeping. */
+const CHAT_KEY = "anneal.chat";
+const CHAT_MAX_BYTES = 512 * 1024;    // a tenth of the quota; a long day of chat
+const CHAT_MAX_MESSAGES = 200;
 let chatLog = [];          // {role, content, reasoning}
 let chatting = null;
+
+function loadChat() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(CHAT_KEY) || "[]");
+    if (Array.isArray(saved)) {
+      // Anything mid-flight when the tab closed is not coming back.
+      chatLog = saved.filter((m) => m && m.role && !m.pending);
+    }
+  } catch (_) { chatLog = []; }
+}
+
+function saveChat() {
+  // Never persist the in-flight placeholder: on reload it would render as a
+  // reply that is permanently "…".
+  let keep = chatLog.filter((m) => !m.pending);
+  if (keep.length > CHAT_MAX_MESSAGES) keep = keep.slice(-CHAT_MAX_MESSAGES);
+  let body = JSON.stringify(keep);
+  // Shed reasoning first — bulky, and nobody reloads a page to re-read it.
+  if (body.length > CHAT_MAX_BYTES) {
+    keep = keep.map((m) => (m.reasoning ? Object.assign({}, m, { reasoning: "" }) : m));
+    body = JSON.stringify(keep);
+  }
+  // Then drop whole turns from the front until it fits.
+  while (keep.length > 2 && body.length > CHAT_MAX_BYTES) {
+    keep = keep.slice(2);
+    body = JSON.stringify(keep);
+  }
+  try {
+    localStorage.setItem(CHAT_KEY, body);
+  } catch (_) {
+    // Quota exceeded despite the trimming, or storage disabled entirely
+    // (private browsing). Losing the saved copy must not break the live one.
+    try { localStorage.removeItem(CHAT_KEY); } catch (_) { /* nothing to do */ }
+  }
+}
+
+function clearChat() {
+  chatLog = [];
+  try { localStorage.removeItem(CHAT_KEY); } catch (_) { /* already gone */ }
+  renderChat();
+}
+
+async function copyText(text, btn) {
+  const done = (ok) => {
+    const was = btn.textContent;
+    btn.textContent = ok ? "Copied" : "Press ⌘C";
+    setTimeout(() => { btn.textContent = was; }, 1400);
+  };
+  try {
+    await navigator.clipboard.writeText(text);
+    done(true);
+  } catch (_) {
+    // clipboard.writeText needs a secure context. The tailnet address is
+    // HTTPS, but http://127.0.0.1:8001 is not, so select the text instead of
+    // failing silently and let the keyboard finish the job.
+    const range = document.createRange();
+    range.selectNodeContents(btn.closest(".msg").querySelector(".body"));
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    done(false);
+  }
+}
 
 function renderChat() {
   const box = $("chatitems");
@@ -1657,7 +1742,20 @@ function renderChat() {
   }
   chatLog.forEach((m) => {
     const wrap = el("div", "msg" + (m.role === "user" ? " user" : ""));
-    wrap.appendChild(el("span", "who", m.role === "user" ? "you" : "gemma"));
+    const head = el("div", "msghead");
+    head.appendChild(el("span", "who", m.role === "user" ? "you" : "gemma"));
+    // Chat is the one mode whose output is text you take somewhere else;
+    // everything else has a download link. Copying the message rather than
+    // the selection also leaves the reasoning block behind, which is what you
+    // want — it is working out, not answer.
+    if (m.role === "assistant" && m.content && !m.pending) {
+      const copy = el("button", "iconbtn tiny", "Copy");
+      copy.type = "button";
+      copy.title = "Copy this reply";
+      copy.onclick = () => copyText(m.content, copy);
+      head.appendChild(copy);
+    }
+    wrap.appendChild(head);
     wrap.appendChild(el("div", "body", m.content || (m.pending ? "…" : "")));
     if (m.reasoning) {
       const t = el("div", "think", m.reasoning);
@@ -1678,6 +1776,9 @@ async function runChat() {
   chatLog.push(reply);
   $("cInput").value = "";
   renderChat();
+  // Save the question now: if the reply never arrives, or the tab dies during
+  // a long generation, what was asked is still worth keeping.
+  saveChat();
 
   chatting = new AbortController();
   renderForge();
@@ -1725,10 +1826,12 @@ async function runChat() {
       reply.content = "(stopped while still reasoning — try again, or turn reasoning off)";
     }
     renderChat();
+    saveChat();          // once, at the end — not per streamed chunk
   } catch (e) {
     reply.pending = false;
     reply.content = e.name === "AbortError" ? "(stopped)" : "Failed: " + e.message;
     renderChat();
+    saveChat();
   } finally {
     chatting = null;
     $("go").textContent = mode === "chat" ? "Send" : "Forge";
@@ -1928,9 +2031,12 @@ async function showSettings() {
   keyRow.appendChild(el("div", "hint",
     "Only needed off the tailnet. Over Tailscale you are identified automatically."));
   g3.appendChild(keyRow);
-  const wipe = el("button", "iconbtn", "Forget key and preferences");
+  const wipe = el("button", "iconbtn", "Forget key, preferences and chat history");
   wipe.onclick = () => {
+    // The chat transcript is now the most personal thing stored here, so it is
+    // the one thing this must not leave behind on a shared machine.
     localStorage.removeItem(KEY_STORE); localStorage.removeItem(PREFS_KEY);
+    localStorage.removeItem(CHAT_KEY);
     location.reload();
   };
   g3.appendChild(wipe);
@@ -2001,7 +2107,12 @@ $("heroLib").onclick = (e) => { e.preventDefault(); enterApp("music"); setLibrar
 $("heroSet").onclick = (e) => { e.preventDefault(); showSettings(); };
 $("brandHome").onclick = showHero;
 $("btnSettings").onclick = showSettings;
-$("cClear").onclick = () => { chatLog = []; renderChat(); };
+$("cClear").onclick = () => {
+  // Discarding was free when the transcript died on reload anyway. Now that it
+  // survives, throwing it away silently is the worse of the two behaviours.
+  if (chatLog.length && !confirm("Discard this conversation? It will not be recoverable.")) return;
+  clearChat();
+};
 $("cInput") && $("cInput").addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); runChat(); }
 });
@@ -2110,6 +2221,8 @@ async function boot() {
   fillVoices(VOICES, DEFAULT_VOICE);
   loadTiers();
   loadPrefs();
+  loadChat();
+  renderChat();
   await refreshHealth();
   setInterval(async () => { await refreshHealth(); maybeRefreshVoices(); }, 5000);
 }
