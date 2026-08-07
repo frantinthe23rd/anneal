@@ -60,6 +60,17 @@ MUSIC_TIERS = {
 }
 DEFAULT_MUSIC_TIER = os.environ.get("ANNEAL_MUSIC_TIER", "draft")
 
+# Roughly how long a cold start takes, measured on the reference machine. Not a
+# timeout and not a promise — it is what the interface needs in order to warn
+# before a slow request, and it belongs next to the services it describes
+# rather than in prose on three pages. See #15.
+COLD_START_SECONDS = {
+    "music": _int("ACESTEP_COLD_START", 210),
+    "speech": _int("SPEECH_COLD_START", 8),
+    "text": _int("TEXT_COLD_START", 20),
+    "image": _int("IMAGE_COLD_START", 45),
+}
+
 
 SERVICES = {
     "music": {

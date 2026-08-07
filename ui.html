@@ -1234,9 +1234,11 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
          town, folk with strings”</em>. Press plans a title, an artist name and a tracklist with
          varied lengths, writes lyrics for each track, generates the music, and paints a cover.</p>
       <ul>
-        <li><b>Tracks</b> 1–8. One track is a single and takes a few minutes; eight is most of an
-            hour. The stages are deliberately ordered — all the writing, then all the music, then
-            the cover — so each heavy model loads exactly once however many tracks you ask for.</li>
+        <li><b>Tracks</b> 1–<span data-cap="press.max_tracks">…</span>. One track is a single and
+            takes a few minutes; the maximum is most of an hour. Each track is capped at
+            <span data-cap="press.max_track_seconds">…</span> seconds. The stages are deliberately
+            ordered — all the writing, then all the music, then the cover — so each heavy model
+            loads exactly once however many tracks you ask for.</li>
         <li><b>Typical length</b> is a target, not a rule: the planner varies around it, with
             shorter openers and longer centrepieces.</li>
         <li><b>Instrumental</b> skips the lyric stage entirely.</li>
@@ -1263,8 +1265,10 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
             <code>[bridge]</code>. They are what the model uses to build structure.</li>
         <li><b>Takes</b> generates several variations from one request — cheaper than several
             requests, because the model is already loaded.</li>
-        <li><b>Model.</b> <code>draft</code> is distilled for speed (8 steps). <code>high</code> is the
-            fine-tuned model at 50 steps: roughly twice the time, more high-frequency detail.
+        <li><b>Model.</b> <code>draft</code> is distilled for speed
+            (<span data-cap="music.tiers.draft.steps">…</span> steps). <code>high</code> is the
+            fine-tuned model at <span data-cap="music.tiers.high.steps">…</span> steps: roughly
+            twice the time, more high-frequency detail.
             Whether it sounds better is a judgement for your ears. <b>Switching tiers restarts the
             backend</b>, so the next request pays a cold load.</li>
         <li><b>Planning pass</b> runs a small language model first to decide sections, key and
@@ -1745,6 +1749,9 @@ async function refreshHealth() {
     const d = (await r.json()).data || {};
     health = d.services || {};
     health.__system = d.system || {};
+    // Inside the try: `d` is scoped to it, and the limits only change when the
+    // server restarts, so filling them on each poll is free and self-healing.
+    if (d.limits) fillCapabilities(d.limits);
   } catch (_) { health = {}; }
   renderForge();
   // The front door says "the strip below is the truth about what is warm right
@@ -3830,6 +3837,19 @@ async function boot() {
 
   await refreshHealth();
   setInterval(async () => { await refreshHealth(); maybeRefreshVoices(); }, 5000);
+}
+
+/* Facts the API serves are written once, in the code that owns them, and
+   fetched here. Any element carrying a data-cap attribute names a path through
+   /health's `limits` block and is filled from it — see #15, and tests/unit/test_capabilities.py, which fails if
+   one of them is typed back into the markup. */
+function fillCapabilities(limits) {
+  if (!limits) return;
+  document.querySelectorAll("[data-cap]").forEach((n) => {
+    const value = n.dataset.cap.split(".").reduce(
+      (acc, key) => (acc == null ? acc : acc[key]), limits);
+    if (value != null) n.textContent = value;
+  });
 }
 
 /* The API page quotes this server's own address rather than a hostname baked

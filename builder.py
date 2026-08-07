@@ -30,6 +30,9 @@ import uuid
 # track is not worth the model load. Both are enforced on every derived bound.
 MAX_TRACK_SECONDS = 600
 MIN_TRACK_SECONDS = 20
+# The most tracks one brief may ask for. Was a literal inside the clamp below,
+# which meant the UI, the spec and INTEGRATION.md each carried their own copy.
+MAX_TRACKS = 8
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS presses (
@@ -220,7 +223,7 @@ class Press:
         # from scratch because of one lost track is not acceptable.
         if resume and press.get("plan") and press.get("tracks"):
             return self._resume(pid, press, req)
-        count = max(1, min(int(req.get("tracks", 1)), 8))
+        count = max(1, min(int(req.get("tracks", 1)), MAX_TRACKS))
         single = count == 1
 
         # 1. Plan — one text call for the whole record.

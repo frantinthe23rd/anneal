@@ -48,11 +48,13 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from services import SERVICES, MUSIC_TIERS, DEFAULT_MUSIC_TIER, resolve  # noqa: E402
+from services import (SERVICES, MUSIC_TIERS, DEFAULT_MUSIC_TIER,
+                      COLD_START_SECONDS, resolve)  # noqa: E402
 from jobstore import JobStore  # noqa: E402
 import outputs  # noqa: E402
 import paths  # noqa: E402
 import vector  # noqa: E402
+import builder  # noqa: E402  (capability_limits reports its constants)
 from builder import Press, PressStore  # noqa: E402
 
 LISTEN_HOST = os.environ.get("SUPERVISOR_HOST", "127.0.0.1")
@@ -951,6 +953,32 @@ def press_limits(payload):
     return None
 
 
+def capability_limits():
+    """The numbers a client must respect, from wherever they actually live.
+
+    Every value here previously existed as prose in the UI, a literal in
+    openapi.json, or both — which is how the spec came to claim the high tier
+    ran 32 steps while services.py said 50. Serving them means a page can ask
+    rather than repeat, and tests/unit/test_capabilities.py fails if one is
+    written down again. See #15.
+    """
+    return {
+        "press": {
+            "max_tracks": builder.MAX_TRACKS,
+            "min_track_seconds": builder.MIN_TRACK_SECONDS,
+            "max_track_seconds": builder.MAX_TRACK_SECONDS,
+        },
+        "music": {
+            "tiers": {name: {"steps": t["steps"], "label": t["label"]}
+                      for name, t in MUSIC_TIERS.items()},
+            "default_tier": DEFAULT_MUSIC_TIER,
+        },
+        # Idle timeouts are deliberately absent: they are already reported
+        # per-service, and a second copy is exactly the bug this closes.
+        "cold_start_seconds": dict(COLD_START_SECONDS),
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "GenSupervisor/2.0"
@@ -1037,6 +1065,7 @@ class Handler(BaseHTTPRequestHandler):
             # Nothing prunes outputs/ automatically — see tools/prune.py for
             # why. Reporting the size is the half that can be automated safely.
             "storage": outputs.usage(),
+            "limits": capability_limits(),
         }
 
     # -- local endpoints --------------------------------------------------
