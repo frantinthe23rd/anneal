@@ -1,3 +1,32 @@
+# Tools
+
+## Tests
+
+```bash
+tools/test.sh          # unit always; acceptance too when a gateway answers on 8001
+```
+
+304 unit tests need nothing — no network, no models, no running server — and are
+what CI runs. The 36 acceptance tests run against a live gateway and are
+deliberately confined to the surface that wakes no model; anything that would
+generate is skipped unless `ANNEAL_TEST_HEAVY=1`.
+
+Two suites stand real HTTP handlers up in-process on an ephemeral port rather
+than mocking them, with `SUPERVISOR_PORT` redirected to a closed port so a
+mistake cannot reach the real gateway, and a final assertion that no service
+epoch moved.
+
+## Linting the UI
+
+```bash
+tools/lint-ui.py       # silent and exit 0 when clean
+```
+
+Seven checks, no JavaScript toolchain: HTML well-formedness, duplicate ids, that
+the inline script parses, dangling `$("id")` references, unresolved CSS custom
+properties, external subresources, and light/dark token parity. Each one encodes
+a fault this project has actually shipped.
+
 # Visual verification
 
 `ui.html` is the one part of Anneal that cannot be verified by reading. Three
