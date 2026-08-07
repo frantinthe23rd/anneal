@@ -233,10 +233,10 @@ class TestPrune(StoreCase):
         self.store.prune(older_than_seconds=60)
         self.assertEqual(self.rows("jobs"), 0)
 
-    def test_prune_does_not_reach_the_alias_and_saved_tables(self):
-        # Issue #27: aliases and saved rows outlive the job they belong to, so
-        # those two tables grow without bound. Asserted so that the day it is
-        # fixed, this test says so.
+    def test_prune_takes_the_alias_and_saved_rows_with_the_job(self):
+        """#27. These outlived the job they belonged to, so both tables grew
+        without bound — and an alias pointing at a deleted job is worse than
+        useless, because it resolves to an id the store no longer knows."""
         self.store.record("orig", {})
         self.store.set_alias("orig", "current")
         self.store.set_saved("orig", ["/a/one.flac"])
@@ -244,8 +244,33 @@ class TestPrune(StoreCase):
         self.age("orig", 30 * 24 * 3600)
         self.store.prune()
         self.assertEqual(self.rows("jobs"), 0)
+        self.assertEqual(self.rows("aliases"), 0)
+        self.assertEqual(self.rows("saved"), 0)
+
+    def test_prune_leaves_rows_belonging_to_a_job_it_kept(self):
+        """The obvious wrong fix: delete everything older than the cutoff from
+        all three tables. aliases and saved have no timestamp, so that would
+        clear them wholesale on every sweep and break every live job."""
+        self.store.record("keep", {})
+        self.store.set_alias("keep", "current")
+        self.store.set_saved("keep", ["/a/one.flac"])
+        self.store.complete("keep")
+        self.store.prune(older_than_seconds=7 * 24 * 3600)
+        self.assertEqual(self.rows("jobs"), 1)
         self.assertEqual(self.rows("aliases"), 1)
         self.assertEqual(self.rows("saved"), 1)
+
+    def test_an_alias_pointing_at_a_pruned_job_is_removed_by_either_key(self):
+        """A replayed job has the caller's original id and the backend's new
+        one. The row is keyed on the original and the job may be recorded under
+        either, so matching only one of them leaves half the orphans behind."""
+        self.store.record("new-id", {})
+        self.store.set_alias("old-id", "new-id")
+        self.store.complete("new-id")
+        self.age("new-id", 30 * 24 * 3600)
+        self.store.prune()
+        self.assertEqual(self.rows("jobs"), 0)
+        self.assertEqual(self.rows("aliases"), 0)
 
 
 class TestConcurrency(StoreCase):

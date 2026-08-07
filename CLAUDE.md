@@ -61,8 +61,9 @@ loaded; if behaviour doesn't match the code, check the process start time first.
   `/v1/press/cancel` shipped and was documented nowhere — not the spec, not the
   guide, not the endpoint tables. `init_image` and `retention` shipped and
   appeared in no spec, no guide and no page; outside the server they existed
-  only in the UI's own JavaScript. `JobStore.prune()` exists and nothing calls
-  it. A test written first catches all three, because you cannot write one
+  only in the UI's own JavaScript. `JobStore.prune()` existed and nothing called
+  it (#27 — it has a caller now, and takes its dependent rows with it).
+  A test written first catches all three, because you cannot write one
   without naming the path, the payload and the response — and once they are
   named, the difference between that and `openapi.json` is something you can
   see. `tools/test.sh` runs the suite in `tests/`.
@@ -106,6 +107,13 @@ loaded; if behaviour doesn't match the code, check the process start time first.
   "regardless of thinking, if some metas are missing, server may use LM to fill
   them"), and something below the plan samples too. Byte-comparing two runs
   proves nothing. See README → Determinism.
+- **Never assert against a copied list.** A test that froze the service names,
+  the output kinds or the health payload's services went stale the moment one
+  was added, and each time it failed *after* the change shipped rather than
+  during it. The UI had the same bug where no test could see it: the forge strip
+  was a hardcoded array and silently omitted `video`. Assert against
+  `services.SERVICES`, `outputs.KINDS` or the source file, and build UI lists
+  from `/health`. Four occurrences so far.
 - **`grep -m1` / `head -1` mid-pipeline** SIGPIPEs upstream stages; under the
   launchers' `set -euo pipefail` that silently aborts the whole script.
 - **Streamed responses must be close-delimited.** `Transfer-Encoding` is

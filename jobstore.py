@@ -154,5 +154,22 @@ class JobStore:
         return {state: count for state, count in rows}
 
     def prune(self, older_than_seconds=7 * 24 * 3600):
+        """Drop settled jobs past the cutoff, and everything that hung off them.
+
+        `aliases` and `saved` carry no timestamp of their own, so they cannot be
+        aged directly — deleting from them by cutoff would clear them wholesale
+        on every sweep and break every live job. They are removed by reference
+        instead: a row survives exactly as long as the job it describes.
+
+        An alias is matched on both sides. A replayed job has the caller's
+        original id and the backend's new one, and the job may be recorded under
+        either, so matching one column leaves half the orphans behind — and an
+        alias pointing at a pruned job is worse than a leak, because it resolves
+        to an id the store no longer knows.
+        """
         cutoff = time.time() - older_than_seconds
+        gone = "SELECT task_id FROM jobs WHERE state != 'pending' AND updated_at < ?"
+        self._exec("DELETE FROM saved WHERE task_id IN (%s)" % gone, (cutoff,))
+        self._exec("DELETE FROM aliases WHERE original IN (%s) OR current IN (%s)"
+                   % (gone, gone), (cutoff, cutoff))
         self._exec("DELETE FROM jobs WHERE state != 'pending' AND updated_at < ?", (cutoff,))
