@@ -45,9 +45,32 @@ loaded; if behaviour doesn't match the code, check the process start time first.
   an error. `tools/README.md` has the one-line command; `tools/audit.js`
   measures rendered geometry when the question is "does this obey the design
   scheme" rather than "does it look right".
+- **`tools/lint-ui.py` before committing `ui.html`.** Stdlib plus the system
+  JavaScriptCore, no Node — deliberately, and it must not become the reason to
+  install one. It catches the classes that raise nothing in a browser: a
+  `$("id")` left bound to markup that was deleted, `var(--x)` with no
+  definition, a colour token declared in the dark `:root` and not the light one,
+  a duplicate id, a syntax error in the inline script, an `http(s)` subresource
+  breaking the "fetches nothing externally" promise. It does not replace the
+  screenshot; the two see different halves of the file.
+- **API endpoints are written test-first.** Before the handler exists: the
+  request shape, the `{data, code, error}` envelope it returns, what an
+  unauthenticated call gets, and each failure mode with its status. Not a
+  general rule about tests — specifically endpoints, because they are the part
+  other people build against, and three have already got past everything else.
+  `/v1/press/cancel` shipped and was documented nowhere — not the spec, not the
+  guide, not the endpoint tables. `init_image` and `retention` shipped and
+  appeared in no spec, no guide and no page; outside the server they existed
+  only in the UI's own JavaScript. `JobStore.prune()` exists and nothing calls
+  it. A test written first catches all three, because you cannot write one
+  without naming the path, the payload and the response — and once they are
+  named, the difference between that and `openapi.json` is something you can
+  see. `tools/test.sh` runs the suite in `tests/`.
 - **Docs change with code.** `README.md`, `INTEGRATION.md` and `openapi.json`
-  are part of the change, not follow-up. Correct earlier claims that turn out
-  wrong rather than quietly moving on.
+  are part of the change, not follow-up. An endpoint that gains a parameter,
+  a status code or a whole path updates `openapi.json` and `INTEGRATION.md` in
+  the same commit — "document it next" is how the three above got out. Correct
+  earlier claims that turn out wrong rather than quietly moving on.
 - **Commit messages explain why**, including what was measured and what was
   rejected. Several decisions here only make sense with the measurement attached.
 - **Secrets**: `env.local.sh` is gitignored and generated on first run. Check

@@ -462,6 +462,41 @@ Updates are never automatic. To take a new revision, edit `models.lock.json`,
 run `--models`, then `--smoke` — and treat a smoke failure as a reason to roll
 the pin back.
 
+## Working on it
+
+`CLAUDE.md` has the full working notes — layout, the traps, and what has already
+cost time. Three rules are worth stating here, where someone reading about the
+API will meet them.
+
+**API endpoints are written test-first.** The test comes before the handler:
+request shape, the `{data, code, error}` envelope, what an unauthenticated call
+gets, and each failure mode with its status. It is a rule about endpoints
+specifically, because they are the part other people build against — and three
+got out without one. `/v1/press/cancel` shipped documented nowhere: not the
+spec, not the guide, not the endpoint tables. `init_image` and `retention`
+shipped and, outside the server, existed only in the UI's own JavaScript.
+`JobStore.prune()` exists and nothing calls it. All three were found by hand, in
+an audit prompted by someone asking whether the docs were still true — which is
+not a mechanism.
+
+**An endpoint change updates `openapi.json` and `INTEGRATION.md` in the same
+commit.** `/openapi.json` is what integrators point their tooling at, so a spec
+that lags the server is worse than no spec: it is confidently wrong.
+
+**`ui.html` is linted and photographed before it is committed.** `tools/lint-ui.py`
+needs no Node — standard library plus the JavaScriptCore shell macOS already
+ships — and checks the faults that raise nothing in a browser: `getElementById`
+targets that no longer exist, unresolved `var(--x)`, colour tokens missing from
+the light theme, duplicate ids, a syntax error in the inline script, and any
+`http(s)` subresource, which would quietly break the guarantee above that the
+page fetches nothing externally. Then take a screenshot — `tools/README.md`
+explains how, and lists three faults that only a picture caught.
+
+```bash
+tools/lint-ui.py     # before committing ui.html
+tools/test.sh        # the suite in tests/
+```
+
 ## Security
 
 The supervisor binds to `127.0.0.1` only. Tailnet reach comes from `tailscale serve`,
