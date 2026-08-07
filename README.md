@@ -735,8 +735,13 @@ license:
 
 MIT asks one thing in return: keep the copyright and permission notice in copies
 and substantial portions. That is the only attribution it can require — it does
-not oblige anyone to credit Anneal in a UI, a README or a product page. If that
-matters to you downstream, ask rather than assume.
+not oblige anyone to credit Anneal in a UI, a README or a product page.
+
+[NOTICE](NOTICE) asks for two things it cannot require, and says so plainly: a
+credit if you run this publicly, and — more useful — an issue saying what you
+built. This exists to be called by other people's build scripts and agents, so
+knowing what it ended up feeding is worth more than a footer line. Ignoring
+either breaches nothing.
 
 Built for **local, personal use on a private network**. It binds to loopback and
 reaches the tailnet through `tailscale serve`; it is not hardened for public

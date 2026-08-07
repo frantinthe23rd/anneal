@@ -1,0 +1,33 @@
+Anneal
+Copyright (c) 2026 Jon Moseley
+
+Concept, product direction and design by Jon Moseley. Built with Claude Code.
+
+Licensed under the MIT License — see LICENSE. That licence asks one thing of
+you, and it is the only thing it can ask: keep the copyright and permission
+notice with the code.
+
+This file asks for two more. Neither is a condition of the licence, and both
+can be ignored without breaching anything.
+
+  1. If you run Anneal somewhere public, or build something on top of it, a
+     credit is welcome. "Built on Anneal by Jon Moseley", or a link, is plenty.
+
+  2. More useful than a credit: open an issue and say what you made. This was
+     written to be called by other people's build scripts and coding agents,
+     and knowing what it ended up feeding is worth more to me than a line in a
+     footer.
+
+     https://github.com/frantinthe23rd/anneal/issues
+
+Anneal is a gateway and some glue. The models and libraries it runs are other
+people's work, under their own licences, and those licences do impose
+conditions — attribution among them in some cases. The full list, with what
+each one is for, is in the Credits section of README.md and on the UI's About
+page. Two worth knowing before you redistribute anything:
+
+  * Google's Gemma weights are under the Gemma Terms of Use, not an OSI
+    licence.
+  * Generated output is yours, subject to those upstream model terms. The
+    music model will imitate a described style, so do not name a specific
+    living artist in a prompt and then publish the result commercially.
