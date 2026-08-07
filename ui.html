@@ -2829,13 +2829,21 @@ if (MD_OK) marked.setOptions({ breaks: true, gfm: true });
 function renderMarkdown(node, src) {
   if (!MD_OK) { node.textContent = src; return; }
   try {
-    node.innerHTML = DOMPurify.sanitize(marked.parse(src),
+    // Maths comes out BEFORE Markdown is parsed, and goes back in after.
+    // Markdown treats _ as emphasis, so a formula carrying two of them —
+    // which every chemical subscript does — had its underscores eaten and an
+    // <em> spliced through the middle: \text{C}_6\text{H}_{12} arrived as
+    // \text{C}<em>6\text{H}</em>{12}. Issue #24. Nothing could repair that
+    // afterwards, because by then the source was gone.
+    const taken = [];
+    const guarded = takeMathOut(src, taken);
+    node.innerHTML = DOMPurify.sanitize(marked.parse(guarded),
       { ADD_ATTR: ["target"], FORBID_TAGS: ["style", "form", "input", "button"] });
     node.classList.add("md");
     node.querySelectorAll("a[href]").forEach((a) => {
       a.target = "_blank"; a.rel = "noopener noreferrer";
     });
-    renderMathIn(node);
+    putMathBack(node, taken);
   } catch (_) { node.textContent = src; }
 }
 
@@ -2899,12 +2907,17 @@ function plainMath(src) {
   return t.replace(/[ \t]+/g, " ").trim();
 }
 
-/* Runs over the rendered nodes rather than the Markdown source, so code blocks
-   and inline code are untouched — a shell sample full of $VARIABLES is not
-   maths and must not be treated as any. Only $$…$$, \[…\] and \(…\) are
-   recognised; a single $ is far too common in prose and shell to claim. */
+/* Extraction runs on the raw Markdown, so a formula is removed before the
+   parser can treat its underscores as emphasis. Each one is replaced by a
+   placeholder built only from letters and digits — nothing Markdown gives
+   meaning to, and nothing that can be split across an element boundary.
+
+   The delimiter rules and the looksLikeMath guard are unchanged and still
+   carry the whole burden of not claiming `$ANNEAL_KEY` or `$5`. What moved is
+   only when they run. */
 const MATH_PATTERN =
   /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|\$([^$\n]+?)\$/;
+const MATH_MARK = "annealmath";
 
 /* A lone $ is the delimiter the model actually reaches for — `$\text{H}_2\text{O}$`
    turns up constantly — and it is also a shell variable, a price and a jQuery
@@ -2914,9 +2927,7 @@ const MATH_PATTERN =
    Two signals do nearly all the work. LaTeX never pads its delimiters, so
    `$ x $` is prose about money and `$x$` might not be. And real inline maths
    almost always carries a command or a script marker — \text, \frac, ^, _ —
-   whereas `$HOME`, `$5` and `$ANNEAL_KEY` carry none. Requiring both keeps
-   `echo $HOME $PATH` intact, since the span between those two dollars ends in a
-   space and holds no command. */
+   whereas `$HOME`, `$5` and `$ANNEAL_KEY` carry none. */
 function looksLikeMath(body, after) {
   if (!body || /^\s|\s$/.test(body)) return false;   // LaTeX does not pad its delimiters
   if (body.length > 200) return false;               // a runaway match, not an equation
@@ -2928,45 +2939,62 @@ function looksLikeMath(body, after) {
   return /\\[a-zA-Z]/.test(body) || /[\^_]/.test(body);
 }
 
-function renderMathIn(root) {
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode: (n) => n.parentElement && n.parentElement.closest("code, pre")
-      ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
-  });
+function takeMathOut(src, taken) {
+  let out = "", rest = src, m;
+  while ((m = rest.match(MATH_PATTERN))) {
+    const whole = m[0];
+    const after = rest[m.index + whole.length];
+    if (m[4] !== undefined && !looksLikeMath(m[4], after)) {
+      out += rest.slice(0, m.index + whole.length);   // not maths: leave it alone
+      rest = rest.slice(m.index + whole.length);
+      continue;
+    }
+    const display = m[1] !== undefined || m[2] !== undefined;
+    const body = m[1] !== undefined ? m[1]
+      : m[2] !== undefined ? m[2]
+      : m[3] !== undefined ? m[3] : m[4];
+    out += rest.slice(0, m.index) + MATH_MARK + taken.length + MATH_MARK;
+    taken.push({ body: body, display: display, literal: whole });
+    rest = rest.slice(m.index + whole.length);
+  }
+  return out + rest;
+}
+
+/* Putting it back walks the rendered nodes, so code and pre are still excluded
+   by construction — a placeholder that ended up inside a code sample is
+   restored as the literal text the model wrote, not rendered. */
+function putMathBack(root, taken) {
+  if (!taken.length) return;
+  const find = new RegExp(MATH_MARK + "(\\d+)" + MATH_MARK);
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
   const targets = [];
   for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-    if (MATH_PATTERN.test(n.nodeValue)) targets.push(n);
+    if (find.test(n.nodeValue)) targets.push(n);
   }
   targets.forEach((node) => {
+    const inCode = node.parentElement && node.parentElement.closest("code, pre");
     const frag = document.createDocumentFragment();
     let rest = node.nodeValue, m;
-    while ((m = rest.match(MATH_PATTERN))) {
-      // A single-$ candidate that does not look like maths is left alone: emit
-      // it verbatim and carry on scanning after it, rather than swallowing it.
-      if (m[4] !== undefined && !looksLikeMath(m[4], rest[m.index + m[0].length])) {
-        frag.appendChild(document.createTextNode(rest.slice(0, m.index + m[0].length)));
-        rest = rest.slice(m.index + m[0].length);
-        continue;
-      }
+    while ((m = rest.match(find))) {
       if (m.index > 0) frag.appendChild(document.createTextNode(rest.slice(0, m.index)));
-      const display = m[1] !== undefined || m[2] !== undefined;
-      const body = m[1] !== undefined ? m[1]
-        : m[2] !== undefined ? m[2]
-        : m[3] !== undefined ? m[3] : m[4];
-      const span = el(display ? "div" : "span", display ? "math block" : "math");
-      if (typeof katex !== "undefined") {
-        try {
-          // trust:false is the default and is what makes the output safe to
-          // insert: KaTeX escapes its input and refuses \href and friends.
-          // throwOnError:false leaves an unparseable expression visible in red
-          // rather than throwing away the whole reply.
-          katex.render(body, span, { displayMode: display, throwOnError: false,
-                                     trust: false, strict: false, output: "html" });
-        } catch (_) { span.textContent = plainMath(body); }
-      } else {
-        span.textContent = plainMath(body);      // library missing: still readable
+      const item = taken[Number(m[1])];
+      if (!item) { frag.appendChild(document.createTextNode(m[0])); }
+      else if (inCode) { frag.appendChild(document.createTextNode(item.literal)); }
+      else {
+        const span = el(item.display ? "div" : "span",
+                        item.display ? "math block" : "math");
+        if (typeof katex !== "undefined") {
+          try {
+            // trust:false is the default and is what makes the output safe to
+            // insert: KaTeX escapes its input and refuses \href and friends.
+            katex.render(item.body, span, { displayMode: item.display,
+              throwOnError: false, trust: false, strict: false, output: "html" });
+          } catch (_) { span.textContent = plainMath(item.body); }
+        } else {
+          span.textContent = plainMath(item.body);   // library missing: still readable
+        }
+        frag.appendChild(span);
       }
-      frag.appendChild(span);
       rest = rest.slice(m.index + m[0].length);
     }
     if (rest) frag.appendChild(document.createTextNode(rest));
