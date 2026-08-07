@@ -1893,14 +1893,25 @@ function stopElapsed() { if (elapsedTimer) clearInterval(elapsedTimer); elapsedT
 /* ------------------------------------------------------------- result list */
 function addResult(r) { results.unshift(r); renderResults(); return r; }
 
+/* The session list belongs to the tab you are on, the same way the Library
+   does. Everything landed in one pile before, so generating a track and then
+   switching to Image left the track sitting under the Image tab. */
+const RESULT_KIND_FOR_MODE = { music: "music", speech: "speech", image: "image" };
+
+function shownResults() {
+  const kind = RESULT_KIND_FOR_MODE[mode];
+  return kind ? results.filter((r) => r.kind === kind) : [];
+}
+
 function renderResults() {
   const box = $("items");
-  $("empty").classList.toggle("hidden", results.length > 0);
-  box.classList.toggle("hidden", results.length === 0);
-  $("outCount").textContent = results.length ? results.length + " item" + (results.length > 1 ? "s" : "") : "";
+  const shown = shownResults();
+  $("empty").classList.toggle("hidden", shown.length > 0);
+  box.classList.toggle("hidden", shown.length === 0);
+  $("outCount").textContent = shown.length ? shown.length + " item" + (shown.length > 1 ? "s" : "") : "";
   box.textContent = "";
 
-  results.forEach((r) => {
+  shown.forEach((r) => {
     const item = el("div", "item" + (r.failed ? " failed" : "") + (r.pending ? " pending" : ""));
     const top = el("div", "top");
     top.appendChild(el("span", "kind", r.kind));
@@ -3687,8 +3698,20 @@ $("cInput").addEventListener("keydown", (e) => {
   runChat();
 });
 $("btnClear").onclick = () => {
-  blobUrls.forEach(URL.revokeObjectURL); blobUrls = [];
-  results = []; renderResults();
+  // Clears this tab's results, because those are the ones on screen. Wiping
+  // every tab's work from a button labelled Clear, while showing one tab's, is
+  // a surprise nobody asked for.
+  const going = new Set(shownResults());
+  going.forEach((r) => {
+    [r.audio, r.image].forEach((u) => {
+      if (!u) return;
+      URL.revokeObjectURL(u);
+      const at = blobUrls.indexOf(u);
+      if (at >= 0) blobUrls.splice(at, 1);
+    });
+  });
+  results = results.filter((r) => !going.has(r));
+  renderResults();
 };
 
 /* role="tablist" promises arrow-key movement, so honour it: left/right (and
