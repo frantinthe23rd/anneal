@@ -1,0 +1,61 @@
+name: tests
+
+# Unit tests only. CI has no models, no /Volumes/Storage and no Apple silicon,
+# so the acceptance suite (which needs a live gateway) and anything marked heavy
+# cannot run here — they run on the host, via tools/test.sh.
+#
+# Nothing is installed: the suite and everything it imports are Python stdlib,
+# which is the same constraint the gateway itself is built under.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9 is what the gateway actually runs under on the Mac mini
+        # (/usr/bin/python3, from the Xcode toolchain). 3.12 is the other
+        # interpreter present on that host (uv's, used for the venvs), and is
+        # here to catch anything that would break on an upgrade. Both were run
+        # locally before this workflow was committed.
+        python-version: ["3.9", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: No dependencies to install
+        run: |
+          python -c "import sys; print(sys.version)"
+          test ! -e requirements.txt || echo "note: requirements.txt appeared — CI still installs nothing"
+
+      - name: Unit tests
+        env:
+          # Explicit so a failure here is a real failure and not a stale value
+          # inherited from somewhere. tests/context redirects these anyway;
+          # this is belt and braces against the suite ever touching a real path.
+          AIMUSIC_ROOT: ${{ runner.temp }}/aimusic
+          ANNEAL_TEST_ROOT: ${{ runner.temp }}/anneal-tests
+        run: |
+          mkdir -p "$AIMUSIC_ROOT" "$ANNEAL_TEST_ROOT"
+          python -m unittest discover -s tests/unit -t . -v
+
+      - name: Acceptance tests skip cleanly with no gateway
+        # The acceptance suite must be safe to invoke anywhere: with nothing on
+        # 8001 it skips with a reason rather than erroring. Checked here so the
+        # skip path does not rot.
+        run: python -m unittest discover -s tests/acceptance -t . -v
+
+      - name: Compile every module the gateway loads
+        # Catches a syntax error on a Python version the host does not run,
+        # without importing anything that needs a model.
+        run: python -m compileall -q supervisor.py services.py jobstore.py outputs.py builder.py image_server.py speech_server.py generate.py monitor.py mcp_server.py verify-models.py
