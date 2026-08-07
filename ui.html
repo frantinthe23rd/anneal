@@ -611,19 +611,16 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .album .player .tm { color: var(--faint); font-family: var(--mono); font-size: 11.5px;
   font-variant-numeric: tabular-nums; }
 
-/* Seek bar. Styled rather than native because the native track is a different
-   colour in every browser and this sits on the record's own plate. */
-.album .seek { -webkit-appearance: none; appearance: none; width: 100%; height: 4px;
-  margin: 0 0 10px; padding: 0; border-radius: 2px; background: var(--line);
-  cursor: pointer; display: block; }
-.album .seek:disabled { cursor: default; opacity: .45; }
-.album .seek::-webkit-slider-thumb { -webkit-appearance: none; appearance: none;
-  width: 11px; height: 11px; border-radius: 50%; background: var(--heat-1);
-  border: 0; cursor: pointer; }
-.album .seek::-moz-range-thumb { width: 11px; height: 11px; border-radius: 50%;
-  background: var(--heat-1); border: 0; cursor: pointer; }
-.album .seek:disabled::-webkit-slider-thumb { background: var(--faint); }
-.album .seek:focus-visible { outline: 2px solid var(--heat-1); outline-offset: 3px; }
+/* The native transport. Not restyled beyond width and spacing: the browser's
+   own control is the thing that reliably shows play/pause and a bar that
+   moves, and every attempt to rebuild that here got it wrong. It only appears
+   inside the record that is playing, which is also how you can see which one
+   that is. */
+.album .slot:empty { display: none; }
+.album audio.rec { width: 100%; height: 34px; display: block; margin: 2px 0 10px; }
+/* The record currently playing, so it reads at a glance from the list. */
+.album.playing > .hd .ttl { color: var(--heat-1); }
+.album.playing > .hd .art { box-shadow: 0 0 0 2px var(--heat-1); }
 .album li.cur { background: var(--quench-wash); }
 .album li.cur .nm { color: var(--text); font-weight: 600; }
 .album li .nm { cursor: pointer; }
@@ -2353,62 +2350,128 @@ function buildPressDetails(p, plan) {
   return det;
 }
 
-/* One <audio> for the whole page, and one blob cache, both outside any render.
-   renderPresses() empties #albums and rebuilds every card on each poll, so a
-   player that created its own element left the previous one playing: detached,
-   still audible, and unreachable — navigating away or simply waiting for a
-   refresh gave you music with no control anywhere on the page that could stop
-   it. The element now outlives the render; the controls are rebuilt around it
-   and read their state back off it. */
-const album = { audio: new Audio(), pressId: null, index: -1, blobs: {} };
+/* The record player.
+   ------------------------------------------------------------------------
+   Transport is a native <audio controls>, deliberately. Play/pause state, a
+   progress bar that moves, seeking, elapsed/total and keyboard access are all
+   things the browser already does correctly, and the hand-built versions of
+   them here did not: the bar never moved and the button never showed playing.
+
+   The reason is worth keeping, because it would break any replacement built
+   the same way. renderPresses() rebuilds *every* card on each poll, so a
+   per-card `audio.ontimeupdate = ...` was reassigned once per album and the
+   LAST card built ended up owning the handler — a card that was not the one
+   playing, so the callback blanked its own controls and returned. The playing
+   card's bar was never updated by anything.
+
+   So nothing here closes over per-card state. There is one <audio> element for
+   the page, re-parented into whichever card is playing, and the module-level
+   functions below drive it by looking the card up in the DOM. What is playing
+   is unambiguous: the transport is physically inside that record. */
+const album = { audio: null, pressId: null, index: -1, tracks: [], blobs: {} };
+
+function albumAudio() {
+  if (!album.audio) {
+    const a = document.createElement("audio");
+    a.controls = true;
+    a.preload = "metadata";
+    a.className = "rec";
+    // Bound once, not per render — that reassignment is the bug above.
+    a.onended = () => albumPlay(album.pressId, album.tracks, album.index + 1);
+    a.onplay = a.onpause = albumMarkRows;
+    album.audio = a;
+  }
+  return album.audio;
+}
 
 /* Called on anything that takes the records out of view. Leaving a record
    playing into a page it is no longer visible on is the bug, not a feature. */
 function stopAlbum() {
-  album.audio.pause();
+  if (album.audio) album.audio.pause();
   album.pressId = null;
   album.index = -1;
+  album.tracks = [];
+  albumMarkRows();
 }
 
-/* A small album player: play/pause, skip, seek, click a row to jump, and
-   auto-advance so a record plays through rather than a track at a time. */
+async function albumBlob(file) {
+  if (!album.blobs[file]) {
+    const blob = await api(file, { raw: true });
+    album.blobs[file] = URL.createObjectURL(blob);
+    blobUrls.push(album.blobs[file]);
+  }
+  return album.blobs[file];
+}
+
+/* Highlight the playing row and name the track, by finding the card in the DOM
+   rather than by holding references a rebuild would invalidate. */
+function albumMarkRows() {
+  document.querySelectorAll("#albums .album").forEach((card) => {
+    const playing = card.dataset.pressId === album.pressId;
+    card.classList.toggle("playing", playing && album.index >= 0);
+    card.querySelectorAll("ol li").forEach((li) => {
+      li.classList.toggle("cur", playing && Number(li.dataset.trackIdx) === album.index);
+    });
+    const now = card.querySelector(".now");
+    if (!now) return;
+    const t = playing && album.tracks[album.index];
+    now.textContent = t ? t.n + ". " + t.title
+      : (card.querySelectorAll("ol li[data-track-idx]").length ? "Not playing" : "No audio yet");
+  });
+}
+
+async function albumPlay(pressId, tracks, i) {
+  if (!tracks || i < 0 || i >= tracks.length) {           // ran off the end
+    if (album.audio) album.audio.pause();
+    album.index = -1; albumMarkRows(); return;
+  }
+  const audio = albumAudio();
+  album.pressId = pressId;
+  album.tracks = tracks;
+  const card = document.querySelector('#albums .album[data-press-id="' + pressId + '"]');
+  const slot = card && card.querySelector(".slot");
+  // Re-parenting a media element does not interrupt it, so the transport can
+  // follow the record it belongs to.
+  if (slot && audio.parentNode !== slot) slot.appendChild(audio);
+  if (album.index !== i || !audio.src) {
+    album.index = i;
+    albumMarkRows();
+    try { audio.src = await albumBlob(tracks[i].file); }
+    catch (e) { const n = card && card.querySelector(".now"); if (n) n.textContent = "Failed: " + e.message; return; }
+  }
+  audio.play();
+  albumMarkRows();
+}
+
+/* A small album player: skip, click a row to jump, and auto-advance so a
+   record plays through rather than a track at a time. */
 function buildPlayer(p, plan) {
   const frag = document.createDocumentFragment();
   const tracks = (p.tracks || []).filter((t) => t.file);
-  const audio = album.audio;
-  const mine = () => album.pressId === p.id;
-  let cur = mine() ? album.index : -1;
+  const mine = album.pressId === p.id;
 
   const bar = el("div", "player");
-  const prev = el("button", null, "⏮");
-  const toggle = el("button", null, "▶");
-  const next = el("button", null, "⏭");
-  const now = el("div", "now", tracks.length ? "Ready — " + tracks.length + " track(s)" : "No audio yet");
-  const time = el("div", "tm", "");
-  [prev, toggle, next].forEach((b) => { if (!tracks.length) b.disabled = true; });
-  bar.append(prev, toggle, next, now, time);
+  const prev = el("button", null, "\u23ee");
+  const play = el("button", null, "\u25b6");
+  const next = el("button", null, "\u23ed");
+  const now = el("div", "now", tracks.length ? "Not playing" : "No audio yet");
+  [prev, play, next].forEach((b) => { if (!tracks.length) b.disabled = true; });
+  prev.title = "Previous track"; play.title = "Play this record"; next.title = "Next track";
+  bar.append(prev, play, next, now);
   frag.appendChild(bar);
 
-  // Progress, and seekable — a twenty-minute record with no way to scrub is a
-  // tape deck. Disabled until something is loaded, so it never looks live when
-  // there is nothing behind it.
-  const seek = document.createElement("input");
-  seek.type = "range"; seek.className = "seek";
-  seek.min = 0; seek.max = 1000; seek.value = 0; seek.step = 1;
-  seek.setAttribute("aria-label", "Playback position");
-  seek.disabled = !tracks.length;
-  let scrubbing = false;
-  seek.oninput = () => { scrubbing = true; };
-  seek.onchange = (e) => {
+  // Where the shared transport lives while this record is the one playing.
+  const slot = el("div", "slot");
+  frag.appendChild(slot);
+
+  prev.onclick = (e) => { e.stopPropagation(); albumPlay(p.id, tracks, (mine ? album.index : 0) - 1); };
+  next.onclick = (e) => { e.stopPropagation(); albumPlay(p.id, tracks, (mine ? album.index : -1) + 1); };
+  play.onclick = (e) => {
     e.stopPropagation();
-    scrubbing = false;
-    if (audio.duration) audio.currentTime = (seek.value / 1000) * audio.duration;
+    albumPlay(p.id, tracks, mine && album.index >= 0 ? album.index : 0);
   };
-  seek.onclick = (e) => e.stopPropagation();     // don't toggle the drawer
-  frag.appendChild(seek);
 
   const ol = document.createElement("ol");
-  const rows = [];
   (p.tracks || []).forEach((t) => {
     const li = document.createElement("li");
     li.appendChild(el("span", "no", String(t.n)));
@@ -2417,96 +2480,28 @@ function buildPlayer(p, plan) {
     li.appendChild(el("span", "dur", fmtDur(t.duration || 0)));
     if (t.file) {
       const idx = tracks.indexOf(t);
-      nm.onclick = (e) => { e.stopPropagation(); play(idx); };
+      li.dataset.trackIdx = String(idx);
+      nm.onclick = (e) => { e.stopPropagation(); albumPlay(p.id, tracks, idx); };
       const dl = document.createElement("a");
       dl.className = "dl"; dl.textContent = "download"; dl.href = "#";
       dl.onclick = async (e) => {
         e.preventDefault(); e.stopPropagation();
-        dl.textContent = "…";
+        dl.textContent = "\u2026";
         try {
-          const url = await blobFor(idx);
+          const url = await albumBlob(t.file);
           const a = document.createElement("a");
           a.href = url; a.download = String(t.n).padStart(2, "0") + " " + slug(t.title) + ".flac";
           a.click(); dl.textContent = "download";
         } catch (_) { dl.textContent = "retry"; }
       };
       li.appendChild(dl);
-      rows[idx] = li;
     }
     ol.appendChild(li);
   });
   frag.appendChild(ol);
 
-  // Keyed on the file, not the index: the cache outlives the render and the
-  // indices are per-card, so keying on `i` would serve one record's track to
-  // another the moment two were open.
-  async function blobFor(i) {
-    const key = tracks[i].file;
-    if (!album.blobs[key]) {
-      const blob = await api(key, { raw: true });
-      album.blobs[key] = URL.createObjectURL(blob);
-      blobUrls.push(album.blobs[key]);
-    }
-    return album.blobs[key];
-  }
-
-  async function play(i) {
-    if (i < 0 || i >= tracks.length) return;
-    if (i !== cur || !mine()) {
-      now.textContent = "Loading — " + tracks[i].title;
-      try { audio.src = await blobFor(i); } catch (e) { now.textContent = "Failed: " + e.message; return; }
-      cur = i;
-      album.pressId = p.id;
-      album.index = i;
-      markRow(i);
-      now.textContent = tracks[i].n + ". " + tracks[i].title;
-    }
-    audio.play();
-  }
-
-  function markRow(i) {
-    rows.forEach((r, n) => r && r.classList.toggle("cur", n === i));
-  }
-
-  function paintTime() {
-    if (!mine()) { time.textContent = ""; seek.value = 0; return; }
-    // Chromium reports duration late for a FLAC blob, so for the first second
-    // or two there is a current time and no total. Showing elapsed alone is
-    // better than a blank field, which reads as broken.
-    const total = isFinite(audio.duration) && audio.duration ? audio.duration : 0;
-    time.textContent = fmtDur(audio.currentTime) + (total ? " / " + fmtDur(total) : "");
-    if (!scrubbing) seek.value = total ? Math.round((audio.currentTime / total) * 1000) : 0;
-  }
-
-  toggle.onclick = (e) => {
-    e.stopPropagation();
-    if (audio.paused) play(cur < 0 ? 0 : cur); else audio.pause();
-  };
-  prev.onclick = (e) => { e.stopPropagation(); play(cur <= 0 ? 0 : cur - 1); };
-  next.onclick = (e) => { e.stopPropagation(); play(cur + 1); };
-  // Assigned, not added: the element is shared and outlives this card, so a
-  // rebuild must replace the previous card's handlers rather than stack on top
-  // of them. The newest card is the visible one and owns the controls.
-  audio.onplay = () => { toggle.textContent = "⏸"; };
-  audio.onpause = () => { toggle.textContent = "▶"; };
-  // Auto-advance: a record should play through on its own.
-  audio.onended = () => {
-    if (cur + 1 < tracks.length) play(cur + 1);
-    else { toggle.textContent = "▶"; album.index = -1; }
-  };
-  audio.ontimeupdate = paintTime;
-  audio.onloadedmetadata = paintTime;   // the total arrives after playback starts
-  audio.ondurationchange = paintTime;
-
-  // Restore, rather than reset. A poll lands every few seconds while a record
-  // plays; before this, each one produced a fresh set of controls reading
-  // "Ready" over audio that was already halfway through a track.
-  if (mine() && cur >= 0 && tracks[cur]) {
-    markRow(cur);
-    now.textContent = tracks[cur].n + ". " + tracks[cur].title;
-    toggle.textContent = audio.paused ? "▶" : "⏸";
-    paintTime();
-  }
+  // A rebuild landed mid-track: bring the transport back into this card.
+  if (mine && album.index >= 0) slot.appendChild(albumAudio());
   return frag;
 }
 
@@ -2683,6 +2678,9 @@ function renderPresses() {
     wrap.appendChild(body);
     box.appendChild(wrap);
   });
+  // The cards exist now, so the playing one can be marked. buildPlayer runs
+  // per card and cannot see the finished list.
+  albumMarkRows();
 }
 
 async function loadLibrary() {
