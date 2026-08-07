@@ -313,7 +313,50 @@ def cut(path, out_dir, transparent=True, use_model=True, **kw):
             _cut(path, out_dir, transparent, use_model, **kw)]
 
 
-def pipeline(sheet_path, out_dir, use_model=True, distance=CONTENT_DISTANCE):
+# A frame sequence is illegible as a list of PNGs. The one thing that makes it
+# readable is seeing it move, so every set gets a preview it can be judged by.
+DEFAULT_FPS = 8
+
+
+def animate(frame_paths, out_path, fps=DEFAULT_FPS):
+    """Write an animated, transparent GIF of the frames. Returns the path.
+
+    Frames are *padded* onto a common canvas rather than resized. Cut frames are
+    never the same size — the model spaces poses irregularly and at different
+    scales — and scaling each to fit would make the character pulse between
+    frames, which reads as a fault in the sprite rather than in the preview.
+    Each frame is centred horizontally and sat on the bottom, so the character
+    stands on a consistent floor instead of bobbing.
+    """
+    if not frame_paths:
+        return None
+    from PIL import Image
+
+    frames = [Image.open(p).convert("RGBA") for p in frame_paths]
+    width = max(f.width for f in frames)
+    height = max(f.height for f in frames)
+
+    canvas = []
+    for f in frames:
+        sheet = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        sheet.paste(f, ((width - f.width) // 2, height - f.height), f)
+        # Quantise with one palette slot reserved for full transparency: a GIF
+        # has no alpha channel, only a transparent colour index.
+        flat = sheet.convert("RGB").quantize(colors=255, method=Image.MEDIANCUT)
+        mask = sheet.getchannel("A").point(lambda a: 255 if a <= 128 else 0)
+        flat.paste(255, mask)
+        canvas.append(flat)
+
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    canvas[0].save(out_path, save_all=True, append_images=canvas[1:],
+                   duration=max(int(1000.0 / max(fps, 1)), 20), loop=0,
+                   transparency=255, disposal=2, optimize=False)
+    for f in frames:
+        f.close()
+    return out_path
+
+
+def pipeline(sheet_path, out_dir, use_model=True, distance=CONTENT_DISTANCE, fps=DEFAULT_FPS):
     """Cut, matte and describe a sheet in one call. Returns the atlas.
 
     This is what the gateway invokes as a subprocess: it prints the atlas as
@@ -334,6 +377,11 @@ def pipeline(sheet_path, out_dir, use_model=True, distance=CONTENT_DISTANCE):
         frames.append(frame)
     data["frames"] = frames
     data["frame_dir"] = out_dir
+    preview = animate([f["file"] for f in frames],
+                      os.path.join(out_dir, "preview.gif"), fps=fps)
+    if preview:
+        data["preview"] = preview
+        data["fps"] = fps
     return data
 
 
@@ -350,6 +398,8 @@ def main(argv=None):
                     help="matte by colour distance instead of segmentation. Faster and "
                          "dependency-free, but it makes a pale sprite on a pale "
                          "background transparent — measured, on a white robot")
+    ap.add_argument("--fps", type=int, default=DEFAULT_FPS,
+                    help="frame rate of the preview GIF")
     ap.add_argument("--distance", type=int, default=CONTENT_DISTANCE,
                     help="how far from the background a pixel must be to be content")
     args = ap.parse_args(argv)
@@ -361,7 +411,7 @@ def main(argv=None):
         try:
             print(json.dumps(pipeline(args.sheet, args.out,
                                       use_model=not args.no_model,
-                                      distance=args.distance)))
+                                      distance=args.distance, fps=args.fps)))
             return 0
         except Exception as exc:
             print(json.dumps({"error": "%s: %s" % (type(exc).__name__, exc)}))

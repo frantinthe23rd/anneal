@@ -1246,7 +1246,7 @@
           "sprites"
         ],
         "summary": "Generate an animation sheet and cut it into frames",
-        "description": "One brief becomes a set of transparent PNGs — one per frame — plus an atlas saying where each came from.\n\n**Every frame comes out of a single image generation.** That is the design, not an optimisation. Generating N sprites separately produces N different characters: the model has no memory between samples, so the armour, the palette and the proportions all drift. Asking for one picture containing all the poses is what makes them the same character.\n\n**`frames` is a hint, not a contract.** Two measured runs asking for four came back with five, laid out 3+2 across two rows rather than in a line. Diffusion does not count. Read `frames` in the response — that is what you actually got — and treat `requested_frames` as what was asked for. The cap exists because past eight poses in one image each is too small to use.\n\n**Name the poses if you want motion.** Left to itself the model gives you identity and almost no animation: a run of \"only the pose changing\" returned five near-identical standing slimes. Passing `poses` (`[\"idle\", \"crouched to jump\", \"mid-air\", \"landing splat\"]`) produced genuinely different poses — at the cost of more design drift between frames, since the model is being pulled two ways at four steps. Both effects are visible; pick which one matters for the asset.\n\n**The sheet is not a grid.** Poses are spaced irregularly, at different sizes, and across however many rows the model felt like, so frames are located by content rather than by dividing the canvas — read left to right, then top to bottom. A soft drop shadow is excluded rather than cut as a frame of its own.\n\n**Backgrounds are removed with a segmentation model, not colour distance.** Colour keying is available as a fallback but loses pale characters — a white robot on a white sheet came back see-through. That cut runs in a separate interpreter (`ANNEAL_SPRITE_PYTHON`) because it needs rembg, which is kept out of the pinned environment that serves the models.\n\nSynchronous, and it holds the heavy slot for one image generation — measured at 2 min 8 s end to end at the default size, twice. If music is resident it is evicted; if music is mid-generation the request waits for the slot rather than failing.",
+        "description": "One brief becomes a set of transparent PNGs — one per frame — plus an atlas saying where each came from.\n\n**Every frame comes out of a single image generation.** That is the design, not an optimisation. Generating N sprites separately produces N different characters: the model has no memory between samples, so the armour, the palette and the proportions all drift. Asking for one picture containing all the poses is what makes them the same character.\n\n**`frames` is a hint, not a contract.** Two measured runs asking for four came back with five, laid out 3+2 across two rows rather than in a line. Diffusion does not count. Read `frames` in the response — that is what you actually got — and treat `requested_frames` as what was asked for. The cap exists because past eight poses in one image each is too small to use.\n\n**Name the poses if you want motion.** Left to itself the model gives you identity and almost no animation: a run of \"only the pose changing\" returned five near-identical standing slimes. Passing `poses` (`[\"idle\", \"crouched to jump\", \"mid-air\", \"landing splat\"]`) produced genuinely different poses — at the cost of more design drift between frames, since the model is being pulled two ways at four steps. Both effects are visible; pick which one matters for the asset.\n\n**The sheet is not a grid.** Poses are spaced irregularly, at different sizes, and across however many rows the model felt like, so frames are located by content rather than by dividing the canvas — read left to right, then top to bottom. A soft drop shadow is excluded rather than cut as a frame of its own.\n\n**Backgrounds are removed with a segmentation model, not colour distance.** Colour keying is available as a fallback but loses pale characters — a white robot on a white sheet came back see-through. That cut runs in a separate interpreter (`ANNEAL_SPRITE_PYTHON`) because it needs rembg, which is kept out of the pinned environment that serves the models.\n\nSynchronous, and it holds the heavy slot for one image generation — measured at 2 min 8 s end to end at the default size, twice. If music is resident it is evicted; if music is mid-generation the request waits for the slot rather than failing.\n\n**A set is one asset.** The frames land in their own directory with an `atlas.json` and an animated `preview.gif` built from them, and the library lists the set as a single row represented by that preview — not one row per frame. The response carries `preview` and `preview_url`. `fps` sets the preview's frame rate; it changes nothing about the frames themselves, which are what a game actually loads.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1290,6 +1290,11 @@
                     },
                     "maxItems": 8,
                     "description": "One description per frame, in order — e.g. [\"idle\", \"crouched to jump\", \"stretched mid-air\", \"landing splat\"]. Sets the frame count. Without it the poses come back near-identical; with it they genuinely differ but the character design drifts more."
+                  },
+                  "fps": {
+                    "type": "integer",
+                    "default": 8,
+                    "description": "Frame rate of the preview GIF only."
                   }
                 }
               }
@@ -1338,7 +1343,10 @@
                     ],
                     "sheet": "/Volumes/Storage/AIMusic/outputs/images/sprite-sheet-…png",
                     "sheet_url": "/v1/images/file?path=…",
-                    "requested_frames": 4
+                    "requested_frames": 4,
+                    "preview": ".../outputs/sprites/20260807-212253-a-small-orange-robot/preview.gif",
+                    "preview_url": "/v1/outputs/file?path=…",
+                    "fps": 8
                   },
                   "code": 200,
                   "error": null

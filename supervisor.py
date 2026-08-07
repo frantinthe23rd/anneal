@@ -142,6 +142,7 @@ CONTENT_TYPES = {
     # handler adds Content-Disposition: attachment and a CSP on top, so three
     # separate things would have to fail for a generated file to execute.
     ".svg": "image/svg+xml",
+    ".gif": "image/gif",
 }
 
 HOP_BY_HOP = {
@@ -1279,6 +1280,17 @@ class Handler(BaseHTTPRequestHandler):
                     "frame": frame["index"], "frames": len(data["frames"]),
                     "sheet": sheet, "request": dict(payload),
                 })
+        # One asset, not a scattering of PNGs: the set directory is marked, so
+        # the library shows it as a single row represented by its preview
+        # rather than one row per frame sorted among other people's album art.
+        outputs.write_set(data.get("frame_dir") or out_dir, {
+            "prompt": subject, "style": style, "service": "sprites",
+            "frames": len(data["frames"]), "preview": data.get("preview"),
+            "fps": data.get("fps"), "sheet": sheet, "request": dict(payload),
+        })
+        if data.get("preview"):
+            data["preview_url"] = ("/v1/outputs/file?path="
+                                   + urllib.parse.quote(data["preview"], safe=""))
         data["subject"] = subject
         data["style"] = style
         data["requested_frames"] = frames

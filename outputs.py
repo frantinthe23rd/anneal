@@ -34,6 +34,61 @@ import paths
 KINDS = ("music", "speech", "images", "vectors", "sprites")
 SIDECAR_SUFFIX = ".json"
 
+# A directory carrying this file is one asset, not the files inside it.
+#
+# Sprite frames arrive as a directory. Listing each frame separately turned a
+# four-pose walk cycle into four unrelated rows sorted among other people's
+# album art, and listing the *directory* was worse — its /v1/outputs/file URL
+# 404d, because a directory is not a file. A set is one row, represented by its
+# preview, with the frames still on disk because those are what a game loads.
+SET_MARKER = "set.json"
+
+
+def write_set(directory, meta):
+    """Mark a directory as one asset. Returns the marker path."""
+    meta = dict(meta or {})
+    meta.setdefault("created", time.time())
+    path = os.path.join(directory, SET_MARKER)
+    try:
+        with open(path, "w") as fh:
+            json.dump(meta, fh, indent=2)
+    except OSError:
+        return None
+    return path
+
+
+def read_set(directory):
+    try:
+        with open(os.path.join(directory, SET_MARKER)) as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def _set_entry(directory, kind, meta):
+    """One library row for a whole set.
+
+    Represented by its preview GIF where there is one. Where there is not — a
+    cut that produced frames but no preview — it falls back to the first frame,
+    because losing the work from the library silently is worse than showing it
+    without an animation.
+    """
+    face = meta.get("preview")
+    if not face or not os.path.isfile(face):
+        others = sorted(f for f in os.listdir(directory)
+                        if not f.endswith(SIDECAR_SUFFIX) and f != SET_MARKER)
+        face = os.path.join(directory, others[0]) if others else None
+    if not face or not os.path.isfile(face):
+        return None
+    entry = _entry(face, kind)
+    if entry:
+        entry["name"] = os.path.basename(directory)
+        entry["created"] = meta.get("created", entry["created"])
+        entry["prompt"] = meta.get("prompt", entry["prompt"])
+        entry["meta"] = dict(entry["meta"], **meta)
+        entry["set_dir"] = directory
+    return entry
+
 
 def root():
     base = os.environ.get("AIMUSIC_ROOT", "/Volumes/Storage/AIMusic")
@@ -205,6 +260,14 @@ def listing(kind=None, limit=200, offset=0):
         # size, and a /v1/outputs/file URL that 404s because it is not a file.
         for folder, dirnames, filenames in os.walk(directory):
             dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            marker = read_set(folder) if SET_MARKER in filenames else None
+            if marker is not None:
+                # One row for the whole thing, and do not descend into it.
+                dirnames[:] = []
+                entry = _set_entry(folder, k, marker)
+                if entry:
+                    entries.append(entry)
+                continue
             for name in filenames:
                 if name.endswith(SIDECAR_SUFFIX) or name.startswith("."):
                     continue

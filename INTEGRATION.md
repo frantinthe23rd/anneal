@@ -701,6 +701,19 @@ than a silent fallback.
 Synchronous, measured at **2 min 8 s** end to end at the default size on both
 runs — one image generation plus a few seconds to cut. It evicts music.
 
+**A set is one asset, and it comes with a preview.** The frames land in their
+own directory alongside an `atlas.json` and an animated `preview.gif` built from
+them. The library lists the set as a **single row** represented by that preview,
+rather than one row per frame sorted among unrelated output — a four-pose walk
+cycle arriving as four unconnected entries was the previous behaviour and it
+made a set impossible to find again.
+
+The response carries `preview` and `preview_url`. `fps` (default 8) sets the
+preview's frame rate and changes nothing about the frames, which are what a game
+loads. Frames are padded onto a common canvas and bottom-aligned rather than
+resized, so the character stands on a consistent floor; where the source poses
+genuinely differ in scale, the preview shows that rather than hiding it.
+
 **When the sheet can't be cut** you get a 502 that still carries `sheet` and
 `sheet_url`. The model occasionally returns one scene rather than separate
 poses; the image cost minutes and is in the library either way, so it is handed
