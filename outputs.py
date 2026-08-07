@@ -28,6 +28,8 @@ import shutil
 import time
 import uuid
 
+import paths
+
 KINDS = ("music", "speech", "images")
 SIDECAR_SUFFIX = ".json"
 
@@ -153,8 +155,8 @@ def listing(kind=None, limit=200, offset=0):
 
 def delete(path):
     """Remove an output and its sidecar. Refuses anything outside outputs/."""
-    real = os.path.realpath(path)
-    if not real.startswith(os.path.realpath(root()) + os.sep):
+    real = paths.resolve_within(path, [root()])
+    if real is None:
         return False
     try:
         os.remove(real)

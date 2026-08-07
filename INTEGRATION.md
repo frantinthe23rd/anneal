@@ -470,6 +470,9 @@ minutes, not seconds — speech is the only one that feels instant.
 | `409` on an image or music request | The other heavy model is mid-job | Wait and retry, or stop it explicitly |
 | `502` while polling | Backend restarting | Retry the poll. **Never resubmit** |
 | `400 ... looks double-encoded` | You re-encoded the `file` field | Append `file` to the base URL as-is |
+| `413` on any POST | Request body over `ANNEAL_MAX_REQUEST_BYTES` (2 MB) | Shorten it. The connection is closed, so reconnect |
+| `400 ... over the … second limit` on `/v1/press` | `tracks` × `duration_max` exceeds `ANNEAL_MAX_PRESS_SECONDS` (1800 s) | Fewer or shorter tracks. Checked at submit, so you find out immediately rather than an hour in |
+| `413` on `/v1/press/download` | The FLAC masters exceed the zip ceiling | Fetch tracks individually from `/v1/outputs/file` |
 | `status: 2`, `orphaned: true` | Backend restarted; queue was lost | Resubmit — it is not coming back |
 | `status: 2` otherwise | Generation failed | `result` has the traceback; surface it and let the user retry |
 | Polls forever at `status: 0` | Should no longer happen — report it | Cross-check `GET /v1/stats` for `queued`/`running` |

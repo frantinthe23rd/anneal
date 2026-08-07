@@ -929,10 +929,13 @@
             "description": "Started"
           },
           "400": {
-            "description": "Missing prompt"
+            "description": "Missing prompt, or tracks × duration_max exceeds the per-press runtime limit (ANNEAL_MAX_PRESS_SECONDS, default 1800s). Checked at submit time, so the caller learns of it immediately rather than an hour into a run."
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          },
+          "413": {
+            "description": "Request body over ANNEAL_MAX_REQUEST_BYTES (default 2 MB). The connection is closed rather than draining the body."
           }
         }
       },
@@ -1043,6 +1046,9 @@
           },
           "400": {
             "description": "Unsupported format"
+          },
+          "413": {
+            "description": "The press's FLAC masters exceed ANNEAL_MAX_ZIP_BYTES. The archive is assembled on disk before anything is sent, so it is refused up front; fetch tracks individually instead."
           }
         }
       }

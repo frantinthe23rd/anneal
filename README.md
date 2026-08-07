@@ -395,6 +395,29 @@ Two ways to authenticate:
 The identity headers are trusted **only while the listener is on loopback**. Bind
 anywhere else and they're ignored outright, since they could then be forged.
 
+### Limits
+
+Everything a caller can ask for is bounded, so one request cannot exhaust the
+machine. These are deliberately generous — no honest request meets one.
+
+| Variable | Default | What it bounds |
+| --- | --- | --- |
+| `ANNEAL_MAX_REQUEST_BYTES` | 2 MB | Any request body. Refused on the declared `Content-Length`, before a byte is read, then the connection is closed |
+| `ANNEAL_MAX_PROMPT_CHARS` | 8000 | A press brief |
+| `ANNEAL_MAX_PRESS_SECONDS` | 1800 | `tracks × duration` for one press. Eight ten-minute tracks was previously accepted and is hours of generation holding the heavy slot |
+| `ANNEAL_MAX_ZIP_BYTES` | 4 GB | The album zip, which is built on disk before any of it is sent |
+| `ANNEAL_JOB_RETENTION_SECONDS` | 7 days | Finished rows in `jobs.db`, pruned hourly. Pending rows are never pruned — that is the replay queue |
+
+Files are served off disk only from under `outputs/` and the backend's own
+cache, only if the resolved path is genuinely inside one of them, and only if
+the extension is a media type Anneal produces. `paths.py` is the single
+containment check; `tests/test_paths.py` covers the traversal, symlink and
+shared-prefix cases that a hand-rolled `startswith` gets wrong.
+
+**`outputs/` still has no retention policy** and grows without bound — see
+[#13](https://github.com/frantinthe23rd/anneal/issues/13). Deleting generated
+work automatically is a decision, not a default.
+
 Public without auth: `/health`, `/supervisor/status`, `/supervisor/auth`,
 `/supervisor/whoami`, `/docs`, `/openapi.json` and the UI itself. Everything
 else requires one of the two methods above.

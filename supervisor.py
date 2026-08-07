@@ -51,6 +51,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from services import SERVICES, MUSIC_TIERS, DEFAULT_MUSIC_TIER, resolve  # noqa: E402
 from jobstore import JobStore  # noqa: E402
 import outputs  # noqa: E402
+import paths  # noqa: E402
 from builder import Press, PressStore  # noqa: E402
 
 LISTEN_HOST = os.environ.get("SUPERVISOR_HOST", "127.0.0.1")
@@ -72,6 +73,11 @@ TEXT_MODEL_NAME = os.path.basename(os.path.dirname(os.path.dirname(TEXT_MODEL_PA
     .replace("models--", "").replace("--", "/") if TEXT_MODEL_PATH else ""
 
 REAP_INTERVAL = 20.0
+# Finished job rows are only useful for as long as someone might still poll the
+# task id, which MAX_REPLAY_AGE_SECONDS already puts at six hours. A week is
+# generous and keeps recent history readable in the database.
+JOB_RETENTION_SECONDS = int(os.environ.get("ANNEAL_JOB_RETENTION_SECONDS", str(7 * 24 * 3600)))
+PRUNE_INTERVAL = 3600.0
 PROXY_TIMEOUT = float(os.environ.get("PROXY_TIMEOUT", "1800"))
 
 # Refuse to start a heavy model below this much free RAM. Deliberately modest:
@@ -91,12 +97,36 @@ ALLOWED_LOGINS = {
     s.strip().lower() for s in os.environ.get("ANNEAL_ALLOWED_LOGINS", "").split(",") if s.strip()
 }
 
+# Nothing here has a legitimate multi-megabyte request body: the largest is a
+# lyric sheet. Without a cap, `Content-Length: 4000000000` is a one-line memory
+# exhaustion, because the body is read into a bytes object before anything looks
+# at it. Generous enough that no real caller notices, small enough that a
+# malicious one cannot page the machine out.
+MAX_REQUEST_BYTES = int(os.environ.get("ANNEAL_MAX_REQUEST_BYTES", str(2 * 1024 * 1024)))
+# The planning LM's context is finite and a prompt this long is not a prompt.
+MAX_PROMPT_CHARS = int(os.environ.get("ANNEAL_MAX_PROMPT_CHARS", "8000"))
+# A press can ask for 8 tracks of 600s each. Nothing stopped it, and that is
+# most of a day of generation on this hardware from a single unattended request.
+MAX_PRESS_TOTAL_SECONDS = int(os.environ.get("ANNEAL_MAX_PRESS_SECONDS", "1800"))
+# The album zip is assembled in a temp directory before anything is sent, so its
+# size is a disk commitment. Judged from the FLAC masters, which are the largest
+# thing that can go in.
+MAX_ZIP_SOURCE_BYTES = int(os.environ.get("ANNEAL_MAX_ZIP_BYTES", str(4 * 1024 ** 3)))
+
 # Generated files are served straight off disk, but only from under these roots.
 # Reading back an old result must never wake the model that made it.
+#
+# AUDIO_ROOTS used to include the whole of AIMUSIC_ROOT, which is also where
+# jobs.db, presses.db, the four log files, hf-cache and 9.4 GB of weights live.
+# Any authenticated caller could read all of it through `/v1/audio?path=`. That
+# is defensible on a personal tailnet and is precisely what #13 is about, so the
+# root is now outputs/ — the only place under AIMUSIC_ROOT that holds audio —
+# alongside the backend's own temp cache, which is where a take lives until
+# _persist_music_takes copies it out.
 AUDIO_ROOTS = [
     os.path.realpath(os.path.join(ACESTEP_DIR, ".cache")),
     os.path.realpath(os.path.join(ACESTEP_DIR, "gradio_outputs")),
-    os.path.realpath(AIMUSIC_ROOT),
+    os.path.realpath(os.path.join(AIMUSIC_ROOT, "outputs")),
 ]
 IMAGE_ROOTS = [os.path.realpath(os.path.join(AIMUSIC_ROOT, "outputs"))]
 
@@ -832,8 +862,23 @@ def start_service(name):
 
 
 def reaper():
+    last_prune = 0.0
     while True:
         time.sleep(REAP_INTERVAL)
+
+        # JobStore.prune() has existed since the job store was written and was
+        # called from nowhere, so jobs.db only ever grew. It drops terminal rows
+        # older than a week; a pending row is never touched, because that is the
+        # replay queue the store exists for. The reaper is the right home — it
+        # is the only thing already running on a timer, and pruning is exactly
+        # the same kind of work as unloading an idle model.
+        if time.time() - last_prune > PRUNE_INTERVAL:
+            last_prune = time.time()
+            try:
+                JOBS.prune(JOB_RETENTION_SECONDS)
+            except Exception as exc:
+                log("job prune failed: %r" % exc)
+
         for name, svc in SERVICE_OBJECTS.items():
             try:
                 if not svc.is_running():
@@ -857,6 +902,41 @@ def reaper():
                 svc.stop("idle %.0fs" % idle_for)
             except Exception as exc:  # a reaper crash must not wedge the proxy
                 log("reaper error on %s: %r" % (name, exc))
+
+
+def press_limits(payload):
+    """Why this press must be refused, or None if it is within bounds.
+
+    `builder.py` already clamps the track count to 8 and any single duration to
+    600s, but nothing bounded their product. Eight ten-minute tracks is 80
+    minutes of *audio*, which on this hardware is hours of generation from one
+    unattended POST — and it holds the heavy slot for all of it, so nothing else
+    on the machine runs meanwhile (#14).
+
+    The cap is on the worst case the request can produce, not on the plan the LM
+    eventually returns: the point is to answer at submit time, while there is
+    still a caller listening, rather than to abort something halfway.
+    """
+    prompt = payload.get("prompt") or ""
+    if len(prompt) > MAX_PROMPT_CHARS:
+        return ("prompt is %d characters, over the %d character limit"
+                % (len(prompt), MAX_PROMPT_CHARS))
+
+    def _int(key, default):
+        try:
+            return int(payload.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    count = max(1, min(_int("tracks", 1), 8))
+    target = _int("duration", 90)
+    longest = min(600, _int("duration_max", round(target * 1.5)))
+    worst_case = count * max(target, longest)
+    if worst_case > MAX_PRESS_TOTAL_SECONDS:
+        return ("%d track(s) of up to %ds each is %d seconds of audio, over the %d "
+                "second limit for one press — reduce tracks or duration"
+                % (count, longest, worst_case, MAX_PRESS_TOTAL_SECONDS))
+    return None
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -906,9 +986,32 @@ class Handler(BaseHTTPRequestHandler):
     def _authorized(self):
         return self._auth_method() is not None
 
+    def _read_body_bytes(self):
+        """The request body, or None having already answered 413.
+
+        Every path that reads a body goes through here, so the cap cannot be
+        applied to some routes and forgotten on others. On refusal the
+        connection is closed rather than kept alive: the body is still sitting
+        unread in the socket, and draining megabytes just to stay pipelined
+        would defeat the point of refusing it.
+        """
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length > MAX_REQUEST_BYTES:
+            self.close_connection = True
+            self._send_json({"code": 413,
+                             "error": "request body of %d bytes exceeds the %d byte limit"
+                                      % (length, MAX_REQUEST_BYTES),
+                             "limit_bytes": MAX_REQUEST_BYTES}, 413)
+            return None
+        return self.rfile.read(length) if length else b""
+
     def _body(self):
-        length = int(self.headers.get("Content-Length") or 0)
-        raw = self.rfile.read(length) if length else b""
+        raw = self._read_body_bytes()
+        if raw is None:
+            return None, None
         try:
             return json.loads(raw or b"{}"), raw
         except ValueError:
@@ -928,13 +1031,17 @@ class Handler(BaseHTTPRequestHandler):
         raw = (params.get("path") or [""])[0]
         if not raw:
             return False
-        path = os.path.realpath(raw)
-        if not any(path.startswith(root + os.sep) for root in roots):
-            return False
-        if not os.path.isfile(path):
+        path = paths.safe_file(raw, roots)
+        if path is None:
             return False
 
-        ctype = CONTENT_TYPES.get(os.path.splitext(path)[1].lower(), "application/octet-stream")
+        # Belt and braces with the root narrowing above: these endpoints exist
+        # to hand back generated media, and every artefact they legitimately
+        # serve has one of these extensions. A root that later grows to include
+        # something else cannot then leak a database or a log through here.
+        ctype = CONTENT_TYPES.get(os.path.splitext(path)[1].lower())
+        if ctype is None:
+            return False
 
         self.send_response(200)
         self.send_header("Content-Type", ctype)
@@ -980,13 +1087,38 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"code": 409, "error": "nothing finished to download yet"}, 409)
             return
 
+        # The archive is built on disk before a byte is sent, so its size is a
+        # disk commitment, not just bandwidth. Masters are FLAC: ten minutes is
+        # roughly 60 MB, so a maximum-length press is gigabytes. Refuse up front
+        # with a number rather than filling the temp volume and failing midway
+        # through a response we have already started.
+        source_bytes = 0
+        for t in tracks:
+            src = paths.safe_file(self._path_from_file_url(t.get("file")), AUDIO_ROOTS)
+            if src:
+                source_bytes += os.path.getsize(src)
+        if source_bytes > MAX_ZIP_SOURCE_BYTES:
+            self._send_json({"code": 413,
+                             "error": "this press is %.1f GB of masters, over the %.1f GB "
+                                      "download limit — fetch tracks individually"
+                                      % (source_bytes / 1e9, MAX_ZIP_SOURCE_BYTES / 1e9),
+                             "source_bytes": source_bytes}, 413)
+            return
+
         workdir = tempfile.mkdtemp(prefix="press-zip-")
         zip_path = os.path.join(workdir, "album.zip")
         try:
             with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
                 for t in tracks:
-                    src = self._path_from_file_url(t["file"])
-                    if not src or not os.path.isfile(src):
+                    # The stored `file` is a URL the gateway wrote, but it round
+                    # trips through sqlite and originates near model output, and
+                    # it is about to become an argument to ffmpeg. Check it
+                    # against the same roots the download endpoints use rather
+                    # than trusting where it came from.
+                    src = paths.safe_file(self._path_from_file_url(t["file"]), AUDIO_ROOTS)
+                    if not src:
+                        log("press zip: skipping track %s, path outside allowed roots"
+                            % t.get("n"))
                         continue
                     stem = "%02d %s" % (t.get("n", 0), outputs.slugify(t.get("title", "track"), 60))
                     if fmt == "flac" and src.lower().endswith(".flac"):
@@ -1010,8 +1142,9 @@ class Handler(BaseHTTPRequestHandler):
                         log("press zip: transcode failed for %s: %r" % (stem, exc))
 
                 cover = press.get("cover") or {}
-                cover_path = cover.get("path") if isinstance(cover, dict) else None
-                if cover_path and os.path.isfile(cover_path):
+                cover_path = paths.safe_file(
+                    cover.get("path") if isinstance(cover, dict) else None, IMAGE_ROOTS)
+                if cover_path:
                     zf.write(cover_path, "cover" + os.path.splitext(cover_path)[1])
 
                 listing = ["%s%s" % (title, " — " + artist if artist else ""), ""]
@@ -1244,8 +1377,10 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if body is None:
-            length = int(self.headers.get("Content-Length") or 0)
-            body = self.rfile.read(length) if length else None
+            body = self._read_body_bytes()
+            if body is None:
+                return                      # 413 already sent
+            body = body or None
         if route == "/query_result":
             body = self._rewrite_polled_ids(body)
         elif route in ("/v1/chat/completions", "/v1/completions") and body:
@@ -1619,8 +1754,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"code": 401, "error": "unauthorized"}, 401)
                 return
             payload, _ = self._body()
+            if payload is None:
+                return              # 413 already sent
             if not (payload.get("prompt") or "").strip():
                 self._send_json({"code": 400, "error": "'prompt' is required"}, 400)
+                return
+            problem = press_limits(payload)
+            if problem:
+                self._send_json({"code": 400, "error": problem}, 400)
                 return
             pid = PRESSES.create(payload)
             # Runs for minutes to tens of minutes, so it cannot be a blocking
@@ -1636,6 +1777,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"code": 401, "error": "unauthorized"}, 401)
                 return
             payload, _ = self._body()
+            if payload is None:
+                return              # 413 already sent
             pid = payload.get("id") or payload.get("press_id")
             press = PRESSES.get(pid) if pid else None
             if not press:
@@ -1654,6 +1797,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"code": 401, "error": "unauthorized"}, 401)
                 return
             payload, _ = self._body()
+            if payload is None:
+                return              # 413 already sent
             pid = payload.get("id") or payload.get("press_id")
             PRESS.cancel(pid)
             self._send_json({"data": {"cancelled": pid}, "code": 200, "error": None})
@@ -1667,6 +1812,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"code": 401, "error": "unauthorized"}, 401)
                 return
             payload, _ = self._body()
+            if payload is None:
+                return              # 413 already sent
             prompt = (payload.get("prompt") or "").strip()
             if not prompt:
                 self._send_json({"code": 400, "error": "'prompt' is required"}, 400)
@@ -1692,6 +1839,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if route in ("/supervisor/start", "/supervisor/stop", "/supervisor/status"):
             payload, _ = self._body()
+            if payload is None:
+                return              # 413 already sent
             if route == "/supervisor/status":
                 self._send_json({"data": self._status_payload(), "code": 200, "error": None})
                 return
