@@ -220,9 +220,10 @@ that.
   browsing wakes no model.
 
   Worth knowing when comparing takes: **generation is not deterministic**, even
-  with `use_random_seed: false`. Two identical requests produce different audio,
-  because the planning LM samples at temperature. Details tells you what was
-  asked for; it cannot tell you why two takes of the same request differ.
+  with `use_random_seed: false`. Two identical requests produce different audio.
+  Details tells you what was asked for; it cannot tell you why two takes of the
+  same request differ. See [Determinism](#determinism) — the cause is not the
+  one this file used to claim.
 - `Cmd/Ctrl+Enter` submits.
 
 Dark by design — the accent colour is reserved for things that are genuinely hot
@@ -334,6 +335,40 @@ non-Gradio paths assume turbo:
 Measured on the same prompt and seed, high is ~2× the generation time, 7.2 dB
 more energy above 12 kHz and a 23% larger lossless file. **Whether that is
 better is a judgement for your ears** — see the note on verification below.
+
+### Determinism
+
+This file, `CLAUDE.md` and the UI's Guide all used to say generation is
+non-deterministic *because the planning LM samples at temperature*. That
+explanation is wrong, or at least badly incomplete, and it was never tested.
+Measured on 2026-08-07, four 30-second draft-tier generations through the
+gateway:
+
+| Request | Planned `metas` | Audio |
+| --- | --- | --- |
+| `thinking: false`, `use_random_seed: false`, `seed: 424242`, ×2 | **differ** — E major vs F major | differ |
+| the same plus `bpm: 84`, `key_scale: "C major"`, ×2 | **identical** | **still differ** |
+
+Two things follow.
+
+**`thinking: false` does not turn the planning LM off.** Upstream's own request
+model says so: *"Regardless of thinking, if some metas are missing, server may
+use LM to fill them."* `thinking` selects whether the LM generates audio
+*codes*; it still fills in an unspecified bpm and key, and it samples when it
+does. That is why the key changed between two identical requests.
+
+**Pinning the plan is not enough either.** With `bpm` and `key_scale` supplied,
+the reported `metas` were byte-identical across both runs and the audio still
+was not. The take's own record echoes `"seed": "424242"`, so the seed was
+accepted rather than silently ignored. Something downstream of the plan is
+still sampling — MLX/Metal reduction order is the obvious suspect, but that is
+a hypothesis and has not been tested.
+
+So: byte-comparing two runs still proves nothing about quality, and "same seed,
+same output" is not available here by any route currently known.
+[#22](https://github.com/frantinthe23rd/anneal/issues/22) has the consequences
+for iterative refinement — including that **repaint does not need
+determinism**, and is already exposed by the REST API.
 
 ### `metas` is intent, not measurement
 

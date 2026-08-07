@@ -66,8 +66,14 @@ loaded; if behaviour doesn't match the code, check the process start time first.
 - **ACE-Step's REST API assumes turbo.** Non-turbo models need `dcw_enabled=false`
   and must not use the MLX DiT, which is a turbo-specific port. Both are patched;
   see #8.
-- **Generation is not deterministic** even with a fixed seed — the planning LM
-  samples at temperature. Byte-comparing two runs proves nothing.
+- **Generation is not deterministic** even with a fixed seed. The reason given
+  here for months — "the planning LM samples at temperature" — was never tested
+  and is wrong. Measured: with `thinking: false`, a fixed seed *and* `bpm` /
+  `key_scale` pinned, the reported `metas` come back identical and the audio
+  still differs. `thinking: false` does not disable the planning LM (upstream:
+  "regardless of thinking, if some metas are missing, server may use LM to fill
+  them"), and something below the plan samples too. Byte-comparing two runs
+  proves nothing. See README → Determinism.
 - **`grep -m1` / `head -1` mid-pipeline** SIGPIPEs upstream stages; under the
   launchers' `set -euo pipefail` that silently aborts the whole script.
 - **Streamed responses must be close-delimited.** `Transfer-Encoding` is
