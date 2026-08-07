@@ -274,6 +274,19 @@ an hour. The stage order — every text stage, then every music stage, then the
 cover — is deliberate: doing lyrics→music→art per track would evict and reload a
 multi-gigabyte model between every step.
 
+**Lyric density follows the genre.** An electronic record came back with full
+verse-chorus-verse on every track, because one lyric instruction went to every
+genre alike — "two verses and a chorus is plenty". Club music does not work that
+way: the vocal is a hook and a handful of lines, and a wall of text sung over it
+sounds wrong however well it is written. The planner is now asked how wordy each
+track should be; where it does not answer — the 0.6B planner drops fields
+regularly — the density is derived from the track's style line, and failing that
+from the brief. An unrecognised style falls back to `moderate`, deliberately, not
+to `full`: writing the most words possible is the failure being corrected. Send
+`lyric_density` (`sparse` | `moderate` | `full`) to decide for the whole record
+instead. As with the voice, this constrains the *request*; it does not guarantee
+the model obeys.
+
 **Downloading.** `GET /v1/press/download?id=…&format=mp3&bitrate=320k` returns
 the whole record as a zip: audio, cover and tracklist. Masters are FLAC, so a
 lossy format is transcoded from the original rather than from another lossy copy.

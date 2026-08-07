@@ -876,7 +876,7 @@
           "press"
         ],
         "summary": "Start a press",
-        "description": "Start a record: plan, lyrics, music, cover, in that order so each heavy model loads exactly once.\n\n**At most one press runs at a time.** Press assumes it owns the model ordering for its whole run, so a second submission is *queued* rather than started or refused — refusing would lose the brief you just typed. A queued press comes back with `state: \"queued\"`, a 1-based `queue_position` and a rough `estimated_start_seconds`; poll `/v1/press?id=` and both appear there too until it starts.\n\nThe queue survives a restart. Anything waiting is still waiting, the press that was mid-run is marked `interrupted` and can be resumed, and the next one starts on its own.\n\n**The lead vocalist is pinned across the record.** The planner names the singer once and every track's music prompt carries it, because each track is a separate generation and a per-track style line describes genre and mood rather than who is singing. Without it a brief asking for a female lead returned male vocals on most tracks. This makes the *request* consistent; nothing in this path conditions on a speaker, so expect the same described singer rather than an identical voice.",
+        "description": "Start a record: plan, lyrics, music, cover, in that order so each heavy model loads exactly once.\n\n**At most one press runs at a time.** Press assumes it owns the model ordering for its whole run, so a second submission is *queued* rather than started or refused — refusing would lose the brief you just typed. A queued press comes back with `state: \"queued\"`, a 1-based `queue_position` and a rough `estimated_start_seconds`; poll `/v1/press?id=` and both appear there too until it starts.\n\nThe queue survives a restart. Anything waiting is still waiting, the press that was mid-run is marked `interrupted` and can be resumed, and the next one starts on its own.\n\n**The lead vocalist is pinned across the record.** The planner names the singer once and every track's music prompt carries it, because each track is a separate generation and a per-track style line describes genre and mood rather than who is singing. Without it a brief asking for a female lead returned male vocals on most tracks. This makes the *request* consistent; nothing in this path conditions on a speaker, so expect the same described singer rather than an identical voice.\n\n**Lyric density follows the genre.** An electronic record came back with full verse-chorus-verse on every track, because one lyric instruction was sent to every genre alike. Club music does not work that way — the vocal is a hook and a handful of lines. The planner is now asked how wordy each track should be, and where it does not answer, the density is derived from the track's style line and then the brief. Send `lyric_density` (`sparse` | `moderate` | `full`) to decide for the whole record yourself.",
         "requestBody": {
           "required": true,
           "content": {
@@ -928,6 +928,15 @@
                   "art_size": {
                     "type": "string",
                     "default": "1024x1024"
+                  },
+                  "lyric_density": {
+                    "type": "string",
+                    "enum": [
+                      "sparse",
+                      "moderate",
+                      "full"
+                    ],
+                    "description": "Override how wordy the lyrics are, for every track. Omit to let each track be judged from its own style — which is usually what you want on an album that mixes genres. `sparse` is a hook and two or three lines; `full` is verses that carry a story."
                   }
                 }
               },

@@ -173,5 +173,117 @@ class TestVoiceConsistency(QueueCase):
         out = self.prompt({"voice": "a tenor"}, {}, {"prompt": "a winter album"})
         self.assertIn("a winter album", out)
 
+class TestLyricDensity(QueueCase):
+    """How many words a genre wants (#28 follow-up).
+
+    An electronic record came back with full verse-chorus-verse lyrics on every
+    track. That is not what the style does: house, techno and most club music
+    carry a hook and a handful of lines, and a wall of text sung over them
+    sounds wrong in a way no amount of good writing fixes. The lyric prompt said
+    "two verses and a chorus is plenty" to every genre alike.
+
+    Density is therefore chosen per track. The planner is asked for it, and
+    where it does not answer — the 0.6B model frequently does not, which is why
+    the voice fix has a fallback too — it is derived from the track's own style
+    line rather than defaulting to the densest option.
+    """
+
+    def density(self, track, request=None):
+        return builder.Press.lyric_density(track, request or {})
+
+    def test_club_genres_are_sparse(self):
+        for style in ("deep house, warm pads, 122 bpm", "driving techno, hypnotic",
+                      "drum and bass, rolling breaks", "melodic trance, euphoric",
+                      "ambient electronic, beatless"):
+            self.assertEqual(self.density({"style": style}), "sparse", style)
+
+    def test_wordy_genres_stay_full(self):
+        for style in ("acoustic folk ballad, fingerpicked guitar",
+                      "boom bap hip hop, dusty samples",
+                      "singer-songwriter, piano and voice"):
+            self.assertEqual(self.density({"style": style}), "full", style)
+
+    def test_ordinary_song_forms_sit_in_between(self):
+        for style in ("indie rock, jangly guitars", "synth pop, bright chorus"):
+            self.assertEqual(self.density({"style": style}), "moderate", style)
+
+    def test_lofi_hip_hop_is_sparse_despite_the_words_hip_hop(self):
+        """The trap in matching on genre words: lo-fi hip hop is a beat with an
+        occasional vocal chop, not a rap record."""
+        self.assertEqual(self.density({"style": "lo-fi hip hop, dusty, mellow"}), "sparse")
+
+    def test_the_planner_can_say_so_explicitly(self):
+        self.assertEqual(self.density({"style": "indie rock", "lyric_density": "sparse"}),
+                         "sparse")
+
+    def test_a_nonsense_value_from_the_planner_is_ignored_rather_than_trusted(self):
+        self.assertEqual(self.density({"style": "deep house", "lyric_density": "banana"}),
+                         "sparse")
+
+    def test_an_unrecognisable_style_does_not_default_to_a_wall_of_words(self):
+        self.assertEqual(self.density({"style": "something nobody has named yet"}),
+                         "moderate")
+
+    def test_arrangement_words_are_not_mistaken_for_genre(self):
+        """Measured on a real folk record: a track described as "Minimalist
+        arrangement, sparse guitar, high violin" was given club-music lyric
+        density, because "minimal" is both a techno subgenre and the most
+        ordinary word in English for a quiet arrangement."""
+        self.assertEqual(self.density(
+            {"style": "Minimalist arrangement, sparse guitar, high violin melody"},
+            {"prompt": "an album in the folk pop genre"}), "full")
+
+    def test_the_brief_supplies_the_genre_when_a_track_style_names_none(self):
+        """Track styles routinely describe instruments and mood without ever
+        saying what the music is. The brief usually does say."""
+        self.assertEqual(self.density({"style": "builds slowly, warm and close"},
+                                      {"prompt": "a deep house record"}), "sparse")
+        self.assertEqual(self.density({"style": "builds slowly, warm and close"},
+                                      {"prompt": "an acoustic folk album"}), "full")
+
+    def test_the_track_style_still_wins_over_the_brief(self):
+        """A record can have an outlier, and the more specific line is the
+        better evidence when it does say something."""
+        self.assertEqual(self.density({"style": "a techno interlude"},
+                                      {"prompt": "an acoustic folk album"}), "sparse")
+
+    def test_the_brief_can_override_every_track(self):
+        """If someone asks for sparse lyrics, that is the answer for the record,
+        not a per-track guess."""
+        self.assertEqual(self.density({"style": "acoustic folk"},
+                                      {"lyric_density": "sparse"}), "sparse")
+
+
+class TestLyricInstruction(QueueCase):
+    def test_each_density_produces_different_guidance(self):
+        seen = {builder.LYRIC_DENSITY[d] for d in ("sparse", "moderate", "full")}
+        self.assertEqual(len(seen), 3)
+
+    def test_the_sparse_instruction_actually_asks_for_fewer_words(self):
+        text = builder.LYRIC_DENSITY["sparse"].lower()
+        self.assertTrue("repeat" in text or "few" in text or "short" in text,
+                        "sparse guidance has to say something concrete")
+
+    def test_every_call_site_fills_every_placeholder(self):
+        """str.format raises on a missing key, and the resume path is the one
+        nobody exercises by hand — a press only takes it after a restart mid-run.
+        Adding {density} to the prompt broke it silently until this."""
+        import re
+        src = open(os.path.join(REPO_ROOT, "builder.py"), encoding="utf-8").read()
+        needed = set(re.findall(r"\{(\w+)\}", builder.LYRIC_PROMPT))
+        calls = re.findall(r"LYRIC_PROMPT\.format\((.*?)\), \d+\)", src, re.S)
+        self.assertTrue(calls, "the prompt is formatted somewhere")
+        for call in calls:
+            supplied = set(re.findall(r"(\w+)=", call))
+            self.assertFalse(needed - supplied,
+                             "missing %s in: %s" % (needed - supplied, call[:120]))
+
+    def test_the_density_reaches_the_prompt(self):
+        filled = builder.LYRIC_PROMPT.format(
+            album="A", concept="B", title="C", theme="D", style="deep house",
+            density=builder.LYRIC_DENSITY["sparse"])
+        self.assertIn(builder.LYRIC_DENSITY["sparse"], filled)
+
+
 if __name__ == "__main__":
     unittest.main()

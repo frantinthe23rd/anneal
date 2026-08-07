@@ -511,7 +511,8 @@ class TestPromptTemplates(unittest.TestCase):
         builder.PLAN_PROMPT.format(what="a single song", prompt="p", count=1,
                                    dmin=60, dmax=90)
         builder.LYRIC_PROMPT.format(album="a", concept="c", title="t",
-                                    theme="th", style="s")
+                                    theme="th", style="s",
+                                    density=builder.LYRIC_DENSITY["moderate"])
 
 
 if __name__ == "__main__":

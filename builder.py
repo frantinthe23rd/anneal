@@ -65,6 +65,7 @@ Reply with ONLY a JSON object, no commentary, in exactly this shape:
   "tracks": [
     {{"title": "track title", "theme": "what this song is about, one line",
       "style": "genre, instruments, mood, tempo feel. Do NOT describe the singer here — the voice field covers that for every track",
+      "lyric_density": "how wordy this genre is: 'sparse' for club and electronic music where the vocal is a hook, 'moderate' for ordinary songs, 'full' for folk, hip hop and anything that carries a story",
       "duration_seconds": 90}}
   ]
 }}
@@ -75,14 +76,53 @@ Vary the durations deliberately, as a real record does — between {dmin} and {d
 seconds. A short opener or interlude might sit near {dmin}; a centrepiece or closer
 near {dmax}. Do not give every track the same length."""
 
+# How many words a genre wants. An electronic record came back with full
+# verse-chorus-verse on every track, because the lyric prompt said "two verses
+# and a chorus is plenty" to every genre alike. Club music does not work that
+# way: the vocal is a hook and a handful of lines, and a wall of text sung over
+# it sounds wrong however well it is written.
+LYRIC_DENSITY = {
+    "sparse": ("Keep the words few. A short hook and two or three lines around it "
+               "is the whole lyric — repeat the hook rather than writing more. "
+               "One [verse] of at most four short lines and one [chorus]. "
+               "Fragments and single phrases are right for this music; complete "
+               "sentences and narrative are not."),
+    "moderate": ("Two [verse] sections of four to six lines and a [chorus]. A "
+                 "[bridge] only if the song wants one."),
+    "full": ("Write it out properly: two or three [verse] sections that carry a "
+             "story or an argument forward, a [chorus], and a [bridge]. This "
+             "style rewards words, so use them."),
+}
+
+# Matched against the track's style line, in order — the first hit wins, which
+# is why lo-fi comes before hip hop. Lo-fi hip hop is a beat with the occasional
+# vocal chop; boom bap is a rap record. One of those wants many words.
+_DENSITY_PATTERNS = (
+    ("sparse", ("lo-fi", "lofi", "chillhop", "house", "techno", "trance", "edm",
+                "electronic", "electronica", "dance", "club", "rave", "dubstep",
+                "drum and bass", "drum & bass", "dnb", "d'n'b", "jungle",
+                "breakbeat", "garage", "hardstyle", "synthwave", "vaporwave",
+                "idm", "ambient", "downtempo", "chillwave", "minimal techno",
+                "minimal house", "dub",
+                "shoegaze", "post-rock", "trip-hop", "trip hop", "psytrance")),
+    ("full", ("folk", "singer-songwriter", "songwriter", "ballad", "hip hop",
+              "hip-hop", "rap", "boom bap", "americana", "blues", "country",
+              "storytelling", "musical theatre", "protest", "spoken word",
+              "bluegrass", "chanson")),
+    ("moderate", ("rock", "pop", "indie", "metal", "punk", "funk", "soul",
+                  "r&b", "rnb", "jazz", "reggae", "ska", "emo", "grunge")),
+)
+
 LYRIC_PROMPT = """Write song lyrics.
 
 Album: {album} — {concept}
 This song: "{title}" — {theme}
 Musical style: {style}
 
-Use [verse], [chorus] and [bridge] tags on their own lines. Two verses and a
-chorus is plenty. Output ONLY the lyrics — no title, no commentary, no notes."""
+{density}
+
+Use [verse], [chorus] and [bridge] tags on their own lines. Output ONLY the
+lyrics — no title, no commentary, no notes."""
 
 
 def slug(text, limit=48):
@@ -326,6 +366,34 @@ class Press:
         return len(stuck)
 
     @staticmethod
+    def lyric_density(track, request):
+        """How many words this track wants: sparse, moderate or full.
+
+        The brief wins if it says; then the planner's own answer, if it gave a
+        valid one; then the track's style line. The last step matters because
+        the 0.6B planner drops fields regularly — the voice fix has the same
+        shape for the same reason — and the failure being corrected here is
+        precisely a default that was too wordy, so falling back to "full" would
+        reintroduce it.
+        """
+        for source in (request, track):
+            value = (source or {}).get("lyric_density")
+            if isinstance(value, str) and value.strip().lower() in LYRIC_DENSITY:
+                return value.strip().lower()
+        # The track's own style line first, then the brief. Track styles
+        # routinely describe instruments and mood — "builds slowly, warm and
+        # close" — without ever naming the music, and the brief usually does.
+        for text in (((track or {}).get("style") or ""),
+                     ((request or {}).get("prompt") or "")):
+            text = text.lower()
+            for density, needles in _DENSITY_PATTERNS:
+                if any(n in text for n in needles):
+                    return density
+        # Not "full": an unrecognised genre is no reason to write the most words
+        # possible, which is the failure this exists to fix.
+        return "moderate"
+
+    @staticmethod
     def track_prompt(plan, track, request):
         """The style for one track, with the record's voice pinned to it.
 
@@ -441,7 +509,8 @@ class Press:
                                   % (i + 1, len(tracks), t["title"]))
                 t["lyrics"] = (self.call_text(LYRIC_PROMPT.format(
                     album=plan["title"], concept=plan["concept"],
-                    title=t["title"], theme=t["theme"], style=t["style"]), 900) or "").strip()
+                    title=t["title"], theme=t["theme"], style=t["style"],
+                    density=LYRIC_DENSITY[self.lyric_density(t, req)]), 900) or "").strip()
                 t["state"] = "lyrics-done"
                 self.store.update(pid, tracks=json.dumps(tracks))
 
@@ -506,7 +575,8 @@ class Press:
                 t["lyrics"] = (self.call_text(LYRIC_PROMPT.format(
                     album=plan["title"], concept=plan.get("concept", ""),
                     title=t["title"], theme=t.get("theme", ""),
-                    style=t.get("style", req["prompt"])), 900) or "").strip()
+                    style=t.get("style", req["prompt"]),
+                    density=LYRIC_DENSITY[self.lyric_density(t, req)]), 900) or "").strip()
                 self.store.update(pid, tracks=json.dumps(tracks))
 
         self.store.update(pid, state="music")
