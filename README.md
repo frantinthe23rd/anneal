@@ -297,8 +297,9 @@ still asks for the key. Using the tailnet address on the host itself avoids
 that.
 
 - **Music / Speech / Image** tabs, prompt box, and the options that matter per mode.
-- **Forge strip** in the header shows all four models — music, speech, chat and
-  image — as **cold**, **heating** or **hot**, with the true footprint once
+- **Forge strip** in the header shows every model `/health` reports — music,
+  speech, chat, image and video — as **cold**, **heating** or **hot**, with the
+  true footprint once
   loaded. Updated from `/health`, which never wakes anything. "Heating" matters:
   the process answers long before the weights are in, and reporting that as
   ready was actively misleading. The pill pulses for whichever service is

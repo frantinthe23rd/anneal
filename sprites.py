@@ -251,24 +251,66 @@ def atlas(path, **kw):
     }
 
 
-def cut(path, out_dir, transparent=True, use_model=True, **kw):
-    """Write each frame as its own PNG. Returns the paths written."""
+# Below this fraction of visible pixels a matted frame is empty rather than
+# sparse. Measured: a real run produced a 107x10 strip at 0.00% alongside two
+# good sprites at 44% and 59%, so there is a wide gap to sit in.
+MIN_VISIBLE = 0.01
+
+
+def is_blank(img):
+    """Did matting remove everything?
+
+    Finding a region and matting it are separate passes and each did its job:
+    the content pass saw a faint smear on the sheet, and the segmentation model
+    correctly decided none of it was subject. Nothing was checking the result,
+    so a fully transparent PNG went into the library and rendered as an empty
+    cell in the UI. A frame that mattes to nothing is not a frame.
+    """
+    if img.mode != "RGBA":
+        return False                     # opaque output has nothing to judge
+    alpha = img.getchannel("A")
+    total = img.width * img.height
+    if not total:
+        return True
+    # Count from the histogram rather than per pixel: this runs on every frame
+    # of every sheet and the pixel loop showed up.
+    hist = alpha.histogram()
+    visible = sum(hist[41:])             # the same threshold matte() ramps to
+    return visible / float(total) < MIN_VISIBLE
+
+
+def _cut(path, out_dir, transparent=True, use_model=True, **kw):
+    """Write the frames, and say which source frame each file came from.
+
+    Callers need the pairing, not just the paths: a frame dropped for being
+    blank must be dropped from the atlas too, and zipping two lists that no
+    longer correspond would give every later frame the wrong box. Numbering
+    counts what was *written*, so the files stay contiguous.
+    """
     img = _load(path)
     os.makedirs(out_dir, exist_ok=True)
     stem = os.path.splitext(os.path.basename(path))[0]
-    written = []
+    kept = []
     bg = _background(img)
-    for i, f in enumerate(find_frames(path, **kw)):
+    for f in find_frames(path, **kw):
         crop = img.crop((f["x"], f["y"], f["x"] + f["width"], f["y"] + f["height"]))
         if transparent:
             if use_model:
                 crop = cut_alpha(crop)
             else:
                 crop = matte(crop, bg, distance=kw.get("distance", CONTENT_DISTANCE))
-        target = os.path.join(out_dir, "%s-%02d.png" % (stem, i))
+            if is_blank(crop):
+                continue
+        target = os.path.join(out_dir, "%s-%02d.png" % (stem, len(kept)))
         crop.save(target)
-        written.append(target)
-    return written
+        kept.append((f, target))
+    return kept
+
+
+def cut(path, out_dir, transparent=True, use_model=True, **kw):
+    """Write each frame as its own PNG. Returns the paths written."""
+    return [target for _f, target in
+            _cut(path, out_dir, transparent, use_model, **kw)]
 
 
 def pipeline(sheet_path, out_dir, use_model=True, distance=CONTENT_DISTANCE):
@@ -278,10 +320,19 @@ def pipeline(sheet_path, out_dir, use_model=True, distance=CONTENT_DISTANCE):
     JSON on stdout so nothing has to be imported across environments.
     """
     data = atlas(sheet_path, distance=distance)
-    written = cut(sheet_path, out_dir, transparent=True, use_model=use_model,
-                  distance=distance)
-    for frame, path in zip(data["frames"], written):
+    kept = _cut(sheet_path, out_dir, transparent=True, use_model=use_model,
+                distance=distance)
+    # Rebuild rather than zip: blank frames are gone from `kept` and must be
+    # gone from the atlas too, with the surviving indices renumbered to match
+    # the files on disk. Zipping the original list against a shorter one gives
+    # every frame after a dropped one somebody else's box.
+    frames = []
+    for i, (found, path) in enumerate(kept):
+        frame = dict(found)
+        frame["index"] = i
         frame["file"] = path
+        frames.append(frame)
+    data["frames"] = frames
     data["frame_dir"] = out_dir
     return data
 

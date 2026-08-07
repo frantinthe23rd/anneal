@@ -140,6 +140,51 @@ class TestMatting(SpriteCase):
         self.assertLess(alpha, 255, "antialiasing was made fully opaque")
 
 
+class TestEmptyFramesAreDropped(SpriteCase):
+    """A region that mattes away to nothing is not a frame.
+
+    Measured in the UI on the first real run: asking for four poses returned a
+    107x10 strip at 0% opacity alongside two good sprites — the content pass
+    found a faint smear, and the segmentation model then correctly removed all
+    of it. Finding and matting each did their job; nothing was checking the
+    result, so a blank cell rendered in the output and a blank PNG went into the
+    library.
+    """
+
+    def test_a_frame_that_mattes_to_nothing_is_not_written(self):
+        from PIL import Image
+        img = Image.new("RGBA", (40, 40), (0, 0, 0, 0))
+        self.assertTrue(sprites.is_blank(img))
+
+    def test_a_frame_with_a_subject_is_kept(self):
+        from PIL import Image
+        img = Image.new("RGBA", (40, 40), (0, 0, 0, 0))
+        for x in range(10, 30):
+            for y in range(10, 30):
+                img.putpixel((x, y), (20, 160, 60, 255))
+        self.assertFalse(sprites.is_blank(img))
+
+    def test_a_few_stray_opaque_pixels_still_count_as_blank(self):
+        """Matting leaves speckle. Three surviving pixels is not a sprite."""
+        from PIL import Image
+        img = Image.new("RGBA", (60, 60), (0, 0, 0, 0))
+        for x in range(3):
+            img.putpixel((x, 0), (255, 255, 255, 255))
+        self.assertTrue(sprites.is_blank(img))
+
+    def test_the_atlas_and_the_files_stay_in_step(self):
+        """The bug this could turn into: drop a file but keep its atlas entry,
+        and every later frame's metadata is off by one."""
+        path = self.sheet([(10, 40, 50, 80), (120, 40, 50, 80)])
+        out = tempfile.mkdtemp()
+        data = sprites.pipeline(path, out, use_model=False)
+        self.assertEqual(len(data["frames"]), len(os.listdir(out)) - 
+                         len([f for f in os.listdir(out) if f == "atlas.json"]))
+        for i, frame in enumerate(data["frames"]):
+            self.assertEqual(frame["index"], i, "indices must be contiguous")
+            self.assertTrue(os.path.isfile(frame["file"]))
+
+
 class TestCutting(SpriteCase):
     def test_each_frame_is_written_out(self):
         path = self.sheet([(10, 40, 50, 80), (120, 40, 50, 80)])

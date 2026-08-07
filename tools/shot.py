@@ -72,7 +72,8 @@ def main():
             page.wait_for_timeout(800)
             page.screenshot(path=os.path.join(OUT, "studio-%s.png" % theme))
 
-            for tab, name in (("chat", "chat"), ("press", "press")):
+            for tab, name in (("chat", "chat"), ("press", "press"),
+                              ("sprite", "animation"), ("video", "video")):
                 page.click('.tab[data-mode="%s"]' % tab)
                 page.wait_for_timeout(500)
                 page.screenshot(path=os.path.join(OUT, "%s-%s.png" % (name, theme)))
