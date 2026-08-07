@@ -566,8 +566,16 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item.failed, .card.failed { border-color: var(--bad); }
 .msg.user { background: var(--quench-wash); border-color: var(--line-2); }
-.msg .who { display: block; color: var(--muted); font-size: 10.5px; letter-spacing: .1em;
-  text-transform: uppercase; margin-bottom: 6px; }
+.msg .msghead { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; min-height: 18px; }
+.msg .who { color: var(--muted); font-size: 10.5px; letter-spacing: .1em;
+  text-transform: uppercase; }
+/* Present but recessive: the reply is what you are reading, not the button.
+   Full contrast on hover or keyboard focus, and always visible on touch, where
+   there is no hover to reveal it. */
+.msg .iconbtn.tiny { margin-left: auto; padding: 2px 8px; font-size: 11px; line-height: 1.6;
+  min-height: 0; opacity: .35; transition: opacity var(--t-fast) var(--ease); }
+.msg:hover .iconbtn.tiny, .msg .iconbtn.tiny:focus-visible { opacity: 1; }
+@media (hover: none) { .msg .iconbtn.tiny { opacity: .8; } }
 .msg .body { white-space: pre-wrap; word-break: break-word; font-size: 14px; }
 /* Rendered Markdown brings its own block structure — pre-wrap on top of it
    turns every source newline into a visible blank line. */
@@ -2815,7 +2823,85 @@ async function writeLyrics() {
 /* ----------------------------------------------------------------- chat
    A conversation with the same local model the lyric writer uses. Streams, and
    keeps history client-side so the server stays stateless. */
+/* The transcript is the one piece of state this interface holds that you would
+   be annoyed to lose, and the only one that was not persisted. The server still
+   keeps no conversation state — that property is unchanged — but the browser
+   now does, which on a shared machine is worth knowing. Settings clears it
+   along with the key and the preferences.
+
+   Bounded, because localStorage has a ~5 MB quota and setItem *throws* when it
+   is exceeded, which would otherwise take out whatever ran next. Oldest turns
+   go first, and reasoning is dropped before messages are, since it is the
+   bulkiest part and the least worth keeping. */
+const CHAT_KEY = "anneal.chat";
+const CHAT_MAX_BYTES = 512 * 1024;    // a tenth of the quota; a long day of chat
+const CHAT_MAX_MESSAGES = 200;
 let chatLog = [];          // {role, content, reasoning}
+
+function loadChat() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(CHAT_KEY) || "[]");
+    if (Array.isArray(saved)) {
+      // Anything mid-flight when the tab closed is not coming back.
+      chatLog = saved.filter((m) => m && m.role && !m.pending);
+    }
+  } catch (_) { chatLog = []; }
+}
+
+function saveChat() {
+  // Never persist the in-flight placeholder: on reload it would render as a
+  // reply that is permanently "…".
+  let keep = chatLog.filter((m) => !m.pending)
+                    .map((m) => ({ role: m.role, content: m.content, reasoning: m.reasoning }));
+  if (keep.length > CHAT_MAX_MESSAGES) keep = keep.slice(-CHAT_MAX_MESSAGES);
+  let body = JSON.stringify(keep);
+  // Shed reasoning first — bulky, and nobody reloads a page to re-read it.
+  if (body.length > CHAT_MAX_BYTES) {
+    keep = keep.map((m) => (m.reasoning ? Object.assign({}, m, { reasoning: "" }) : m));
+    body = JSON.stringify(keep);
+  }
+  // Then drop whole turns from the front until it fits.
+  while (keep.length > 2 && body.length > CHAT_MAX_BYTES) {
+    keep = keep.slice(2);
+    body = JSON.stringify(keep);
+  }
+  try {
+    localStorage.setItem(CHAT_KEY, body);
+  } catch (_) {
+    // Quota exceeded despite the trimming, or storage disabled entirely
+    // (private browsing). Losing the saved copy must not break the live one.
+    try { localStorage.removeItem(CHAT_KEY); } catch (_) { /* nothing to do */ }
+  }
+}
+
+function clearChat() {
+  chatLog = [];
+  chatNodes = [];
+  try { localStorage.removeItem(CHAT_KEY); } catch (_) { /* already gone */ }
+  renderChat();
+}
+
+async function copyText(text, btn) {
+  const done = (ok) => {
+    const was = btn.textContent;
+    btn.textContent = ok ? "Copied" : "Press \u2318C";
+    setTimeout(() => { btn.textContent = was; }, 1400);
+  };
+  try {
+    await navigator.clipboard.writeText(text);
+    done(true);
+  } catch (_) {
+    // clipboard.writeText needs a secure context. The tailnet address is
+    // HTTPS, but http://127.0.0.1:8001 is not, so select the text instead of
+    // failing silently and let the keyboard finish the job.
+    const range = document.createRange();
+    range.selectNodeContents(btn.closest(".msg").querySelector(".body"));
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    done(false);
+  }
+}
 let chatting = null;
 
 /* The model answers in Markdown, so render it. marked does the parsing and
@@ -3022,7 +3108,9 @@ let chatNodes = [];
 
 function buildMsg(m) {
   const wrap = el("div", "msg" + (m.role === "user" ? " user" : ""));
-  wrap.appendChild(el("span", "who", m.role === "user" ? "you" : "gemma"));
+  const head = el("div", "msghead");
+  head.appendChild(el("span", "who", m.role === "user" ? "you" : "gemma"));
+  wrap.appendChild(head);
   wrap.appendChild(el("div", "body"));
   return wrap;
 }
@@ -3040,6 +3128,23 @@ function paintMsg(node, m) {
     if (!m.pending) m.html = body.innerHTML;                    // settled: cache it
   } else body.textContent = "";
   if (m.pending) body.appendChild(el("span", "caret"));
+
+  // Chat is the one mode whose output is text you take somewhere else;
+  // everything else has a download link. Copying the message rather than the
+  // selection also leaves the reasoning behind, which is what you want — it is
+  // working out, not answer. Added once the reply has settled, so there is
+  // nothing to copy mid-stream.
+  const head = node.querySelector(".msghead");
+  const existing = head.querySelector(".copy");
+  if (m.role === "assistant" && m.content && !m.pending) {
+    if (!existing) {
+      const copy = el("button", "iconbtn tiny copy", "Copy");
+      copy.type = "button";
+      copy.title = "Copy this reply";
+      copy.onclick = () => copyText(m.content, copy);
+      head.appendChild(copy);
+    }
+  } else if (existing) existing.remove();
 
   let think = node.querySelector(".think");
   if (m.reasoning) {
@@ -3133,6 +3238,7 @@ async function runChat() {
       }
     }
     reply.pending = false;
+    saveChat();
     if (!reply.content.trim() && reply.reasoning) {
       // Ran out of budget while reasoning — say so rather than showing nothing.
       reply.content = "(stopped while still reasoning — try again, or turn reasoning off)";
@@ -3145,6 +3251,7 @@ async function runChat() {
     if (e.name === "AbortError") reply.content = reply.content.trim()
       ? reply.content + "\n\n*(stopped)*" : "*(stopped)*";
     else reply.content = "Failed: " + e.message;
+    saveChat();
     renderChat();
   } finally {
     chatting = null;
@@ -3465,9 +3572,10 @@ async function showSettings() {
   keyRow.appendChild(el("div", "hint",
     "Only needed off the tailnet. Over Tailscale you are identified automatically."));
   g3.appendChild(keyRow);
-  const wipe = el("button", "iconbtn", "Forget key and preferences");
+  const wipe = el("button", "iconbtn", "Forget key, preferences and chat history");
   wipe.onclick = () => {
     localStorage.removeItem(KEY_STORE); localStorage.removeItem(PREFS_KEY);
+    localStorage.removeItem(CHAT_KEY);
     // Drops the theme override too, so the interface goes back to following
     // the system rather than being stuck on a choice you have forgotten making.
     localStorage.removeItem(THEME_KEY);
@@ -3552,7 +3660,13 @@ document.querySelectorAll("[data-page-link]").forEach((a) => {
 });
 
 /* ------------------------------------------------------------------- chat */
-$("cClear").onclick = () => { chatLog = []; renderChat(); $("cInput").focus(); };
+$("cClear").onclick = () => {
+  // It survives a reload now, so discarding it is a real loss rather than a
+  // tidy-up of something already gone.
+  if (chatLog.length && !confirm("Discard this conversation? It cannot be recovered.")) return;
+  clearChat();
+  $("cInput").focus();
+};
 $("cSend").onclick = runChat;
 $("cInput").addEventListener("input", () => autoGrow($("cInput")));
 $("cInput").addEventListener("keydown", (e) => {
@@ -3698,6 +3812,7 @@ async function boot() {
   if (!authVia && !apiKey) { openGate(); return; }
   $("hostname").textContent = location.host;
   fillOrigin();
+  loadChat();
   fillVoices(VOICES, DEFAULT_VOICE);
   loadTiers();
   loadPrefs();

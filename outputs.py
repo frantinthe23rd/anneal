@@ -13,10 +13,11 @@ elsewhere and it is still self-describing, and losing an index can't orphan
 anything.
 
     outputs/
-      music/  2026-08-06T09-14-02_warm-lo-fi-hip-hop_a1b2c3.mp3
-              2026-08-06T09-14-02_warm-lo-fi-hip-hop_a1b2c3.mp3.json
-      speech/ ...
-      images/ ...
+      music/   2026-08-06T09-14-02_warm-lo-fi-hip-hop_a1b2c3.mp3
+               2026-08-06T09-14-02_warm-lo-fi-hip-hop_a1b2c3.mp3.json
+      speech/  ...
+      images/  ...
+      vectors/ ...   SVG drawn by the text model (#18)
 """
 
 from __future__ import annotations
@@ -28,7 +29,9 @@ import shutil
 import time
 import uuid
 
-KINDS = ("music", "speech", "images")
+import paths
+
+KINDS = ("music", "speech", "images", "vectors")
 SIDECAR_SUFFIX = ".json"
 
 
@@ -153,8 +156,8 @@ def listing(kind=None, limit=200, offset=0):
 
 def delete(path):
     """Remove an output and its sidecar. Refuses anything outside outputs/."""
-    real = os.path.realpath(path)
-    if not real.startswith(os.path.realpath(root()) + os.sep):
+    real = paths.resolve_within(path, [root()])
+    if real is None:
         return False
     try:
         os.remove(real)

@@ -42,6 +42,13 @@ Apache/MIT, but Google's weights are under the Gemma Terms of Use. Full
 attribution for every model and library is in [Credits](#credits) and on the
 UI's About page.)
 
+**Vector** (`POST /v1/vector`) draws an SVG icon with the text model — markup,
+so it is text generation: two to seven seconds, no new weights, no heavy slot,
+nothing evicted. **Experimental, and honestly so**: on the model that fits here
+the output is reliably well-formed and reliably not a recognisable icon. See
+[Vector output](#vector-output) before building on it. Everything it returns is
+sanitised first — a `<script>` inside an SVG a game loads is a real hazard.
+
 **Press** chains all four: one brief becomes a title, an artist name, a
 tracklist with varied lengths, lyrics, the music and a cover.
 `POST /v1/press {"prompt": "...", "tracks": 4}`, then poll `/v1/press?id=`.
@@ -273,12 +280,22 @@ that.
   [#19](https://github.com/frantinthe23rd/anneal/issues/19).
 - **Chat** is a plain conversation with the local Gemma model, streamed, in the
   shape every chat interface has: transcript above, composer below, **Enter to
-  send** and Shift+Enter for a newline. Replies render as **Markdown** — the model
-  writes it whether or not you render it, and a wall of literal `**` and
-  backticks was the worst thing in the interface. Reasoning is off by default —
-  Gemma 4 will otherwise spend a short budget thinking before answering — with a
-  checkbox to show it. The transcript stays in the browser; the server keeps no
-  conversation state.
+  send** and Shift+Enter for a newline. Replies render as **Markdown**, with
+  equations typeset by KaTeX — the model writes both whether or not you render
+  them, and a wall of literal `**`, backticks and `\text{}` was the worst thing
+  in the interface. Reasoning is off by default — Gemma 4 will otherwise spend a
+  short budget thinking before answering — with a checkbox to show it. Each
+  reply has a **Copy** button: chat is the one mode whose output is text you
+  take somewhere else, and it copies the reply without the reasoning.
+
+  The transcript **survives a reload**, kept in `localStorage` alongside the
+  preferences and the key. The server still holds no conversation state — that
+  property is unchanged — but the browser now does, which on a shared machine
+  is worth knowing. It is bounded (roughly 500 KB, oldest turns dropped first,
+  reasoning shed before whole messages) because the quota is ~5 MB and
+  exceeding it throws. "New conversation" asks before discarding, and Settings'
+  **Forget key, preferences and chat history** clears it. One conversation, not
+  a list — see [#16](https://github.com/frantinthe23rd/anneal/issues/16).
 - **Write for me** in the lyrics block drafts lyrics from the style prompt,
   streaming into the box. Click again to stop; your text is restored on failure.
 - **Library** switches to everything the server has kept — filter by kind, play
@@ -289,9 +306,10 @@ that.
   browsing wakes no model.
 
   Worth knowing when comparing takes: **generation is not deterministic**, even
-  with `use_random_seed: false`. Two identical requests produce different audio,
-  because the planning LM samples at temperature. Details tells you what was
-  asked for; it cannot tell you why two takes of the same request differ.
+  with `use_random_seed: false`. Two identical requests produce different audio.
+  Details tells you what was asked for; it cannot tell you why two takes of the
+  same request differ. See [Determinism](#determinism) — the cause is not the
+  one this file used to claim.
 - `Cmd/Ctrl+Enter` submits.
 
 Dark by design — the accent colour is reserved for things that are genuinely hot
@@ -404,6 +422,40 @@ Measured on the same prompt and seed, high is ~2× the generation time, 7.2 dB
 more energy above 12 kHz and a 23% larger lossless file. **Whether that is
 better is a judgement for your ears** — see the note on verification below.
 
+### Determinism
+
+This file, `CLAUDE.md` and the UI's Guide all used to say generation is
+non-deterministic *because the planning LM samples at temperature*. That
+explanation is wrong, or at least badly incomplete, and it was never tested.
+Measured on 2026-08-07, four 30-second draft-tier generations through the
+gateway:
+
+| Request | Planned `metas` | Audio |
+| --- | --- | --- |
+| `thinking: false`, `use_random_seed: false`, `seed: 424242`, ×2 | **differ** — E major vs F major | differ |
+| the same plus `bpm: 84`, `key_scale: "C major"`, ×2 | **identical** | **still differ** |
+
+Two things follow.
+
+**`thinking: false` does not turn the planning LM off.** Upstream's own request
+model says so: *"Regardless of thinking, if some metas are missing, server may
+use LM to fill them."* `thinking` selects whether the LM generates audio
+*codes*; it still fills in an unspecified bpm and key, and it samples when it
+does. That is why the key changed between two identical requests.
+
+**Pinning the plan is not enough either.** With `bpm` and `key_scale` supplied,
+the reported `metas` were byte-identical across both runs and the audio still
+was not. The take's own record echoes `"seed": "424242"`, so the seed was
+accepted rather than silently ignored. Something downstream of the plan is
+still sampling — MLX/Metal reduction order is the obvious suspect, but that is
+a hypothesis and has not been tested.
+
+So: byte-comparing two runs still proves nothing about quality, and "same seed,
+same output" is not available here by any route currently known.
+[#22](https://github.com/frantinthe23rd/anneal/issues/22) has the consequences
+for iterative refinement — including that **repaint does not need
+determinism**, and is already exposed by the REST API.
+
 ### `metas` is intent, not measurement
 
 `bpm`, `keyscale` and `timesignature` in a result are what the planning LM asked
@@ -415,6 +467,50 @@ labels them "(planned)".
 
 Set `bpm` and `key_scale` explicitly on the request if you want them to mean
 something.
+
+## Vector output
+
+`POST /v1/vector {"prompt": "a compass rose", "style": "line", "size": 48}`
+returns SVG source, saves it under `outputs/vectors/` with a sidecar, and lists
+it in the Library under `kind=vectors`. Styles are `flat`, `line`, `duotone`
+and `geometric`. `mode: "trace"` — vectorising the image model's output — is
+specified in [#18](https://github.com/frantinthe23rd/anneal/issues/18) and
+returns `501`: it needs `vtracer` or `potrace`, and neither is installed.
+
+**Everything returned is sanitised.** The reply is parsed, must have a single
+`<svg>` root, and is reduced to an allowlist of drawing elements and
+attributes. Removed: `<script>`, `<style>`, `<foreignObject>`, every `on*`
+handler, SMIL animation, and any `href` or `url()` that is not a local
+`#fragment`. A `DOCTYPE` or `ENTITY` declaration is refused before parsing,
+because ElementTree is documented as vulnerable to entity expansion. The
+response reports what was taken in `sanitised_out`. On top of that, downloads
+carry `Content-Disposition: attachment`, `X-Content-Type-Options: nosniff` and
+`Content-Security-Policy: default-src 'none'; sandbox`, so three separate
+things would have to fail for a generated file to execute anything.
+
+### Well-formed is not good
+
+Measured on `gemma-4-e4b-it-4bit`, across gear, heart, compass rose, health bar
+and shield:
+
+| | Well-formed | Recognisable as the subject |
+| --- | --- | --- |
+| temperature 0.9, plain instructions | 1/5 | — |
+| temperature 0.2, rules naming the observed failures | **5/5** | **0/5** |
+| the same, plus two worked examples | 5/5 | 1/5 at best |
+
+Each well-formed result was rendered and looked at. The gear came back as a
+plain filled circle. The compass rose was a single dot — its lines had no
+stroke, so they drew nothing. The health bar was one solid rectangle, its three
+segments abutting in the same colour. The heart was a blob. Few-shot examples
+improved the *markup* — right line style, strokes present — and did not change
+whether the drawing resembles its subject.
+
+So the plumbing works and the capability does not, and that is why there is no
+Vector tab in the UI. The ceiling here looks like the model rather than the
+prompt: a larger text model ([#9](https://github.com/frantinthe23rd/anneal/issues/9))
+is the obvious thing to retest against. This is the same trap as the audio
+below — a number moving the right way is not evidence the output is good.
 
 ### Verifying generated audio
 
@@ -516,6 +612,29 @@ Two ways to authenticate:
 
 The identity headers are trusted **only while the listener is on loopback**. Bind
 anywhere else and they're ignored outright, since they could then be forged.
+
+### Limits
+
+Everything a caller can ask for is bounded, so one request cannot exhaust the
+machine. These are deliberately generous — no honest request meets one.
+
+| Variable | Default | What it bounds |
+| --- | --- | --- |
+| `ANNEAL_MAX_REQUEST_BYTES` | 2 MB | Any request body. Refused on the declared `Content-Length`, before a byte is read, then the connection is closed |
+| `ANNEAL_MAX_PROMPT_CHARS` | 8000 | A press brief |
+| `ANNEAL_MAX_PRESS_SECONDS` | 1800 | `tracks × duration` for one press. Eight ten-minute tracks was previously accepted and is hours of generation holding the heavy slot |
+| `ANNEAL_MAX_ZIP_BYTES` | 4 GB | The album zip, which is built on disk before any of it is sent |
+| `ANNEAL_JOB_RETENTION_SECONDS` | 7 days | Finished rows in `jobs.db`, pruned hourly. Pending rows are never pruned — that is the replay queue |
+
+Files are served off disk only from under `outputs/` and the backend's own
+cache, only if the resolved path is genuinely inside one of them, and only if
+the extension is a media type Anneal produces. `paths.py` is the single
+containment check; `tests/test_paths.py` covers the traversal, symlink and
+shared-prefix cases that a hand-rolled `startswith` gets wrong.
+
+**`outputs/` still has no retention policy** and grows without bound — see
+[#13](https://github.com/frantinthe23rd/anneal/issues/13). Deleting generated
+work automatically is a decision, not a default.
 
 Public without auth: `/health`, `/supervisor/status`, `/supervisor/auth`,
 `/supervisor/whoami`, `/docs`, `/openapi.json` and the UI itself. Everything

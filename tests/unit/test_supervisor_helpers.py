@@ -144,13 +144,22 @@ class TestServeFileFromDisk(unittest.TestCase):
         disposition = dict(handler.sent[1:])["content-disposition"]
         self.assertIn('filename="take.flac"', disposition)
 
-    def test_unknown_extensions_fall_back_to_octet_stream(self):
+    def test_an_unknown_extension_is_refused_rather_than_guessed(self):
+        """Deliberate reversal of an earlier assertion.
+
+        This used to expect a fallback to application/octet-stream. These
+        endpoints exist to hand back generated media, and every artefact they
+        legitimately serve has a known extension — so an unknown one means
+        either a bug or a path that should never have resolved. Refusing is the
+        second line of defence behind the root narrowing: a root that later
+        grows to include something else still cannot leak a database or a log
+        through here.
+        """
         other = os.path.join(self.root, "music", "take.xyz")
         with open(other, "wb") as fh:
             fh.write(b"?")
-        handler, ok = self.serve(other)
-        self.assertTrue(ok)
-        self.assertIn(("content-type", "application/octet-stream"), handler.sent)
+        _, ok = self.serve(other)
+        self.assertFalse(ok)
 
     def test_refuses_an_absolute_path_outside_the_root(self):
         for path in ["/etc/passwd", self.outside]:
