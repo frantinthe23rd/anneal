@@ -85,8 +85,9 @@ def _set_entry(directory, kind, meta):
         entry["name"] = os.path.basename(directory)
         entry["created"] = meta.get("created", entry["created"])
         entry["prompt"] = meta.get("prompt", entry["prompt"])
-        entry["meta"] = dict(entry["meta"], **meta)
-        entry["set_dir"] = directory
+        # Into meta, not a new top-level key: the listing envelope is a
+        # documented contract and an acceptance test asserts its exact shape.
+        entry["meta"] = dict(entry["meta"], set_dir=directory, **meta)
     return entry
 
 

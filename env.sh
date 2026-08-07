@@ -11,6 +11,19 @@ export ACESTEP_DIR="$AIMUSIC_ROOT/ACE-Step-1.5"
 # --- keep all bulk data off the internal disk ---
 export UV_CACHE_DIR="$AIMUSIC_ROOT/uv-cache"
 export UV_PYTHON_INSTALL_DIR="$AIMUSIC_ROOT/uv-python"
+# launchd hands a job PATH=/usr/bin:/bin:/usr/sbin:/sbin, so Homebrew is absent
+# and ffmpeg — which speech and press downloads both need — cannot be found.
+# The code resolves it explicitly as well; this is so anything else spawned
+# from here (uv, tailscale, a subprocess) behaves the same from a LaunchAgent
+# as it does from a terminal.
+for _bin in /opt/homebrew/bin /usr/local/bin; do
+    case ":$PATH:" in
+        *":$_bin:"*) ;;
+        *) [[ -d "$_bin" ]] && export PATH="$_bin:$PATH" ;;
+    esac
+done
+unset _bin
+
 export HF_HOME="$AIMUSIC_ROOT/hf-cache"
 export ACESTEP_CHECKPOINTS_DIR="$AIMUSIC_ROOT/models"
 

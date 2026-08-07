@@ -89,3 +89,46 @@ def safe_file(path, roots):
     except OSError:
         return None
     return real
+
+
+# --------------------------------------------------------------- binaries
+# Resolved, not trusted to PATH.
+#
+# The gateway runs under launchd, which hands a job
+# PATH=/usr/bin:/bin:/usr/sbin:/sbin — no /opt/homebrew/bin. Every `["ffmpeg",
+# ...]` therefore died with FileNotFoundError(2) the moment Anneal started
+# serving from the LaunchAgent rather than a terminal, and nothing caught it
+# because every test and every manual check ran from a shell that had Homebrew
+# on PATH. That error names nothing, which is how it reached a user.
+FFMPEG_CANDIDATES = (
+    "/opt/homebrew/bin/ffmpeg",     # Apple silicon Homebrew
+    "/usr/local/bin/ffmpeg",        # Intel Homebrew, and most manual installs
+    "/opt/local/bin/ffmpeg",        # MacPorts
+    "/usr/bin/ffmpeg",
+)
+_FFMPEG = None
+
+
+def ffmpeg_bin(candidates=FFMPEG_CANDIDATES, search_path=True):
+    """Absolute path to ffmpeg, or a RuntimeError that says what is missing."""
+    global _FFMPEG
+    if _FFMPEG and search_path and candidates is FFMPEG_CANDIDATES:
+        return _FFMPEG
+    found = None
+    if search_path:
+        import shutil
+        found = shutil.which("ffmpeg")
+    if not found:
+        for candidate in candidates:
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                found = candidate
+                break
+    if not found:
+        raise RuntimeError(
+            "ffmpeg was not found. It is needed to transcode audio (MP3 speech, "
+            "and any press download that is not FLAC). Install it — `brew "
+            "install ffmpeg` — or set PATH for the service. Looked on PATH and "
+            "in: %s" % ", ".join(candidates))
+    if search_path and candidates is FFMPEG_CANDIDATES:
+        _FFMPEG = found
+    return found

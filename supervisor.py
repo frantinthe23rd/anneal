@@ -1416,7 +1416,7 @@ class Handler(BaseHTTPRequestHandler):
                         zf.write(src, stem + ".flac")          # already the master
                         continue
                     out = os.path.join(workdir, stem + "." + fmt)
-                    cmd = ["ffmpeg", "-v", "error", "-y", "-i", src]
+                    cmd = [paths.ffmpeg_bin(), "-v", "error", "-y", "-i", src]
                     if fmt == "mp3":
                         cmd += ["-c:a", "libmp3lame", "-b:a", bitrate]
                     elif fmt == "aac":

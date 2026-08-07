@@ -30,6 +30,8 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import paths
+
 MODEL_REPO = os.environ.get("SPEECH_MODEL", "prince-canuma/Kokoro-82M")
 # Named speakers plus a written direction. The VoiceDesign variant of the same
 # family was tried first and rejected: it designs a voice from the description
@@ -151,7 +153,8 @@ def _encode(path, fmt, workdir):
     if fmt in ("wav", "flac") and path.endswith("." + fmt):
         return path
     converted = os.path.join(workdir, "converted.%s" % fmt)
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", path, converted], check=True)
+    subprocess.run([paths.ffmpeg_bin(), "-y", "-loglevel", "error", "-i", path, converted],
+                   check=True)
     return converted
 
 
@@ -218,7 +221,7 @@ def synthesize(text, voice, speed, fmt, instruct=None):
         if fmt != native:
             converted = os.path.join(workdir, "converted.%s" % fmt)
             subprocess.run(
-                ["ffmpeg", "-y", "-loglevel", "error", "-i", path, converted],
+                [paths.ffmpeg_bin(), "-y", "-loglevel", "error", "-i", path, converted],
                 check=True,
             )
             path = converted
