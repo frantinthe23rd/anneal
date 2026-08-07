@@ -16,6 +16,8 @@ import json
 import os
 import unittest
 
+import outputs
+
 from tests.acceptance.live import (HEAVY, HEAVY_REASON, LiveCase, baseline_services,
                                    request, running_services)
 
@@ -104,7 +106,9 @@ class TestEnvelopeContract(LiveCase):
             self.assertEqual(sorted(item),
                              ["bytes", "created", "kind", "meta", "name", "path",
                               "prompt", "url"])
-            self.assertIn(item["kind"], ("music", "speech", "images"))
+            # Against outputs.KINDS, not a literal: `vectors` was added as a
+            # fourth kind and broke this while the listing was entirely correct.
+            self.assertIn(item["kind"], outputs.KINDS)
             self.assertTrue(item["url"].startswith("/v1/outputs/file?path="))
 
     def test_the_press_list_is_shaped_as_documented(self):
