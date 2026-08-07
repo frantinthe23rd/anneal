@@ -172,13 +172,11 @@ class TestMusicTierDocumentation(unittest.TestCase):
         for name, tier in self.example().items():
             self.assertEqual(tier["model"], MUSIC_TIERS[name]["model"], name)
 
-    @unittest.expectedFailure
     def test_the_example_step_counts_match_the_service_table(self):
-        """Known drift, issue #26.
+        """Was issue #26: the spec said 32 steps where the code said 50.
 
-        openapi.json documents the high tier as 32 steps in two places; the
-        service table says 50, and so does the prose on /release_task. A caller
-        sizing a timeout from the spec gets it wrong by 60%.
+        A caller sizing a timeout from the spec got it wrong by 60%. Kept as a
+        live assertion so the two cannot drift apart again silently.
         """
         for name, tier in self.example().items():
             self.assertEqual(tier["steps"], MUSIC_TIERS[name]["steps"], name)

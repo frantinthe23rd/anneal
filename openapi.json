@@ -725,13 +725,17 @@
                         "model": "acestep-v15-turbo",
                         "steps": 8,
                         "label": "Draft — fast, distilled (8 steps)",
-                        "loaded": true
+                        "loaded": true,
+                        "available": true,
+                        "unavailable_reason": null
                       },
                       "high": {
                         "model": "acestep-v15-sft",
-                        "steps": 32,
-                        "label": "High — fine-tuned, more detail (32 steps)",
-                        "loaded": false
+                        "steps": 50,
+                        "label": "High — fine-tuned, 50 steps",
+                        "loaded": false,
+                        "available": true,
+                        "unavailable_reason": null
                       }
                     }
                   },
