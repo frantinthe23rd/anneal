@@ -31,7 +31,7 @@ import uuid
 
 import paths
 
-KINDS = ("music", "speech", "images", "vectors")
+KINDS = ("music", "speech", "images", "vectors", "sprites")
 SIDECAR_SUFFIX = ".json"
 
 
@@ -135,15 +135,19 @@ def usage(now=None):
     for kind in KINDS:
         d = os.path.join(root(), kind)
         size = count = 0
+        # Walk, for the same reason listing() does: sprites nest a directory per
+        # set, and counting that directory as one file put the sprite total at a
+        # few hundred bytes regardless of what was in it.
         try:
-            for name in os.listdir(d):
-                if name.endswith(SIDECAR_SUFFIX):
-                    continue          # metadata travels with the file, not counted as one
-                try:
-                    size += os.path.getsize(os.path.join(d, name))
-                    count += 1
-                except OSError:
-                    continue
+            for folder, _dirs, names in os.walk(d):
+                for name in names:
+                    if name.endswith(SIDECAR_SUFFIX):
+                        continue      # metadata travels with the file, not counted as one
+                    try:
+                        size += os.path.getsize(os.path.join(folder, name))
+                        count += 1
+                    except OSError:
+                        continue
         except OSError:
             pass
         per[kind] = {"bytes": size, "files": count}
@@ -196,12 +200,17 @@ def listing(kind=None, limit=200, offset=0):
         directory = os.path.join(root(), k)
         if not os.path.isdir(directory):
             continue
-        for name in os.listdir(directory):
-            if name.endswith(SIDECAR_SUFFIX) or name.startswith("."):
-                continue
-            entry = _entry(os.path.join(directory, name), k)
-            if entry:
-                entries.append(entry)
+        # Walk rather than listdir: sprites write a directory per set, and a
+        # flat scan listed that directory as an item — no prompt, the inode's
+        # size, and a /v1/outputs/file URL that 404s because it is not a file.
+        for folder, dirnames, filenames in os.walk(directory):
+            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            for name in filenames:
+                if name.endswith(SIDECAR_SUFFIX) or name.startswith("."):
+                    continue
+                entry = _entry(os.path.join(folder, name), k)
+                if entry:
+                    entries.append(entry)
     entries.sort(key=lambda e: e["created"], reverse=True)
     return {"total": len(entries), "items": entries[offset:offset + limit]}
 

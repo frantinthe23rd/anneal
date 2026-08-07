@@ -13,6 +13,7 @@ and release the memory when idle.
 | Image | FLUX.1-schnell 4-bit | synchronous, returns bytes | ~2 min |
 | Text | Gemma 4 E4B 4-bit | synchronous or streamed | seconds |
 | **Press** | all four, in one call | async: submit → poll → download zip | 4 min – 1 hour |
+| Sprites | FLUX.1-schnell + rembg | synchronous, returns paths | 2–3 min |
 
 **Interactive API docs are hosted at
 <https://jons-mac-mini.pangolin-darter.ts.net/docs>**, with the raw spec at
@@ -523,6 +524,94 @@ latency-sensitive use `"response_format": "path"` and fetch the bytes separately
 
 Remember this evicts the music model.
 
+## 6c. Sprites: an animation set that stays the same character
+
+`POST /v1/sprites` takes a brief and returns a set of transparent PNGs, one per
+frame, plus an atlas describing where each came from.
+
+```bash
+curl -X POST "$ANNEAL_URL/v1/sprites" \
+  -H "Authorization: Bearer $ANNEAL_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"a small round green slime with big eyes",
+       "poses":["idle","crouched to jump","stretched mid-air","landing splat"],
+       "style":"flat pixel art"}'
+```
+
+```json
+{"data": {
+  "subject": "a small round green slime with big eyes",
+  "requested_frames": 4,
+  "source_size": [1344, 768],
+  "frame_dir": "…/outputs/sprites/20260807-153815-a-small-round-green-slime",
+  "frames": [
+    {"index": 0, "x": 112, "y": 126, "width": 218, "height": 230,
+     "file": "…-00.png", "url": "/v1/outputs/file?path=…"},
+    {"index": 1, "x": 388, "y": 126, "width": 218, "height": 230,
+     "file": "…-01.png", "url": "/v1/outputs/file?path=…"}
+  ],
+  "sheet": "…/outputs/images/…png",
+  "sheet_url": "/v1/images/file?path=…"
+}, "code": 200, "error": null}
+```
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| `prompt` | — | Required. Describe the character as you would to an artist; "a small round green slime with big eyes" works, "slime" does not. |
+| `poses` | — | One description per frame, in order. Sets the frame count. This is the field that produces motion — see below. |
+| `frames` | `4` | 2–8. A hint, not a contract. Ignored when `poses` is given. |
+| `style` | `flat pixel art` | Art direction, e.g. `hand-drawn ink`, `3D clay render`. |
+| `size` | `1344x768` | The sheet canvas. |
+| `wait` | `300` | Seconds to wait for the heavy slot if music is mid-generation. |
+
+**Every frame comes out of one generation, and that is the point.** Generating
+four sprites separately gives you four different characters — the model has no
+memory between samples, so armour, palette and proportions all drift. That was
+measured on both plain prompting and `init_image`; a variation keeps the
+composition, which is exactly the wrong thing when you want the pose to change
+and nothing else. Asking for a single picture containing every pose is what
+makes them the same character, and it works: five slimes came back with
+identical eyes, palette and proportions.
+
+**Count what you got, don't assume it.** Two runs asking for four frames each
+returned five, arranged 3+2 across two rows. Diffusion does not count, and no
+amount of prompt wording makes it. The response's `frames` array is the truth;
+`requested_frames` is only what was asked for. Any caller that indexes 0..3
+because it asked for 4 will be wrong.
+
+**Name the poses if you want animation.** This is the real limit and it is worth
+being plain about. Asked for "the same character with only the pose changing",
+the model returns identity and essentially no motion — the measured run was five
+near-identical standing slimes, useful as a character set and useless as a walk
+cycle. Passing `poses` fixed that: idle, crouch, mid-air and splat came back
+visibly different. The cost is that the design drifts more between frames —
+arms and a mouth appeared in some poses and not others. At four schnell steps
+the model cannot fully serve both constraints, so choose which one the asset
+needs. This is the temporal-coherence problem video models exist to solve, met
+halfway rather than solved.
+
+**The sheet is not a grid.** Poses are spaced irregularly, at different sizes,
+across however many rows the model chose, so frames are located by content
+rather than by dividing the canvas — reading order is left to right, then top to
+bottom. The soft drop shadow under each sprite is excluded rather than cut as a
+frame of its own. Cell-slicing a real sheet cuts characters in half.
+
+**Backgrounds are removed with a segmentation model.** Colour keying is the
+fallback and its limit is why: a white robot on a white sheet came out
+see-through, its background readable through its head. Pale characters are
+ordinary, not an edge case. The cut runs in a separate interpreter, set by
+`ANNEAL_SPRITE_PYTHON`, because it needs rembg and the environment that serves
+the models is version-pinned; a host without one gets a 503 saying so rather
+than a silent fallback.
+
+Synchronous, measured at **2 min 8 s** end to end at the default size on both
+runs — one image generation plus a few seconds to cut. It evicts music.
+
+**When the sheet can't be cut** you get a 502 that still carries `sheet` and
+`sheet_url`. The model occasionally returns one scene rather than separate
+poses; the image cost minutes and is in the library either way, so it is handed
+back rather than thrown away.
+
 ## 7. Endpoint summary
 
 | Method | Path | Wakes model? | Purpose |
@@ -538,6 +627,7 @@ Remember this evicts the music model.
 | POST | `/v1/chat/completions` | text | OpenAI-shaped chat, streaming supported |
 | POST | `/v1/text` | text | One-shot prompt in, text out |
 | POST | `/v1/vector` | text (light) | Draw an SVG icon. **Experimental** — see below |
+| POST | `/v1/sprites` | image | An animation set as separate transparent PNGs |
 | POST | `/v1/press` | in stages | Start a record: plan, lyrics, music, cover |
 | GET | `/v1/press?id=` | **no** | Poll a press, or list recent ones without `id` |
 | GET | `/v1/press/download?id=` | **no** | The whole record as a zip, transcoded on request |

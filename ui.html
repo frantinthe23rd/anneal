@@ -2610,7 +2610,10 @@ function renderLibrary() {
     // Media is fetched lazily on click: listing 300 items shouldn't pull
     // hundreds of megabytes through the browser.
     const holder = el("div");
-    const open = el("button", null, it.kind === "images" ? "Show image" : "Play");
+    // By file type, not by kind: sprites are images too, and keying on
+    // kind === "images" gave a sprite frame a broken audio player.
+    const isPic = /\.(png|jpe?g|webp|gif|svg)$/i.test(it.name || "");
+    const open = el("button", null, isPic ? "Show image" : "Play");
     open.className = "iconbtn";
     open.onclick = async () => {
       open.disabled = true; open.textContent = "Loading…";
@@ -2618,7 +2621,7 @@ function renderLibrary() {
         const blob = await api(it.url, { raw: true });
         const url = URL.createObjectURL(blob); blobUrls.push(url);
         holder.textContent = "";
-        if (it.kind === "images") {
+        if (isPic) {
           const img = document.createElement("img"); img.src = url; img.alt = it.prompt;
           holder.appendChild(img);
         } else {

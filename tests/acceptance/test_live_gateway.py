@@ -35,6 +35,7 @@ PROTECTED = [
     ("DELETE", "/v1/press?id=x"),
     ("DELETE", "/v1/outputs?path=/tmp/x"),
     ("POST", "/v1/press"),
+    ("POST", "/v1/sprites"),
     ("POST", "/v1/press/resume"),
     ("POST", "/v1/press/cancel"),
     ("POST", "/v1/text"),
@@ -240,6 +241,42 @@ class TestPathTraversal(LiveCase):
             "GET", "/v1/audio?path=%252Fv1%252Faudio%253Fpath%253Dx", key=self.key)
         self.assertEqual(status, 400)
         self.assertIn("double-encoded", body["error"])
+
+
+class TestSpriteValidation(LiveCase):
+    """A bad sprite request must be refused *before* the image model runs.
+
+    Everything past validation costs a minute or more of a heavy model, so the
+    cheap checks are the ones worth having a live test for — and they are the
+    ones that would silently stop working if the route were mounted after the
+    generic proxy fall-through.
+    """
+
+    def bad(self, payload):
+        status, _, body, _ = request("POST", "/v1/sprites", payload=payload, key=self.key)
+        return status, body
+
+    def test_a_request_without_a_prompt_is_refused(self):
+        if not self.key:
+            self.skipTest("no ACESTEP_API_KEY available")
+        status, body = self.bad({"frames": 4})
+        self.assertEqual(status, 400)
+        self.assertIn("prompt", body["error"])
+
+    def test_an_impossible_frame_count_is_refused(self):
+        if not self.key:
+            self.skipTest("no ACESTEP_API_KEY available")
+        for frames in (0, 1, 99):
+            status, body = self.bad({"prompt": "a knight", "frames": frames})
+            self.assertEqual(status, 400, frames)
+            self.assertIn("frames", body["error"])
+
+    def test_the_route_is_the_gateway_and_not_a_proxy_fall_through(self):
+        """A 404 or 502 here means the request reached a backend instead."""
+        if not self.key:
+            self.skipTest("no ACESTEP_API_KEY available")
+        status, _ = self.bad({})
+        self.assertEqual(status, 400)
 
 
 class TestServedFilesRoundTrip(LiveCase):

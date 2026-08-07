@@ -46,6 +46,35 @@ the inline script parses, dangling `$("id")` references, unresolved CSS custom
 properties, external subresources, and light/dark token parity. Each one encodes
 a fault this project has actually shipped.
 
+## Cutting sprite sheets
+
+`sprites.py` at the repo root finds the frames in a generated sheet, cuts them
+out and removes the background. `POST /v1/sprites` runs it; it is also usable on
+its own against any image.
+
+```bash
+$AIMUSIC_ROOT/tools-venv/bin/python sprites.py sheet.png            # just report the frames
+$AIMUSIC_ROOT/tools-venv/bin/python sprites.py sheet.png --out ./frames
+```
+
+It runs under **tools-venv, not gen-venv**, and the gateway shells out to it
+rather than importing it. Matting uses [rembg](https://github.com/danielgatis/rembg),
+which pulls onnxruntime, and gen-venv is version-pinned because it serves the
+models — coupling the two would mean an image-model upgrade could be blocked by
+a background-removal dependency. `ANNEAL_SPRITE_PYTHON` overrides the
+interpreter; without a usable one the endpoint answers 503 and says so.
+
+```bash
+$AIMUSIC_ROOT/tools-venv/bin/pip install rembg[cpu] pillow
+```
+
+`--no-model` mattes by colour distance instead. It is faster and needs nothing
+installed, and it is the fallback rather than the default because it made a
+white robot on a white sheet see-through — the background readable through its
+head. Use it for high-contrast subjects only.
+
+The first run downloads the u2net weights (~176 MB) into `~/.u2net`.
+
 # Visual verification
 
 `ui.html` is the one part of Anneal that cannot be verified by reading. Three

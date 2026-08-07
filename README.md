@@ -57,6 +57,25 @@ Results appear in the Library as a record you can play through, and
 a zip — audio, cover and tracklist. Masters are FLAC, so lossy formats are
 transcoded from the original rather than from another lossy copy.
 
+**Sprites** (`POST /v1/sprites`) turns a brief into an animation set: separate
+transparent PNGs, one per frame, plus an atlas giving each frame's position on
+the sheet it came from. The whole set comes out of **one** image generation,
+which is the design rather than an optimisation — generating four sprites
+separately gives you four different characters, because the model has no memory
+between samples. Frames are then located by content, since the poses are spaced
+irregularly and across however many rows the model chose, and matted with a
+segmentation model rather than by colour distance: keying lost a white robot on
+a white sheet, and pale characters are ordinary. Two minutes, and it evicts
+music.
+
+Two honest limits, both measured. **The frame count is a hint** — two runs
+asking for four returned five, so read the response rather than assuming. And
+**identity comes free while motion does not**: left alone the poses come back
+near-identical, so passing `poses` (`["idle", "crouched to jump", "mid-air",
+"landing splat"]`) is what produces real animation, at the cost of more design
+drift between frames. That trade-off is the temporal-coherence problem video
+models exist to solve, met halfway. See [INTEGRATION.md](INTEGRATION.md#6c-sprites-an-animation-set-that-stays-the-same-character).
+
 **Using it by hand?** Open the web UI at **`/`** — prompt window, output view,
 and a forge strip showing which models are hot.
 
@@ -202,7 +221,7 @@ Everything bulky is on the **Storage SSD**; the internal disk holds only these s
 | `/Volumes/Storage/AIMusic/hf-cache` | FLUX 9.0 GB, Gemma 4.8 GB, Kokoro 0.3 GB |
 | `/Volumes/Storage/AIMusic/gen-venv` | venv for speech + image (mlx-audio, mflux) — 1.3 GB |
 | `/Volumes/Storage/AIMusic/uv-cache`, `uv-python` | wheel cache + Python 3.12 (4.3 GB) |
-| `/Volumes/Storage/AIMusic/outputs/{music,speech,images}` | **everything generated**, prompt-named, with JSON sidecars |
+| `/Volumes/Storage/AIMusic/outputs/{music,speech,images,vectors,sprites}` | **everything generated**, prompt-named, with JSON sidecars |
 | `/Volumes/Storage/AIMusic/supervisor.log` | supervisor lifecycle log |
 | `/Volumes/Storage/AIMusic/api-server.log` | ACE-Step server log |
 | `/Volumes/Storage/AIMusic/speech-server.log`, `image-server.log` | backend logs |
@@ -387,6 +406,7 @@ Useful knobs:
 | `SUPERVISOR_PORT` | `8001` | Public port |
 | `ACESTEP_LM_MODEL_PATH` | `acestep-5Hz-lm-0.6B` | Prompt/lyric planning LM |
 | `ANNEAL_MIN_FREE_MB` | `1200` | Refuse to load a heavy model below this much free RAM |
+| `ANNEAL_SPRITE_PYTHON` | `$AIMUSIC_ROOT/tools-venv/bin/python` | Interpreter used to cut and matte sprite sheets. Needs rembg, so it is deliberately not the pinned environment that serves the models |
 | `UV_BIN`, `TS_BIN`, `TAILNET_HOST` | auto-detected | Override only if detection picks wrong |
 
 Tool paths and the tailnet hostname are resolved at startup rather than

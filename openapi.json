@@ -52,6 +52,10 @@
     {
       "name": "vector",
       "description": "SVG drawn by the text model. Experimental — fast and safe, but the drawings are frequently not recognisable as their subject on the model that fits this hardware. See the endpoint description."
+    },
+    {
+      "name": "sprites",
+      "description": "Sprite sheets for game work: one FLUX generation containing every frame, cut into separate matted PNGs with transparency."
     }
   ],
   "paths": {
@@ -1134,6 +1138,130 @@
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/v1/sprites": {
+      "post": {
+        "tags": [
+          "sprites"
+        ],
+        "summary": "Generate an animation sheet and cut it into frames",
+        "description": "One brief becomes a set of transparent PNGs — one per frame — plus an atlas saying where each came from.\n\n**Every frame comes out of a single image generation.** That is the design, not an optimisation. Generating N sprites separately produces N different characters: the model has no memory between samples, so the armour, the palette and the proportions all drift. Asking for one picture containing all the poses is what makes them the same character.\n\n**`frames` is a hint, not a contract.** Two measured runs asking for four came back with five, laid out 3+2 across two rows rather than in a line. Diffusion does not count. Read `frames` in the response — that is what you actually got — and treat `requested_frames` as what was asked for. The cap exists because past eight poses in one image each is too small to use.\n\n**Name the poses if you want motion.** Left to itself the model gives you identity and almost no animation: a run of \"only the pose changing\" returned five near-identical standing slimes. Passing `poses` (`[\"idle\", \"crouched to jump\", \"mid-air\", \"landing splat\"]`) produced genuinely different poses — at the cost of more design drift between frames, since the model is being pulled two ways at four steps. Both effects are visible; pick which one matters for the asset.\n\n**The sheet is not a grid.** Poses are spaced irregularly, at different sizes, and across however many rows the model felt like, so frames are located by content rather than by dividing the canvas — read left to right, then top to bottom. A soft drop shadow is excluded rather than cut as a frame of its own.\n\n**Backgrounds are removed with a segmentation model, not colour distance.** Colour keying is available as a fallback but loses pale characters — a white robot on a white sheet came back see-through. That cut runs in a separate interpreter (`ANNEAL_SPRITE_PYTHON`) because it needs rembg, which is kept out of the pinned environment that serves the models.\n\nSynchronous, and it holds the heavy slot for one image generation — measured at 2 min 8 s end to end at the default size, twice. If music is resident it is evicted; if music is mid-generation the request waits for the slot rather than failing.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "prompt"
+                ],
+                "properties": {
+                  "prompt": {
+                    "type": "string",
+                    "description": "The character, described as you would to an artist. \"a small round green slime with big eyes\" works better than \"slime\"."
+                  },
+                  "frames": {
+                    "type": "integer",
+                    "default": 4,
+                    "minimum": 2,
+                    "maximum": 8,
+                    "description": "How many poses to ask for. A hint: the model routinely returns one more or one fewer. Ignored when `poses` is given, which sets the count instead."
+                  },
+                  "style": {
+                    "type": "string",
+                    "default": "flat pixel art",
+                    "description": "Art direction, e.g. \"flat pixel art\", \"hand-drawn ink\", \"3D clay render\"."
+                  },
+                  "size": {
+                    "type": "string",
+                    "default": "1344x768",
+                    "description": "Sheet canvas. Wide by default because the poses usually sit in a row or two — a square canvas spends most of its pixels on empty background."
+                  },
+                  "wait": {
+                    "type": "integer",
+                    "default": 300,
+                    "description": "Seconds to wait for the heavy slot if music is mid-generation."
+                  },
+                  "poses": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 8,
+                    "description": "One description per frame, in order — e.g. [\"idle\", \"crouched to jump\", \"stretched mid-air\", \"landing splat\"]. Sets the frame count. Without it the poses come back near-identical; with it they genuinely differ but the character design drifts more."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Frames written and matted. `frames` is what was produced, which may not equal `requested_frames`.",
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "subject": "a small round green slime with big eyes",
+                    "style": "flat pixel art",
+                    "source": "/Volumes/Storage/AIMusic/outputs/images/sprite-sheet-…png",
+                    "source_size": [
+                      1344,
+                      768
+                    ],
+                    "background": [
+                      252,
+                      251,
+                      249
+                    ],
+                    "frame_dir": "/Volumes/Storage/AIMusic/outputs/sprites/20260807-152300-a-small-round-green-slime",
+                    "frames": [
+                      {
+                        "index": 0,
+                        "x": 118,
+                        "y": 204,
+                        "width": 246,
+                        "height": 301,
+                        "file": "/Volumes/Storage/AIMusic/outputs/sprites/…/frame-000.png",
+                        "url": "/v1/outputs/file?path=…"
+                      },
+                      {
+                        "index": 1,
+                        "x": 432,
+                        "y": 198,
+                        "width": 238,
+                        "height": 307,
+                        "file": "…/frame-001.png",
+                        "url": "/v1/outputs/file?path=…"
+                      }
+                    ],
+                    "sheet": "/Volumes/Storage/AIMusic/outputs/images/sprite-sheet-…png",
+                    "sheet_url": "/v1/images/file?path=…",
+                    "requested_frames": 4
+                  },
+                  "code": 200,
+                  "error": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No prompt, a frame count outside 2–8, or a malformed `poses` list."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "502": {
+            "description": "The sheet generated but no frames could be found in it — the model sometimes returns a single scene rather than separate poses. The response still carries `sheet` and `sheet_url`, because it cost minutes and is in the library either way."
+          },
+          "503": {
+            "description": "No interpreter configured that can matte. Set ANNEAL_SPRITE_PYTHON."
+          },
+          "504": {
+            "description": "Cutting the sheet exceeded ten minutes."
           }
         }
       }

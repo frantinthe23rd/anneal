@@ -623,7 +623,7 @@ def press_music(payload):
     raise RuntimeError("timed out waiting for track")
 
 
-def press_image(prompt, size, wait_for_slot=300):
+def press_image(prompt, size, wait_for_slot=300, what="the cover"):
     """Paint the cover, waiting for the music model to release the heavy slot.
 
     A track reports done the moment its result is stored, but the music service
@@ -641,7 +641,7 @@ def press_image(prompt, size, wait_for_slot=300):
             return items[0] if items else None
         except RuntimeError as exc:
             if "409" in str(exc) and time.time() < deadline:
-                log("press: heavy slot busy, waiting to paint the cover")
+                log("heavy slot busy, waiting to paint %s" % what)
                 time.sleep(10)
                 continue
             raise
@@ -957,6 +957,67 @@ def press_limits(payload):
     return None
 
 
+# ------------------------------------------------------------------ sprites
+# The interpreter that can cut and matte a sheet. It is not the one serving the
+# models: matting needs a segmentation model, which pulls onnxruntime, and the
+# model environment is version-pinned. Keeping them apart means the sprite
+# dependency cannot break music generation, at the cost of a subprocess.
+SPRITE_PYTHON = os.environ.get(
+    "ANNEAL_SPRITE_PYTHON", os.path.join(AIMUSIC_ROOT, "tools-venv", "bin", "python"))
+MAX_SPRITE_FRAMES = 8
+
+
+def sprite_python():
+    """The configured interpreter, or None if it is not usable."""
+    return SPRITE_PYTHON if os.path.isfile(SPRITE_PYTHON) else None
+
+
+def sheet_prompt(subject, frames=4, style="flat pixel art", poses=None):
+    """Ask for one picture containing every frame.
+
+    This wording is the whole reason the feature works. Generating N sprites
+    separately produced N different characters — measured on both img2img and
+    plain prompting — because each generation is independent. Frames that share
+    one generation cannot diverge, so the prompt has to make it one picture and
+    say plainly that the character does not change between poses.
+
+    The second half is the harder half and it only half works. Asking for "the
+    pose changing" gets identity for free and motion barely at all: a measured
+    run returned five near-identical standing slimes. Naming the poses is what
+    produces visible difference, so `poses` is passed straight through and the
+    default wording leans on "clearly different" rather than "changing".
+    """
+    plan = ""
+    if poses:
+        plan = ", the frames in order: %s" % ", ".join(p.strip() for p in poses if p.strip())
+    return ("sprite sheet for a 2D game: the same %s shown in %d separate frames "
+            "in a single horizontal row, identical character design, colours and "
+            "proportions in every frame, each frame a clearly and obviously "
+            "different pose%s, %s, plain flat white background, no shadow, no "
+            "scenery, no text, full body, even lighting"
+            % (subject.strip(), int(frames), plan, style.strip()))
+
+
+def sprite_limits(payload):
+    """Reject what cannot work, before spending minutes on the image model."""
+    if not (payload.get("prompt") or "").strip():
+        return "'prompt' is required"
+    try:
+        frames = int(payload.get("frames", 4))
+    except (TypeError, ValueError):
+        return "'frames' must be a number"
+    if not 2 <= frames <= MAX_SPRITE_FRAMES:
+        return ("'frames' must be between 2 and %d — more poses than that in one "
+                "image leaves each too small to use" % MAX_SPRITE_FRAMES)
+    poses = payload.get("poses")
+    if poses is not None:
+        if not isinstance(poses, list) or not all(isinstance(p, str) for p in poses):
+            return "'poses' must be a list of strings, one per frame"
+        if len(poses) > MAX_SPRITE_FRAMES:
+            return "'poses' cannot be longer than %d" % MAX_SPRITE_FRAMES
+    return None
+
+
 def capability_limits():
     """The numbers a client must respect, from wherever they actually live.
 
@@ -1060,6 +1121,88 @@ class Handler(BaseHTTPRequestHandler):
             return json.loads(raw or b"{}"), raw
         except ValueError:
             return {}, raw
+
+    def _make_sprites(self, payload, interpreter):
+        """A brief becomes a set of matted frames, in two steps.
+
+        Step one is *one* image generation. That is the whole design: separate
+        generations of "the same character" produce different characters, so
+        every frame has to come out of a single sample. It goes back through the
+        gateway's own image endpoint rather than reaching into the service, so
+        it inherits eviction, admission control and library persistence — the
+        same reasoning as Press.
+
+        Step two runs the cutter as a subprocess, because matting needs rembg
+        and the environment that serves the models is version-pinned. Nothing
+        crosses that boundary except a path and a line of JSON.
+        """
+        subject = payload["prompt"].strip()
+        frames = int(payload.get("frames", 4))
+        style = (payload.get("style") or "flat pixel art").strip()
+        poses = payload.get("poses") or None
+        if poses:
+            # The list is the frame count: asking for four frames and naming six
+            # poses is a contradiction the model resolves by ignoring one of them.
+            frames = len(poses)
+        # Wide by default: the frames are laid out in a row, and a square canvas
+        # spends most of its pixels on empty background above and below them.
+        size = payload.get("size") or "1344x768"
+
+        try:
+            reply = press_image(sheet_prompt(subject, frames, style, poses), size,
+                                wait_for_slot=int(payload.get("wait", 300)),
+                                what="the sprite sheet")
+        except Exception as exc:
+            self._send_json({"code": 502,
+                             "error": "the sheet could not be generated: %s" % exc}, 502)
+            return
+        sheet = (reply or {}).get("path")
+        if not sheet:
+            self._send_json({"code": 502, "error": "the image service returned no sheet"}, 502)
+            return
+        # The sheet is already in the library with its sidecar: it went through
+        # the gateway's own image route, which persists on the way back.
+
+        out_dir = os.path.join(outputs.root(), "sprites", "%s-%s" % (
+            time.strftime("%Y%m%d-%H%M%S"), re.sub(r"[^a-z0-9]+", "-", subject.lower())[:40].strip("-") or "sprite"))
+        try:
+            done = subprocess.run(
+                [interpreter, os.path.join(HERE, "sprites.py"), sheet,
+                 "--out", out_dir, "--json"],
+                capture_output=True, text=True, timeout=600)
+        except subprocess.TimeoutExpired:
+            self._send_json({"code": 504, "error": "cutting the sheet timed out"}, 504)
+            return
+        try:
+            data = json.loads((done.stdout or "").strip() or "{}")
+        except ValueError:
+            data = {"error": (done.stderr or "the cutter printed nothing").strip()[:400]}
+        if data.get("error") or not data.get("frames"):
+            # The sheet is still worth returning: it cost minutes, it is in the
+            # library, and a caller can cut it by hand or retry the cut alone.
+            self._send_json({
+                "code": 502,
+                "error": "the sheet was generated but could not be cut: %s"
+                         % (data.get("error") or "no frames were found in it"),
+                "sheet": sheet,
+                "sheet_url": "/v1/images/file?path=" + urllib.parse.quote(sheet, safe=""),
+            }, 502)
+            return
+
+        for frame in data["frames"]:
+            if frame.get("file"):
+                frame["url"] = "/v1/outputs/file?path=" + urllib.parse.quote(frame["file"], safe="")
+                outputs.adopt("sprites", frame["file"], {
+                    "prompt": subject, "style": style, "service": "sprites",
+                    "frame": frame["index"], "frames": len(data["frames"]),
+                    "sheet": sheet, "request": dict(payload),
+                })
+        data["subject"] = subject
+        data["style"] = style
+        data["requested_frames"] = frames
+        data["sheet"] = sheet
+        data["sheet_url"] = "/v1/images/file?path=" + urllib.parse.quote(sheet, safe="")
+        self._send_json({"data": data, "code": 200, "error": None})
 
     def _status_payload(self):
         return {
@@ -1927,6 +2070,31 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         route = urllib.parse.urlparse(self.path).path
+
+        if route == "/v1/sprites":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            payload, _ = self._body()
+            if payload is None:
+                return              # 413 already sent
+            problem = sprite_limits(payload)
+            if problem:
+                self._send_json({"code": 400, "error": problem}, 400)
+                return
+            interpreter = sprite_python()
+            if not interpreter:
+                self._send_json({
+                    "code": 503,
+                    "error": "no interpreter available to cut sheets. Matting uses "
+                             "rembg, which is deliberately kept out of the pinned "
+                             "environment that serves the models — point "
+                             "ANNEAL_SPRITE_PYTHON at one that has it "
+                             "(see tools/README.md).",
+                }, 503)
+                return
+            self._make_sprites(payload, interpreter)
+            return
 
         if route == "/v1/press":
             if not self._authorized():

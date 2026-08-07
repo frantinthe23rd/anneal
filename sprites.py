@@ -271,6 +271,21 @@ def cut(path, out_dir, transparent=True, use_model=True, **kw):
     return written
 
 
+def pipeline(sheet_path, out_dir, use_model=True, distance=CONTENT_DISTANCE):
+    """Cut, matte and describe a sheet in one call. Returns the atlas.
+
+    This is what the gateway invokes as a subprocess: it prints the atlas as
+    JSON on stdout so nothing has to be imported across environments.
+    """
+    data = atlas(sheet_path, distance=distance)
+    written = cut(sheet_path, out_dir, transparent=True, use_model=use_model,
+                  distance=distance)
+    for frame, path in zip(data["frames"], written):
+        frame["file"] = path
+    data["frame_dir"] = out_dir
+    return data
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -278,6 +293,8 @@ def main(argv=None):
     ap.add_argument("--out", help="directory for the cut frames; omit to only report")
     ap.add_argument("--opaque", action="store_true",
                     help="keep the background instead of cutting alpha")
+    ap.add_argument("--json", action="store_true",
+                    help="print the atlas as JSON on stdout and nothing else")
     ap.add_argument("--no-model", action="store_true",
                     help="matte by colour distance instead of segmentation. Faster and "
                          "dependency-free, but it makes a pale sprite on a pale "
@@ -285,6 +302,19 @@ def main(argv=None):
     ap.add_argument("--distance", type=int, default=CONTENT_DISTANCE,
                     help="how far from the background a pixel must be to be content")
     args = ap.parse_args(argv)
+
+    if args.json:
+        if not args.out:
+            print(json.dumps({"error": "--json needs --out"}))
+            return 2
+        try:
+            print(json.dumps(pipeline(args.sheet, args.out,
+                                      use_model=not args.no_model,
+                                      distance=args.distance)))
+            return 0
+        except Exception as exc:
+            print(json.dumps({"error": "%s: %s" % (type(exc).__name__, exc)}))
+            return 1
 
     data = atlas(args.sheet, distance=args.distance)
     print("  %s  %dx%d  background rgb%s" % (data["source"], data["source_size"][0],

@@ -84,21 +84,21 @@ def candidates(older_than_days, kinds, now=None):
     out = []
     for kind in kinds:
         d = os.path.join(outputs.root(), kind)
-        try:
-            names = os.listdir(d)
-        except OSError:
-            continue
-        for name in names:
-            if name.endswith(outputs.SIDECAR_SUFFIX):
-                continue           # goes with its file, not on its own
-            path = os.path.join(d, name)
-            try:
-                st = os.stat(path)
-            except OSError:
-                continue
-            if st.st_mtime < cutoff:
-                out.append({"path": os.path.realpath(path), "kind": kind,
-                            "bytes": st.st_size, "mtime": st.st_mtime})
+        # Walk: sprites write a directory per set, and offering the directory as
+        # a candidate would report a nonsense size and then fail to delete it,
+        # since outputs.delete uses os.remove. Fails safe, but reports wrongly.
+        for folder, _dirs, names in os.walk(d):
+            for name in names:
+                if name.endswith(outputs.SIDECAR_SUFFIX):
+                    continue       # goes with its file, not on its own
+                path = os.path.join(folder, name)
+                try:
+                    st = os.stat(path)
+                except OSError:
+                    continue
+                if st.st_mtime < cutoff:
+                    out.append({"path": os.path.realpath(path), "kind": kind,
+                                "bytes": st.st_size, "mtime": st.st_mtime})
     return sorted(out, key=lambda f: f["mtime"])
 
 

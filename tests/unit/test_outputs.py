@@ -164,6 +164,27 @@ class TestListing(OutputsCase):
         self.assertNotIn(".DS_Store", names)
         self.assertFalse([n for n in names if n.endswith(".json")])
 
+    def test_a_kind_that_nests_its_output_still_lists_the_files(self):
+        """Sprites write a directory per set, and the flat scan listed the
+        *directory* — an item with no prompt, the inode's size, and a
+        `/v1/outputs/file` URL that 404s because it is not a file. Caught by the
+        acceptance suite fetching the newest item's advertised URL."""
+        os.makedirs(os.path.join(outputs.kind_dir("sprites"), "a-slime"))
+        self.write("sprites", os.path.join("a-slime", "frame-00.png"),
+                   created=4000.0, meta={"prompt": "a slime", "frame": 0})
+        self.write("sprites", os.path.join("a-slime", "frame-01.png"),
+                   created=4001.0, meta={"prompt": "a slime", "frame": 1})
+        items = outputs.listing(kind="sprites")["items"]
+        self.assertEqual(len(items), 2)
+        for item in items:
+            self.assertTrue(os.path.isfile(item["path"]), item["path"])
+            self.assertEqual(item["prompt"], "a slime")
+
+    def test_a_directory_is_never_itself_an_item(self):
+        os.makedirs(os.path.join(outputs.kind_dir("images"), "a-folder"))
+        for item in outputs.listing()["items"]:
+            self.assertTrue(os.path.isfile(item["path"]), item["path"])
+
     def test_limit_and_offset(self):
         page = outputs.listing(limit=1, offset=1)
         self.assertEqual(page["total"], 3)               # total is the whole set

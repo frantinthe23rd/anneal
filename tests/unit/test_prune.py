@@ -28,6 +28,10 @@ class PruneCase(unittest.TestCase):
         self.addCleanup(setattr, outputs, "root", self._root)
         for kind in outputs.KINDS:
             os.makedirs(os.path.join(self.tmp, kind), exist_ok=True)
+        # usage() memoises for 60 s against a wall clock, and these tests pass a
+        # fake `now` to step past it. Without a reset one test's answer leaks
+        # into the next whenever it happens to pick a smaller offset.
+        outputs._USAGE_CACHE.update({"at": 0.0, "value": None})
 
     def write(self, kind, name, age_days=0, size=16):
         path = os.path.join(self.tmp, kind, name)
@@ -159,6 +163,31 @@ class TestUsageReporting(PruneCase):
         self.write("music", "a.flac", size=100)
         u = outputs.usage(now=time.time() + 20_000)
         self.assertEqual(u["files"], 1, "the .json is metadata, not an output")
+
+    def test_a_nested_kind_is_counted_by_its_files(self):
+        """Sprites write a directory per set. A flat scan counted the directory
+        as one ~400-byte file and missed every frame inside it, so the storage
+        figure — the one thing here that is automated — was wrong."""
+        os.makedirs(os.path.join(self.tmp, "sprites", "a-slime"))
+        self.write("sprites", os.path.join("a-slime", "f0.png"), size=300)
+        self.write("sprites", os.path.join("a-slime", "f1.png"), size=300)
+        u = outputs.usage(now=time.time() + 30_000)
+        self.assertEqual(u["by_kind"]["sprites"]["files"], 2)
+        self.assertEqual(u["by_kind"]["sprites"]["bytes"], 600)
+
+
+class TestNestedOutput(PruneCase):
+    """A kind whose output is a directory per set, not a file per item."""
+
+    def test_frames_inside_a_set_are_candidates_and_the_directory_is_not(self):
+        os.makedirs(os.path.join(self.tmp, "sprites", "a-slime"))
+        self.write("sprites", os.path.join("a-slime", "f0.png"), age_days=40)
+        self.write("sprites", os.path.join("a-slime", "f1.png"), age_days=40)
+        got = prune.candidates(30, ["sprites"])
+        self.assertEqual(len(got), 2)
+        for f in got:
+            self.assertTrue(os.path.isfile(f["path"]), f["path"])
+            self.assertTrue(f["path"].endswith(".png"))
 
 
 if __name__ == "__main__":
