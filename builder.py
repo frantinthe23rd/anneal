@@ -122,8 +122,9 @@ Musical style: {style}
 
 {density}
 
-Use [verse], [chorus] and [bridge] tags on their own lines. Output ONLY the
-lyrics — no title, no commentary, no notes."""
+Use [verse], [chorus] and [bridge] tags on their own lines. Finish with a short
+[outro] — a closing line or a repeated tag — so the song ends rather than simply
+stopping. Output ONLY the lyrics — no title, no commentary, no notes."""
 
 
 def slug(text, limit=48):
@@ -461,6 +462,17 @@ class Press:
         # possible, which is the failure this exists to fix.
         return "moderate"
 
+    # Measured over fourteen finished tracks: none were truncated at the sample
+    # level, and five of eight recent ones stopped dead at full level and were
+    # then padded with two to six seconds of silence to fill the requested
+    # duration. The model spends the time it is given and finishes nowhere,
+    # because nothing ever asked it to finish. `style` is genre, instruments,
+    # mood and tempo; the lyric prompt asks for verses and a chorus. Neither
+    # mentions an ending. See #33.
+    ENDING_CLAUSE = ("End with a proper outro: bring the arrangement to a "
+                     "deliberate close in the last few bars — resolve to the "
+                     "tonic and let it decay, rather than stopping mid-phrase")
+
     @staticmethod
     def track_prompt(plan, track, request):
         """The style for one track, with the record's voice pinned to it.
@@ -484,11 +496,13 @@ class Press:
             # The planner did not answer, so carry the brief through verbatim
             # rather than dropping the only statement of intent there is.
             voice = (request.get("prompt") or "").strip()
-        if not voice or voice.lower().startswith("instrumental"):
-            return style
-        if request.get("instrumental"):
-            return style
-        return "%s. Lead vocal: %s" % (style.rstrip(". "), voice)
+        # The ending applies to the arrangement, so it is added whether or not
+        # anybody is singing — instrumental club tracks were the worst of the
+        # measured offenders. Style stays at the front: ACE-Step weights the
+        # start of the prompt most heavily, and genre must lead.
+        if not voice or voice.lower().startswith("instrumental") or request.get("instrumental"):
+            return "%s. %s" % (style.rstrip(". "), Press.ENDING_CLAUSE)
+        return "%s. Lead vocal: %s. %s" % (style.rstrip(". "), voice, Press.ENDING_CLAUSE)
 
     def run(self, pid, resume=False):
         try:

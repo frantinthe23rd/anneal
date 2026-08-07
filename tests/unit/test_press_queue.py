@@ -254,6 +254,57 @@ class TestLyricDensity(QueueCase):
                                       {"lyric_density": "sparse"}), "sparse")
 
 
+class TestEndings(QueueCase):
+    """Tracks stopped mid-phrase (#33).
+
+    Measured over fourteen finished tracks: none were truncated at the sample
+    level — every file fades to digital silence. What actually happens is worse
+    and less obvious. The music plays at full level right up to the last bar,
+    stops dead, and the file is then padded with two to six seconds of silence
+    to reach the requested duration. Five of eight recent tracks did exactly
+    that. So the model fills the time it was given, runs out of material, and
+    ends nowhere in particular.
+
+    Nothing in the prompt ever asked for an ending. `style` is defined as genre,
+    instruments, mood and tempo; the lyric prompt asks for verses and a chorus.
+    Neither says the piece has to finish.
+    """
+
+    def prompt(self, plan, track, req):
+        return builder.Press.track_prompt(plan, track, req)
+
+    def test_every_track_prompt_asks_for_an_ending(self):
+        for style in ("melancholy folk", "driving melodic techno", "indie rock"):
+            out = self.prompt({"voice": "a tenor"}, {"style": style},
+                              {"prompt": "a brief"}).lower()
+            self.assertTrue("outro" in out or "ending" in out or "resolve" in out,
+                            "nothing asks %r to finish" % style)
+
+    def test_an_instrumental_track_still_asks_for_an_ending(self):
+        """The ending is a property of the arrangement, not the vocal — and
+        instrumental club tracks were the worst offenders in the measurement."""
+        out = self.prompt({}, {"style": "ambient techno"},
+                          {"prompt": "x", "instrumental": True}).lower()
+        self.assertTrue("outro" in out or "ending" in out or "resolve" in out)
+
+    def test_the_ending_clause_does_not_displace_the_voice(self):
+        """Both are appended to the same line. The vocal fix came first and must
+        survive this one."""
+        out = self.prompt({"voice": "a British woman, warm alto"},
+                          {"style": "folk"}, {"prompt": "x"})
+        self.assertIn("a British woman, warm alto", out)
+        self.assertIn("folk", out)
+
+    def test_the_style_still_leads_the_prompt(self):
+        """ACE-Step weights the front of the prompt most. Genre must not end up
+        behind housekeeping."""
+        out = self.prompt({}, {"style": "driving melodic techno"}, {"prompt": "x"})
+        self.assertTrue(out.lower().startswith("driving melodic techno"), out[:60])
+
+    def test_the_lyric_prompt_asks_for_a_closing_section(self):
+        self.assertIn("[outro]", builder.LYRIC_PROMPT)
+
+
 class TestLyricInstruction(QueueCase):
     def test_each_density_produces_different_guidance(self):
         seen = {builder.LYRIC_DENSITY[d] for d in ("sparse", "moderate", "full")}
