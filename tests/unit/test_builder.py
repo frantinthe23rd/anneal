@@ -247,25 +247,16 @@ class TestDurationDerivation(PressCase):
         self.assertEqual([c["audio_duration"] for c in self.music.calls],
                          [t["duration"] for t in press["tracks"]])
 
-    @unittest.expectedFailure
     def test_the_ten_minute_ceiling_cannot_be_breached(self):
-        """Known defect, issue #25.
-
-        With duration >= 1000 the derived dmin is clamped to 600 and dmax to
-        600, the `dmax <= dmin` guard then pushes dmax to 630, and tracks are
-        planned past the ceiling the clamp exists to enforce.
-        """
+        """Was issue #25: clamping only dmax let the `dmax <= dmin` guard push
+        the window back out, planning tracks past the ceiling the clamp exists
+        to enforce."""
         self.run_press({"prompt": "a brief", "tracks": 3, "duration": 1000})
         self.assertLessEqual(self.bounds()[1], 600)
 
-    @unittest.expectedFailure
     def test_a_single_is_bounded_by_the_same_ceiling_as_an_album_track(self):
-        """Known defect, issue #25.
-
-        A single takes `duration` verbatim, so `{"tracks": 1, "duration": 3600}`
-        asks ACE-Step for an hour of audio while the same request with two
-        tracks is capped at ten minutes each.
-        """
+        """Was issue #25: a single took `duration` verbatim, so one track could
+        ask ACE-Step for an hour while the same request with two was capped."""
         _, press = self.run_press({"prompt": "a brief", "tracks": 1, "duration": 3600})
         self.assertLessEqual(press["tracks"][0]["duration"], 600)
 

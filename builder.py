@@ -26,6 +26,11 @@ import threading
 import time
 import uuid
 
+# What ACE-Step is asked to render at most, and the floor below which a
+# track is not worth the model load. Both are enforced on every derived bound.
+MAX_TRACK_SECONDS = 600
+MIN_TRACK_SECONDS = 20
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS presses (
     id         TEXT PRIMARY KEY,
@@ -223,11 +228,22 @@ class Press:
         self.store.update(pid, state="planning", stage_note="Planning the record")
         # A nominal length that the plan varies around, rather than one length
         # imposed on every track.
-        target = int(req.get("duration", 90))
-        dmin = max(20, int(req.get("duration_min", round(target * 0.6))))
-        dmax = min(600, int(req.get("duration_max", round(target * 1.5))))
+        # MAX_TRACK_SECONDS is the ceiling ACE-Step is asked to honour, and
+        # every derived bound has to sit under it — including the lower one.
+        # Clamping only dmax did not work: the `dmax <= dmin` guard below then
+        # pushed the window straight back out, so duration=2000 planned tracks
+        # of 1200-1230s against a 600s cap. Issue #25.
+        target = min(MAX_TRACK_SECONDS, max(MIN_TRACK_SECONDS, int(req.get("duration", 90))))
+        dmin = int(req.get("duration_min", round(target * 0.6)))
+        dmax = int(req.get("duration_max", round(target * 1.5)))
+        dmin = max(MIN_TRACK_SECONDS, min(MAX_TRACK_SECONDS, dmin))
+        dmax = max(MIN_TRACK_SECONDS, min(MAX_TRACK_SECONDS, dmax))
         if dmax <= dmin:
-            dmax = dmin + 30
+            # Widen downwards if there is no room left above, so the guard can
+            # never lift the window past the ceiling.
+            dmax = min(MAX_TRACK_SECONDS, dmin + 30)
+            if dmax <= dmin:
+                dmin = max(MIN_TRACK_SECONDS, dmax - 30)
         raw = self.call_text(PLAN_PROMPT.format(
             what="a single song" if single else "an album of %d songs" % count,
             prompt=req["prompt"], count=count,
@@ -250,7 +266,7 @@ class Press:
         def planned_duration(t):
             """Honour the plan's length, but never outside the caller's bounds."""
             if single:
-                return target
+                return target      # already clamped to the ceiling above
             try:
                 v = int(float(t.get("duration_seconds") or target))
             except (TypeError, ValueError):
