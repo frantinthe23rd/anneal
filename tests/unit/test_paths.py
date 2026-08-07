@@ -8,13 +8,10 @@ mistakes.
 """
 
 import os
-import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import paths                                                       # noqa: E402
+import paths
 
 
 class ContainmentTest(unittest.TestCase):
@@ -133,12 +130,13 @@ class OutputsDeleteTest(unittest.TestCase):
     """outputs.delete() had its own copy of the check; it now shares this one."""
 
     def setUp(self):
-        self.tmp = tempfile.mkdtemp()
-        os.environ["AIMUSIC_ROOT"] = self.tmp
+        # tests/context.py has already pointed AIMUSIC_ROOT at a throwaway
+        # directory; outputs.root() reads it per call, so this stays inside it.
         import outputs
         self.outputs = outputs
-        self.music = os.path.join(self.tmp, "outputs", "music")
-        os.makedirs(self.music)
+        self.music = os.path.join(outputs.root(), "music")
+        os.makedirs(self.music, exist_ok=True)
+        self.tmp = os.environ["AIMUSIC_ROOT"]
 
     def _make(self, name):
         p = os.path.join(self.music, name)

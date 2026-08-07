@@ -1,25 +1,20 @@
 #!/usr/bin/env python3
 """Request and resource limits (#13).
 
-Importing supervisor.py has side effects — it opens jobs.db and presses.db under
-AIMUSIC_ROOT — so the environment is pointed at a temp directory first. It does
-not bind a port or start a service at import time, so this is safe.
+Importing supervisor.py has side effects — it opens jobs.db and presses.db
+under AIMUSIC_ROOT and resolves the roots it will serve files from — which is
+why `tests/unit/__init__.py` sandboxes the environment before any app module is
+imported. It binds no port at import time, so this is safe.
 """
 
 import os
 import sqlite3
-import sys
 import tempfile
 import time
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-os.environ.setdefault("AIMUSIC_ROOT", tempfile.mkdtemp(prefix="anneal-test-"))
-os.makedirs(os.environ["AIMUSIC_ROOT"], exist_ok=True)
-
-import supervisor                                                  # noqa: E402
-from jobstore import JobStore                                      # noqa: E402
+import supervisor
+from jobstore import JobStore
 
 
 class PressLimitsTest(unittest.TestCase):

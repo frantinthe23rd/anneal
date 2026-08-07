@@ -7,13 +7,9 @@ Each attack case asserts on the *output*, not on the removal log, because the
 log is a convenience and the output is the contract.
 """
 
-import os
-import sys
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-import vector                                                      # noqa: E402
+import vector
 
 
 class ExtractTest(unittest.TestCase):

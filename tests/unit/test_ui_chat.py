@@ -22,7 +22,9 @@ import os
 import re
 import unittest
 
-UI = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ui.html")
+from tests.context import REPO_ROOT
+
+UI = os.path.join(REPO_ROOT, "ui.html")
 
 
 class ChatPersistenceTest(unittest.TestCase):
