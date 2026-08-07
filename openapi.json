@@ -872,7 +872,7 @@
           "press"
         ],
         "summary": "Start a press",
-        "description": "Returns immediately with a press_id; poll GET /v1/press?id=.\n\nRuns minutes to tens of minutes. Stages are ordered plan → all lyrics → all music → cover so each heavy model loads once. On an album, track lengths vary around `duration` rather than being uniform.",
+        "description": "Start a record: plan, lyrics, music, cover, in that order so each heavy model loads exactly once.\n\n**At most one press runs at a time.** Press assumes it owns the model ordering for its whole run, so a second submission is *queued* rather than started or refused — refusing would lose the brief you just typed. A queued press comes back with `state: \"queued\"`, a 1-based `queue_position` and a rough `estimated_start_seconds`; poll `/v1/press?id=` and both appear there too until it starts.\n\nThe queue survives a restart. Anything waiting is still waiting, the press that was mid-run is marked `interrupted` and can be resumed, and the next one starts on its own.",
         "requestBody": {
           "required": true,
           "content": {
@@ -937,7 +937,22 @@
         },
         "responses": {
           "200": {
-            "description": "Started"
+            "description": "Accepted. Either started, or queued behind a running press.",
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "press_id": "0f2c…",
+                    "state": "queued",
+                    "queue_position": 1,
+                    "estimated_start_seconds": 115,
+                    "poll": "/v1/press?id=0f2c…"
+                  },
+                  "code": 200,
+                  "error": null
+                }
+              }
+            }
           },
           "400": {
             "description": "Missing prompt"

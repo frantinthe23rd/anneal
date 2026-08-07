@@ -277,10 +277,20 @@ heavy slot; a track already in flight may still land, and a cancelled press
 cannot be resumed. `DELETE /v1/press?id=…` removes the record, with `&files=1`
 to take its audio and cover with it.
 
-**One at a time.** Two concurrent presses would interleave their stages and
-defeat the ordering entirely — see
-[#14](https://github.com/frantinthe23rd/anneal/issues/14). Serialise them your
-side until that is enforced server-side.
+**One at a time, and the gateway enforces it.** Press assumes it owns the model
+ordering for its whole run, so a second submission is **queued** rather than
+started alongside — and rather than refused, which would lose the brief you just
+typed.
+
+A queued press returns `state: "queued"` with a 1-based `queue_position` and a
+rough `estimated_start_seconds`, and carries both on `GET /v1/press?id=` until it
+starts. Treat the estimate as an order of magnitude: it is built from what each
+waiting request asked for, not from history.
+
+You do not need to serialise anything your side. Submit, poll, and it will run
+when it reaches the front. The queue survives a gateway restart — anything
+waiting is still waiting, the press that was mid-run is marked `interrupted` and
+can be resumed, and the next one starts on its own.
 
 ---
 

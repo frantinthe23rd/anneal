@@ -179,9 +179,127 @@ class Press:
         self.call_image = call_image      # (prompt, size) -> dict
         self.log = log
         self._cancelled = set()
+        # Submission and handover both decide "is anything running", and they
+        # can race: two requests arriving together would each see an idle
+        # machine and both start.
+        self._queue_lock = threading.RLock()
+
+    # Non-terminal states a worker is actually inside. `queued` is deliberately
+    # not here: it has no worker, so it is neither running nor interrupted.
+    RUNNING_STATES = ("planning", "lyrics", "music", "art")
+    TERMINAL_STATES = ("done", "failed", "cancelled", "interrupted")
+
+    def spawn(self, pid, resume=False):
+        """Start the worker. Replaced in tests, and by the gateway with a thread."""
+        raise NotImplementedError("the caller must supply a way to run a press")
+
+    def submit(self, request):
+        """Accept a press, and start it only if nothing else is running.
+
+        Press assumes it owns the machine for its whole run: every text stage,
+        then every music stage, then the cover, so each heavy model loads once.
+        A second press interleaved with the first would swap models between
+        every stage. Refusing it was the cheap fix and is worse than nothing —
+        the brief you just typed is gone. So it waits, and keeps its request.
+        """
+        with self._queue_lock:
+            # Asked before the row exists: create() inserts straight into
+            # 'planning', so a press created first would see itself as the one
+            # already running and never start.
+            busy = self._running_id() is not None
+            pid = self.store.create(request)
+            if busy:
+                self.store.update(pid, state="queued",
+                                  stage_note="waiting for the press ahead of it")
+            else:
+                self.spawn(pid)
+        return pid
+
+    def _running_id(self):
+        for p in self.store.recent(200):
+            if p["state"] in self.RUNNING_STATES:
+                return p["id"]
+        return None
+
+    def _queued(self):
+        """Oldest first — submission order is the only fair one here."""
+        return sorted((p for p in self.store.recent(200) if p["state"] == "queued"),
+                      key=lambda p: p.get("created") or 0)
+
+    def position(self, pid):
+        """1-based place in the queue, or None if it is not waiting."""
+        for i, p in enumerate(self._queued(), start=1):
+            if p["id"] == pid:
+                return i
+        return None
+
+    def estimated_wait(self, pid):
+        """Roughly how long until this press starts, in seconds.
+
+        Deliberately crude: the number that matters to someone staring at a
+        queue is the order of magnitude — minutes or an hour — and pretending
+        to more precision than the machine can offer would be worse than
+        useless. Built from what each request asked for rather than from
+        history, because there is rarely enough history to mean anything.
+        """
+        place = self.position(pid)
+        if place is None:
+            return None
+        seconds = 0
+        running = self._running_id()
+        if running:
+            seconds += self._cost(self.store.get(running)) // 2   # already part-done
+        for record in self._queued()[:place - 1]:
+            seconds += self._cost(record)
+        return int(seconds)
+
+    @staticmethod
+    def _cost(record):
+        """A press's rough wall-clock cost from its own request."""
+        if not record:
+            return 0
+        req = record.get("request") or {}
+        tracks = max(1, int(req.get("tracks", 1) or 1))
+        # Planning and lyrics, then roughly two and a half times real time per
+        # track on the draft tier, then the cover.
+        per_track = int(req.get("duration", 90) or 90) * 2.5
+        return int(120 + tracks * per_track + 60)
+
+    def start_next(self):
+        """Hand the machine to whatever has been waiting longest."""
+        with self._queue_lock:
+            if self._running_id() is not None:
+                return None
+            waiting = self._queued()
+            if not waiting:
+                return None
+            pid = waiting[0]["id"]
+            # Leave 'queued' here rather than waiting for the worker's first
+            # write. Otherwise there is a window where the press has been handed
+            # the machine but still reports as waiting, with no position — which
+            # is exactly when a caller is polling hardest.
+            self.store.update(pid, state="planning", stage_note="starting")
+            self.spawn(pid)
+            return pid
+
+    def finish(self, pid, state, **fields):
+        """Record a terminal state and let the next press through.
+
+        Every exit goes through here — done, failed and cancelled alike. A queue
+        that only advances on success stalls permanently on the first failure,
+        which is the failure mode most likely to happen unattended.
+        """
+        self.store.update(pid, state=state, **fields)
+        self.start_next()
 
     def cancel(self, pid):
         self._cancelled.add(pid)
+        # A queued press has no worker to notice the flag, so it is retired here
+        # and will not be started by a later handover.
+        record = self.store.get(pid)
+        if record and record["state"] == "queued":
+            self.store.update(pid, state="cancelled",
+                              stage_note="cancelled before it started")
 
     def _check(self, pid):
         if pid in self._cancelled:
@@ -196,7 +314,7 @@ class Press:
         startup is by definition orphaned.
         """
         stuck = [p for p in self.store.recent(200)
-                 if p["state"] in ("planning", "lyrics", "music", "art")]
+                 if p["state"] in self.RUNNING_STATES]
         for p in stuck:
             done = sum(1 for t in p["tracks"] if t.get("state") == "done")
             self.store.update(p["id"], state="interrupted",
@@ -212,7 +330,7 @@ class Press:
         except Exception as exc:
             state = "cancelled" if str(exc) == "cancelled" else "failed"
             self.log("press %s %s: %s" % (pid, state, exc))
-            self.store.update(pid, state=state, error=str(exc), stage_note="")
+            self.finish(pid, state, error=str(exc), stage_note="")
 
     # -- stages -----------------------------------------------------------
     def _run(self, pid, resume=False):
@@ -339,7 +457,7 @@ class Press:
 
         ok = sum(1 for t in tracks if t["state"] == "done")
         self._write_manifest(pid, plan, tracks, cover, req)
-        self.store.update(pid, state="done", stage_note="%d/%d track(s) recorded" % (ok, len(tracks)))
+        self.finish(pid, "done", stage_note="%d/%d track(s) recorded" % (ok, len(tracks)))
         self.log("press %s finished: %d/%d tracks" % (pid, ok, len(tracks)))
 
     def _resume(self, pid, press, req):
@@ -395,7 +513,7 @@ class Press:
 
         ok = sum(1 for t in tracks if t.get("state") == "done")
         self._write_manifest(pid, plan, tracks, cover, req)
-        self.store.update(pid, state="done", stage_note="%d/%d track(s) recorded" % (ok, len(tracks)))
+        self.finish(pid, "done", stage_note="%d/%d track(s) recorded" % (ok, len(tracks)))
         self.log("press %s resumed to completion: %d/%d" % (pid, ok, len(tracks)))
 
     def _write_manifest(self, pid, plan, tracks, cover, req):

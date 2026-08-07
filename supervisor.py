@@ -648,6 +648,10 @@ def press_image(prompt, size, wait_for_slot=300):
 
 
 PRESS = Press(PRESSES, press_text, press_music, press_image, log=log)
+# How the queue actually starts work. Press does the admission and the ordering
+# and knows nothing about threads; this is the one line that makes it real.
+PRESS.spawn = lambda pid, resume=False: threading.Thread(
+    target=PRESS.run, args=(pid,), kwargs={"resume": resume}, daemon=True).start()
 
 
 def replay_pending_music_jobs():
@@ -1842,6 +1846,20 @@ class Handler(BaseHTTPRequestHandler):
             if pid and data is None:
                 self._send_json({"code": 404, "error": "no such press"}, 404)
                 return
+
+            # A waiting press should say where it is in the line and roughly how
+            # long that is. "queued" on its own reads like a stall.
+            def annotate(record):
+                place = PRESS.position(record["id"])
+                if place:
+                    record["queue_position"] = place
+                    record["estimated_start_seconds"] = PRESS.estimated_wait(record["id"])
+                return record
+
+            if pid:
+                data = annotate(data)
+            else:
+                data["presses"] = [annotate(r) for r in data["presses"]]
             self._send_json({"data": data, "code": 200, "error": None})
             return
 
@@ -1924,13 +1942,18 @@ class Handler(BaseHTTPRequestHandler):
             if problem:
                 self._send_json({"code": 400, "error": problem}, 400)
                 return
-            pid = PRESSES.create(payload)
-            # Runs for minutes to tens of minutes, so it cannot be a blocking
-            # request; the caller polls GET /v1/press?id=.
-            threading.Thread(target=PRESS.run, args=(pid,), daemon=True).start()
-            self._send_json({"data": {"press_id": pid, "state": "planning",
-                                      "poll": "/v1/press?id=" + pid},
-                             "code": 200, "error": None})
+            # Admission goes through the queue: at most one press runs and the
+            # rest wait, because Press assumes it owns the model ordering for
+            # its whole run. Minutes to tens of minutes either way, so it still
+            # cannot be a blocking request; the caller polls GET /v1/press?id=.
+            pid = PRESS.submit(payload)
+            position = PRESS.position(pid)
+            body = {"press_id": pid, "poll": "/v1/press?id=" + pid,
+                    "state": "queued" if position else "planning"}
+            if position:
+                body["queue_position"] = position
+                body["estimated_start_seconds"] = PRESS.estimated_wait(pid)
+            self._send_json({"data": body, "code": 200, "error": None})
             return
 
         if route == "/v1/press/resume":
@@ -2121,6 +2144,12 @@ def main():
     # working with nothing behind it. Reconcile before serving.
     try:
         PRESS.sweep_interrupted()
+        # A queue that does not survive a restart is a queue that loses work.
+        # Anything that was still waiting is still waiting, and now nothing is
+        # running, so the next one goes.
+        started = PRESS.start_next()
+        if started:
+            log("press %s started from the queue after restart" % started)
     except Exception as exc:
         log("press sweep failed: %r" % exc)
 
