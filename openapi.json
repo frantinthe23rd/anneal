@@ -3,7 +3,7 @@
   "info": {
     "title": "Anneal",
     "version": "2.0.0",
-    "description": "Music, speech and image generation running locally on a Mac mini M4, reachable over the tailnet.\n\nNamed for what it does to its models: heat one up on demand, let it cool and release the memory when idle.\n\n## Memory model — read this first\n\nThe host has 16 GB of unified memory. The music model holds ~21 GB once loaded and the image model ~11 GB, so **models are loaded on demand and unloaded after an idle period**, and the two heavy models are never resident at the same time — requesting one evicts the other. Music exceeds physical RAM on its own and therefore always swaps, which is why generation takes minutes rather than seconds.\n\nWhat that means for you:\n\n- A request against a cold model takes **3–4 minutes longer** while weights load. Set client timeouts to **900s or more**; a 30s default will fail every cold request.\n- Do not auto-retry a slow first request. A retry queues more work behind the one already running.\n- Call `POST /supervisor/start` ahead of time to pre-warm, or `GET /supervisor/status` to see what is currently loaded.\n- `GET /health`, `GET /supervisor/status` and `GET /v1/audio` never wake a model, so they are free to poll.\n\n## Auth\n\nEvery endpoint except `/health`, `/supervisor/status`, `/openapi.json` and `/docs` requires `Authorization: Bearer <key>`.\n\n## Concurrency\n\nOne job at a time per service. Music has a queue (max 200) that is held in memory and lost on restart — own your job state and be ready to resubmit."
+    "description": "Music, speech and image generation running locally on a Mac mini M4, reachable over the tailnet.\n\nNamed for what it does to its models: heat one up on demand, let it cool and release the memory when idle.\n\n## Memory model — read this first\n\nThe host has 16 GB of unified memory. The music model holds ~21 GB once loaded and the image model ~11 GB, so **models are loaded on demand and unloaded after an idle period**, and the two heavy models are never resident at the same time — requesting one evicts the other. Music exceeds physical RAM on its own and therefore always swaps, which is why generation takes minutes rather than seconds.\n\nWhat that means for you:\n\n- A request against a cold model takes **3–4 minutes longer** while weights load. Set client timeouts to **900s or more**; a 30s default will fail every cold request.\n- Do not auto-retry a slow first request. A retry queues more work behind the one already running.\n- Call `POST /supervisor/start` ahead of time to pre-warm, or `GET /supervisor/status` to see what is currently loaded.\n- `GET /health`, `GET /supervisor/status` and `GET /v1/audio` never wake a model, so they are free to poll.\n\n## Auth\n\nMost endpoints require `Authorization: Bearer <key>`. Answered without a key: `/health`, `/supervisor/status`, `/supervisor/auth`, `/supervisor/whoami`, `/v1/music/tiers`, `/openapi.json`, `/docs`, the web UI at `/` and its assets. Those either wake nothing or exist to tell you how to authenticate.\n\nThere is a second method this document cannot express as a security scheme: when Anneal is reached over a Tailscale serve proxy it accepts the `Tailscale-User-Login` header as proof of identity, which is how the web UI signs you in without a key. That is only sound because the gateway binds loopback and the proxy is the sole way in.\n\n## Concurrency\n\nOne job at a time per service. Music has a queue (max 200) that is held in memory and lost on restart — own your job state and be ready to resubmit."
   },
   "servers": [
     {
@@ -758,7 +758,8 @@
               }
             }
           }
-        }
+        },
+        "security": []
       }
     },
     "/v1/chat/completions": {
@@ -1300,6 +1301,15 @@
                     "type": "integer",
                     "default": 8,
                     "description": "Frame rate of the preview GIF only."
+                  },
+                  "method": {
+                    "type": "string",
+                    "enum": [
+                      "sheet",
+                      "kontext"
+                    ],
+                    "default": "sheet",
+                    "description": "How the frames are made.\n\n`sheet` (default) puts every pose in one FLUX.1-schnell generation and cuts it up. Apache-2.0, and the only weights already installed.\n\n`kontext` generates one base sprite and then edits it once per pose, so the pose is an instruction rather than a hope. **It uses FLUX.1 Kontext [dev], which is non-commercial: the model may not be used commercially without a licence from Black Forest Labs, though outputs are your own.** It needs a separate ~9.6 GB download and is currently declared but not wired — it returns 501."
                   }
                 }
               }
@@ -1369,10 +1379,13 @@
             "description": "The sheet generated but no frames could be found in it — the model sometimes returns a single scene rather than separate poses. The response still carries `sheet` and `sheet_url`, because it cost minutes and is in the library either way."
           },
           "503": {
-            "description": "No interpreter configured that can matte. Set ANNEAL_SPRITE_PYTHON."
+            "description": "The weights for the requested method are not installed. The body carries `method` and its `licence`."
           },
           "504": {
             "description": "Cutting the sheet exceeded ten minutes."
+          },
+          "501": {
+            "description": "method 'kontext' is declared but not implemented yet. Use 'sheet'."
           }
         }
       }
@@ -1388,7 +1401,8 @@
           "200": {
             "description": "OK"
           }
-        }
+        },
+        "security": []
       }
     },
     "/supervisor/whoami": {
@@ -1402,7 +1416,8 @@
           "200": {
             "description": "OK"
           }
-        }
+        },
+        "security": []
       }
     },
     "/v1/vector": {

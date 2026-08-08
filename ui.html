@@ -1314,19 +1314,25 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
         <p><b>The bpm and key in a result are intent, not measurement.</b> They are what the planner
            asked for, not an analysis of the audio — it can ask for 300 bpm on a take that plainly
            sits near 100. Set them explicitly if you need them to mean something.</p>
-        <p><b>Generation is not deterministic</b>, even with a fixed seed, because the planner samples
-           at temperature. Two identical requests give two different tracks. Comparing takes tells
-           you about the takes, not about the settings.</p>
+        <p><b>Generation is not deterministic</b>, even with a fixed seed and a pinned BPM and key.
+           Two identical requests give two different tracks. Comparing takes tells you about the
+           takes, not about the settings.</p>
       </div>
     </section>
 
     <section>
       <h3>Speech, image and chat</h3>
       <h4>Speech</h4>
-      <p>28 voices. The prefix is the accent and gender — <code>a</code> American, <code>b</code>
-         British, then <code>f</code> female or <code>m</code> male, so <code>bf_emma</code> is a
-         British woman and <code>am_michael</code> an American man. Speed runs 0.5×–2×. It is fast
-         enough to use in a loop, which is the point of it.</p>
+      <p>Two sets of voices, and the one you pick decides which model runs.</p>
+      <p><b>Plain voices</b> are Kokoro: 28 of them, a second or two each. The prefix is the accent
+         and gender — <code>a</code> American, <code>b</code> British, then <code>f</code> female or
+         <code>m</code> male, so <code>bf_emma</code> is a British woman and <code>am_michael</code>
+         an American man. Speed runs 0.5×–2×. Fast enough to use in a loop.</p>
+      <p><b>Directed voices</b> — <code>ryan</code>, <code>serena</code>, <code>eric</code> and six
+         others — take a <b>Direction</b>: a sentence describing the performance, such as
+         &ldquo;panicked and breathless&rdquo; or &ldquo;quietly furious&rdquo;. The speaker stays
+         the same, so one character can carry a scene. They take a few seconds rather than one, and
+         a Direction sent to a plain voice is refused rather than ignored.</p>
       <h4>Image</h4>
       <p>FLUX schnell is distilled for four steps; more steps mostly cost time. Smaller sizes are
          proportionally faster, so draft at 512 and commit at 1024 or above. The backdrop on the
@@ -1507,11 +1513,17 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
         <tr><td><code>POST</code></td><td><code>/v1/chat/completions</code></td><td>OpenAI-shaped chat, streaming</td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/text</code></td><td>One-shot completion</td></tr>
         <tr><td><code>POST GET DELETE</code></td><td><code>/v1/press</code></td><td>Start, poll or remove a press</td></tr>
+        <tr><td><code>POST</code></td><td><code>/v1/press/review</code></td><td>Amend and approve a press paused for review</td></tr>
+        <tr><td><code>POST</code></td><td><code>/v1/press/cancel</code></td><td>Stop a press; finished tracks are kept</td></tr>
         <tr><td><code>GET</code></td><td><code>/v1/press/download</code></td><td>The whole record as a zip</td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/press/resume</code></td><td>Finish an interrupted press</td></tr>
         <tr><td><code>GET DELETE</code></td><td><code>/v1/outputs</code></td><td>The library, served off disk</td></tr>
         <tr><td><code>GET</code></td><td><code>/v1/music/tiers</code></td><td>Which music model is loaded</td></tr>
+        <tr><td><code>GET</code></td><td><code>/v1/outputs/file?path=</code></td><td>Download any saved output. Wakes nothing</td></tr>
+        <tr><td><code>GET</code></td><td><code>/v1/images/file?path=</code></td><td>Download a generated image. Wakes nothing</td></tr>
         <tr><td><code>GET</code></td><td><code>/health</code></td><td>What is hot, and host memory. Wakes nothing</td></tr>
+        <tr><td><code>GET</code></td><td><code>/supervisor/status</code></td><td>Idle seconds, memory, in-flight count</td></tr>
+        <tr><td><code>GET</code></td><td><code>/supervisor/auth</code></td><td>Whether you are signed in, and how</td></tr>
         <tr><td><code>POST</code></td><td><code>/supervisor/start</code> · <code>/stop</code></td><td>Pre-warm or unload deliberately</td></tr>
       </table></div>
       <p>The full spec, with every parameter and schema, is at
@@ -1528,7 +1540,7 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
       <div class="cb"><pre data-origin>{
   "mcpServers": {
     "anneal": {
-      "command": "/Users/jon/dev/AIMusic/mcp_server.py",
+      "command": "/path/to/anneal/mcp_server.py",
       "env": { "ANNEAL_URL": "__ORIGIN__", "ANNEAL_KEY": "sk-aimusic-…" }
     }
   }

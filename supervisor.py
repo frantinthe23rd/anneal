@@ -1165,7 +1165,8 @@ def sprite_method_problem(method, model_path=None):
     path = model_path or _kontext_local_path()
     if not path or not os.path.isdir(path):
         return ("the kontext model is not installed (~9.6 GB, and a "
-                "non-commercial licence). See 'Sprite animation' in README.md.")
+                "non-commercial licence). See the sprites section of "
+                "INTEGRATION.md.")
     return None
 
 

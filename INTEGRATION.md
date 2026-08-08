@@ -707,6 +707,22 @@ rather than by dividing the canvas — reading order is left to right, then top 
 bottom. The soft drop shadow under each sprite is excluded rather than cut as a
 frame of its own. Cell-slicing a real sheet cuts characters in half.
 
+**Two methods, and one of them changes what you may do with Anneal.** `method`
+defaults to `sheet`, which is what everything above describes: one
+FLUX.1-schnell generation containing every pose, cut up. Apache-2.0.
+
+`method: "kontext"` generates one base sprite and then edits it once per pose,
+making the pose an instruction rather than something you hope falls out of a
+single sample. It is **declared but not implemented** and returns 501 today.
+
+When it is wired, note the licence: it uses **FLUX.1 Kontext [dev], which is
+non-commercial.** The model may not be used commercially without a licence from
+Black Forest Labs, although outputs are your own. Everything else Anneal runs is
+Apache-2.0 or MIT except Gemma, so this is the one component that constrains
+what you can do with the whole system — which is why it is opt-in, never the
+default, and stated here rather than only in the code. It also needs a separate
+~9.6 GB download.
+
 **Backgrounds are removed with a segmentation model.** Colour keying is the
 fallback and its limit is why: a white robot on a white sheet came out
 see-through, its background readable through its head. Pale characters are
