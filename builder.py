@@ -116,6 +116,37 @@ _DENSITY_PATTERNS = (
                   "r&b", "rnb", "jazz", "reggae", "ska", "emo", "grunge")),
 )
 
+def density_named_in(text):
+    """The lyric density a piece of free text names, or None if it names none.
+
+    Split out because two callers need different things from the same table:
+    the generator has to answer something for every track, and the artist
+    listing has to be able to say "nothing here said". A second copy of the
+    patterns for the second caller is the duplication this repo keeps paying
+    for, so there is one table and one reader.
+    """
+    text = (text or "").lower()
+    for density, needles in _DENSITY_PATTERNS:
+        if any(n in text for n in needles):
+            return density
+    return None
+
+
+def density_of_record(request):
+    """The register a record was made in, or None if nothing decided one.
+
+    Press.lyric_density() must return something and falls back to "moderate".
+    That fallback is fine per track and wrong for an artist: adopting it would
+    pin a guess onto the next record and stop its own track styles being read.
+    """
+    request = request or {}
+    explicit = (request.get("lyric_density") or "")
+    explicit = explicit.strip().lower() if isinstance(explicit, str) else ""
+    if explicit in LYRIC_DENSITY:
+        return explicit
+    return density_named_in(request.get("prompt"))
+
+
 # A title and an artist reach a filename, a cover prompt and a zip name. Long
 # enough to be a paragraph is a mistake, and refusing the whole press over one
 # would be the worse failure — so they are cut rather than rejected.
@@ -148,6 +179,76 @@ the lyrics — no title, no commentary, no notes."""
 # next to the template so the two cannot drift apart.
 LYRIC_ENDING = (" Finish with a short [outro] — a closing line or a repeated"
                 " tag — so the song ends rather than simply stopping.")
+
+
+# What the planner writes when it declined to invent one. Not a body of work.
+PLACEHOLDER_ARTIST = "Unknown Artist"
+
+
+def artists(store, limit=200):
+    """Every artist with a finished record, newest first.
+
+    Derived from the presses rather than kept in a table of their own. The plan
+    is already the source of truth for what an artist is — name, voice, cover
+    direction — and a parallel table would be a second copy to keep in step.
+    Deriving also means this works on records that already exist.
+
+    An artist can drift between records, so the most recent one supplies the
+    current details; the styles accumulate across all of them.
+    """
+    out = {}
+    for press in store.recent(limit):
+        if press.get("state") != "done":
+            continue                    # half a record is not a body of work
+        plan = press.get("plan") or {}
+        name = (plan.get("artist") or "").strip()
+        if not name or name == PLACEHOLDER_ARTIST:
+            continue
+        key = name.lower()
+        entry = out.setdefault(key, {
+            "name": name, "records": 0, "styles": [],
+            # recent() is newest-first, so the first sighting is the current one.
+            "voice": None, "lyric_density": None, "cover": None, "latest": None,
+        })
+        entry["records"] += 1
+        if entry["latest"] is None:
+            entry["latest"] = plan.get("title")
+            voice = (plan.get("voice") or "").strip()
+            # "instrumental" is the planner saying there is no singer, not a
+            # description of one — carrying it forward would pin silence.
+            entry["voice"] = voice or None
+            if voice.lower().startswith("instrumental"):
+                entry["voice"] = None
+            # Not just what was pinned: almost nothing pins it, so reporting
+            # only that made every existing artist come back null.
+            entry["lyric_density"] = density_of_record(press.get("request"))
+            entry["cover"] = (press.get("cover") or {}).get("path")
+        for track in press.get("tracks") or []:
+            style = (track.get("style") or "").strip()
+            if style and style not in entry["styles"]:
+                entry["styles"].append(style)
+    return list(out.values())
+
+
+def adopt_artist(store, request):
+    """Fill a request from a known artist, without overriding what was asked for.
+
+    Precedence is explicit field, then artist, then planner — so adopting gives
+    you the singer and the register back while leaving you free to change either.
+    The title is never inherited: a new record needs its own name, and quietly
+    reusing one would be a mistake that looks like a feature.
+    """
+    wanted = (request.get("adopt_artist") or "").strip()
+    if not wanted:
+        return request
+    match = next((a for a in artists(store) if a["name"].lower() == wanted.lower()), None)
+    if not match:
+        raise ValueError("no artist named %r has a finished record" % wanted)
+    request["artist"] = match["name"]
+    for key in ("voice", "lyric_density"):
+        if match.get(key) and not (request.get(key) or ""):
+            request[key] = match[key]
+    return request
 
 
 def slug(text, limit=48):
@@ -477,10 +578,9 @@ class Press:
         # close" — without ever naming the music, and the brief usually does.
         for text in (((track or {}).get("style") or ""),
                      ((request or {}).get("prompt") or "")):
-            text = text.lower()
-            for density, needles in _DENSITY_PATTERNS:
-                if any(n in text for n in needles):
-                    return density
+            named = density_named_in(text)
+            if named:
+                return named
         # Not "full": an unrecognised genre is no reason to write the most words
         # possible, which is the failure this exists to fix.
         return "moderate"
@@ -505,7 +605,10 @@ class Press:
         forget one. Same rule the review endpoint follows.
         """
         plan = dict(plan or {})
-        for key in ("title", "artist"):
+        # `voice` too: track_prompt reads the singer from the plan, so a voice
+        # supplied by a caller — or inherited from an adopted artist — has to
+        # land there or the record says one thing and sounds like another.
+        for key in ("title", "artist", "voice"):
             supplied = (request or {}).get(key)
             if isinstance(supplied, str) and supplied.strip():
                 plan[key] = supplied.strip()[:MAX_NAME_CHARS]

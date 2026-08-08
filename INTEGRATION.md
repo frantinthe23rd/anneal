@@ -341,6 +341,30 @@ curl -X POST "$ANNEAL_URL/v1/press/names" -H "Authorization: Bearer $ANNEAL_KEY"
 # -> {"data": {"names": [{"title": "Winter Roads", "artist": "The Salt Line"}, …]}}
 ```
 
+**Another record from the same artist.** Press invents an artist, a singer and a
+register, and they used to die with the record. `GET /v1/artists` lists everyone
+with a finished record — newest first, with the voice and lyric density to reuse
+and a cover to show — and `adopt_artist` on a new press fills them in.
+
+```bash
+curl "$ANNEAL_URL/v1/artists" -H "Authorization: Bearer $ANNEAL_KEY"
+# -> {"data": {"artists": [{"name": "The Salt Line", "records": 2,
+#      "voice": "a British woman, warm alto", "lyric_density": "full", …}]}}
+
+curl -X POST "$ANNEAL_URL/v1/press" -H "Authorization: Bearer $ANNEAL_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"a second record, harder and faster","adopt_artist":"The Salt Line"}'
+```
+
+Precedence is explicit field, then artist, then planner — so adopting gives you
+the singer and the register back while leaving you free to change either. The
+**title is never inherited**: a new record needs its own name. An unknown artist
+is a 400 rather than quietly becoming a new one.
+
+The list is derived from the presses rather than stored separately, so it needs
+no maintenance and covers records made before this existed. It reads sqlite and
+wakes no model.
+
 **Tracks are asked to end properly.** `outro` defaults to true. Before it
 existed, five of eight measured tracks played at full level to the last bar,
 stopped dead, and were padded with two to six seconds of silence to reach the
@@ -792,6 +816,7 @@ back rather than thrown away.
 | POST | `/v1/press/resume` | in stages | Finish a press left `interrupted` by a restart |
 | POST | `/v1/press/review` | **no** | Amend and/or approve a press paused for review |
 | POST | `/v1/press/names` | text (light) | Suggest titles and artist names for a brief |
+| GET | `/v1/artists` | **no** | Artists you have made records with, and their voices |
 | POST | `/v1/press/cancel` | **no** | Stop a press deliberately; keeps finished tracks |
 | DELETE | `/v1/press?id=` | **no** | Remove a record; `&files=1` takes its audio too |
 | GET | `/v1/outputs` | **no** | The library, filterable by `kind` |

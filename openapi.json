@@ -879,7 +879,7 @@
           "press"
         ],
         "summary": "Start a press",
-        "description": "Start a record: plan, lyrics, music, cover, in that order so each heavy model loads exactly once.\n\n**At most one press runs at a time.** Press assumes it owns the model ordering for its whole run, so a second submission is *queued* rather than started or refused — refusing would lose the brief you just typed. A queued press comes back with `state: \"queued\"`, a 1-based `queue_position` and a rough `estimated_start_seconds`; poll `/v1/press?id=` and both appear there too until it starts.\n\nThe queue survives a restart. Anything waiting is still waiting, the press that was mid-run is marked `interrupted` and can be resumed, and the next one starts on its own.\n\n**The lead vocalist is pinned across the record.** The planner names the singer once and every track's music prompt carries it, because each track is a separate generation and a per-track style line describes genre and mood rather than who is singing. Without it a brief asking for a female lead returned male vocals on most tracks. This makes the *request* consistent; nothing in this path conditions on a speaker, so expect the same described singer rather than an identical voice.\n\n**Lyric density follows the genre.** An electronic record came back with full verse-chorus-verse on every track, because one lyric instruction was sent to every genre alike. Club music does not work that way — the vocal is a hook and a handful of lines. The planner is now asked how wordy each track should be, and where it does not answer, the density is derived from the track's style line and then the brief. Send `lyric_density` (`sparse` | `moderate` | `full`) to decide for the whole record yourself.\n\n**Review before the expensive stage.** Send `review: true` and the press stops between lyrics and music — after the two cheap stages that decide what the record will be (under a minute) and before the one that makes it (twenty). The tracklist, the artist, the concept and every lyric can be edited, then it resumes. One-shot is still the default.\n\n**Tracks are asked to end properly** (`outro`, on by default). Nothing previously told the model a piece had to finish, so it spent the duration it was given and stopped wherever it happened to be.\n\n**You can name the record.** Send `title` and/or `artist` and they are honoured instead of invented; whichever you leave out, the planner still supplies. POST /v1/press/names suggests some first, for the cost of one text call.",
+        "description": "Start a record: plan, lyrics, music, cover, in that order so each heavy model loads exactly once.\n\n**At most one press runs at a time.** Press assumes it owns the model ordering for its whole run, so a second submission is *queued* rather than started or refused — refusing would lose the brief you just typed. A queued press comes back with `state: \"queued\"`, a 1-based `queue_position` and a rough `estimated_start_seconds`; poll `/v1/press?id=` and both appear there too until it starts.\n\nThe queue survives a restart. Anything waiting is still waiting, the press that was mid-run is marked `interrupted` and can be resumed, and the next one starts on its own.\n\n**The lead vocalist is pinned across the record.** The planner names the singer once and every track's music prompt carries it, because each track is a separate generation and a per-track style line describes genre and mood rather than who is singing. Without it a brief asking for a female lead returned male vocals on most tracks. This makes the *request* consistent; nothing in this path conditions on a speaker, so expect the same described singer rather than an identical voice.\n\n**Lyric density follows the genre.** An electronic record came back with full verse-chorus-verse on every track, because one lyric instruction was sent to every genre alike. Club music does not work that way — the vocal is a hook and a handful of lines. The planner is now asked how wordy each track should be, and where it does not answer, the density is derived from the track's style line and then the brief. Send `lyric_density` (`sparse` | `moderate` | `full`) to decide for the whole record yourself.\n\n**Review before the expensive stage.** Send `review: true` and the press stops between lyrics and music — after the two cheap stages that decide what the record will be (under a minute) and before the one that makes it (twenty). The tracklist, the artist, the concept and every lyric can be edited, then it resumes. One-shot is still the default.\n\n**Tracks are asked to end properly** (`outro`, on by default). Nothing previously told the model a piece had to finish, so it spent the duration it was given and stopped wherever it happened to be.\n\n**You can name the record.** Send `title` and/or `artist` and they are honoured instead of invented; whichever you leave out, the planner still supplies. POST /v1/press/names suggests some first, for the cost of one text call.\n\n**You can make another record as the same artist.** `adopt_artist` fills the name, the singer and the lyric density from their last finished record, so a sparse club act does not come back as a folk singer. See GET /v1/artists.",
         "requestBody": {
           "required": true,
           "content": {
@@ -958,6 +958,14 @@
                   "artist": {
                     "type": "string",
                     "description": "Name the artist yourself. Same rules as `title`."
+                  },
+                  "adopt_artist": {
+                    "type": "string",
+                    "description": "Make another record as an artist you already have. Their name, singer and lyric density are filled in from their most recent finished record — the title is not, since a new record needs its own. Anything you send explicitly still wins. An unknown name is a 400, not a new artist. List them with GET /v1/artists."
+                  },
+                  "voice": {
+                    "type": "string",
+                    "description": "Pin the singer for the whole record — gender, accent, timbre. Overrides the one the planner would invent. Each track is a separate generation, so this is what keeps one performer across an album."
                   }
                 }
               },
@@ -1278,6 +1286,47 @@
           },
           "502": {
             "description": "The text model could not be reached."
+          }
+        }
+      }
+    },
+    "/v1/artists": {
+      "get": {
+        "tags": [
+          "press"
+        ],
+        "summary": "Artists you have made records with",
+        "description": "Every artist with at least one finished record, newest first, with the singer and lyric density to reuse and a cover to show. Derived from the presses themselves rather than kept in a separate table, so it needs no maintenance and works on records made before this existed.\n\nAnswered from sqlite: it wakes no model. Pass a name back as `adopt_artist` on POST /v1/press.\n\nAn artist can drift between records, so the most recent one supplies the current voice and density while the styles accumulate across all of them. Unfinished and failed presses are not counted — half a record is not a body of work.",
+        "responses": {
+          "200": {
+            "description": "The artists.",
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "artists": [
+                      {
+                        "name": "The Salt Line",
+                        "records": 2,
+                        "latest": "Winter Roads",
+                        "voice": "a British woman, warm alto",
+                        "lyric_density": "full",
+                        "cover": "…/outputs/images/….png",
+                        "styles": [
+                          "acoustic folk, cello swells",
+                          "mid-tempo pop folk"
+                        ]
+                      }
+                    ]
+                  },
+                  "code": 200,
+                  "error": null
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }

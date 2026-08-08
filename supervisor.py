@@ -2176,6 +2176,16 @@ class Handler(BaseHTTPRequestHandler):
             self._send_press_zip()
             return
 
+        if route == "/v1/artists":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            # Answered from presses.db, so browsing who you have made records
+            # with never costs a cold start.
+            self._send_json({"data": {"artists": builder.artists(PRESSES)},
+                             "code": 200, "error": None})
+            return
+
         if route == "/v1/press":
             if not self._authorized():
                 self._send_json({"code": 401, "error": "unauthorized"}, 401)
@@ -2384,6 +2394,14 @@ class Handler(BaseHTTPRequestHandler):
             problem = press_limits(payload)
             if problem:
                 self._send_json({"code": 400, "error": problem}, 400)
+                return
+            try:
+                # Fill from a known artist before the plan is made. An unknown
+                # name is refused rather than quietly becoming a new artist,
+                # which would look like it worked.
+                payload = builder.adopt_artist(PRESSES, payload)
+            except ValueError as exc:
+                self._send_json({"code": 400, "error": str(exc)}, 400)
                 return
             # Admission goes through the queue: at most one press runs and the
             # rest wait, because Press assumes it owns the model ordering for

@@ -658,6 +658,31 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .lightbox .cap a { color: var(--quench); }
 .album .concept { color: var(--muted); font-size: 12.5px; font-style: italic; padding: 8px 0 4px; }
 .album .prog { color: var(--heat-2); font-size: 12px; padding: 6px 0; }
+/* The review editor. Lives inside the album drawer, so it must be able to grow
+   — releaseDrawer() is what lets it. */
+.rev { margin-top: 10px; padding: 12px 13px; border: 1px solid var(--heat-2);
+  border-radius: 8px; background: var(--bg); display: none; }
+.rev.open { display: block; }
+.rev h4 { margin: 0 0 10px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--heat-2); font-weight: 600; }
+.rev .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+.rev label { display: block; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--faint); margin-bottom: 4px; }
+.rev input, .rev textarea { width: 100%; font-size: 12.5px; }
+.rev textarea { font-family: var(--mono); min-height: 132px; resize: vertical; }
+.rev .trk { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); }
+.rev .trk .n { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.rev .go2 { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 14px;
+  padding-top: 12px; border-top: 1px solid var(--line); }
+.rev .go2 .said { color: var(--faint); font-size: 11.5px; }
+.rev .go2 button { border-radius: var(--radius-sm); padding: 9px 15px; font-size: 12px;
+  font-weight: 600; letter-spacing: .06em; }
+.rev .go2 .yes { border: 0; background: linear-gradient(95deg, var(--heat-1), var(--heat-2));
+  color: var(--heat-ink); text-transform: uppercase; box-shadow: var(--sh-hot); }
+.rev .go2 .yes:hover:not(:disabled) { filter: brightness(1.09); }
+.rev .go2 .maybe { border: 1px solid var(--line); background: var(--surface); color: var(--muted); }
+.rev .go2 .maybe:hover:not(:disabled) { color: var(--text); border-color: var(--faint); }
+.rev .go2 button:disabled { opacity: .55; }
 .det { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); display: none; }
 .det.open { display: block; }
 .det dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; }
@@ -1166,6 +1191,14 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
               <input type="text" id="pArtist" placeholder="invented if left blank">
             </div>
           </div>
+          <div class="field hidden" id="adoptField">
+            <label class="f" for="pAdopt">Another record by</label>
+            <select id="pAdopt"><option value="">Someone new</option></select>
+            <div class="hint" id="adoptHint">Keeps the name and the singer from that artist's
+              last record, so an album and its follow-up sound like the same act. The title is
+              always new. Anything you type above still wins.</div>
+          </div>
+
           <div class="field">
             <button type="button" class="iconbtn" id="btnNames">Suggest names</button>
             <div class="hint" id="namesHint">A few titles and artists for this brief, from
@@ -1180,6 +1213,11 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
             <div class="hint">Without this, tracks tend to use all the time they are given and
               stop mid-phrase. Turn it off for loops or beds, where an ending is the last thing
               you want.</div>
+            <label class="check"><input type="checkbox" id="pReview">
+              Show me the plan and lyrics first</label>
+            <div class="hint">Stops after writing, before any music is made, so you can rewrite a
+              verse or rename the record while changing it still costs nothing. It waits
+              indefinitely — pick the record up from the Library whenever you get to it.</div>
           </div>
         </section>
 
@@ -1298,6 +1336,18 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
             shorter openers and longer centrepieces.</li>
         <li><b>Instrumental</b> skips the lyric stage entirely.</li>
         <li><b>Cover art</b> is the only stage that needs the image model, so it runs last.</li>
+        <li><b>Ask for a proper ending</b> tells each track to resolve rather than spend the time
+            it was given and stop mid-phrase, and trims the silence that used to be left padding
+            the duration. Turn it off for loops and beds.</li>
+        <li><b>Show me the plan and lyrics first</b> stops after the writing, before any music is
+            made, and waits — indefinitely, and without holding the queue. The record sits in the
+            Library marked <b>awaiting-review</b> with every field editable: title, artist, singer,
+            each track's style and its lyrics. Save as often as you like; <b>Approve</b> starts the
+            music. Changing a verse here costs nothing, and changing it afterwards means
+            regenerating the track.</li>
+        <li><b>Another record by</b> appears once you have finished one. It carries the artist's
+            name and singer over from their last record, so an album and its follow-up sound like
+            the same act rather than two strangers. The title is always new.</li>
       </ul>
       <p>A press outlives the browser. Close the tab and it keeps going; the record appears in the
          Library as something you can play through, with a <b>Download</b> that returns the whole
@@ -2386,6 +2436,129 @@ function buildPressDetails(p, plan) {
   return det;
 }
 
+/* The review editor.
+   ------------------------------------------------------------------------
+   `POST /v1/press/review` and the awaiting-review state shipped without this,
+   which made the pause a trap: the record stopped, said "Waiting for review",
+   and offered nothing to review it with. It hangs off the library card rather
+   than off the submit flow, because the whole point of a pause that waits
+   indefinitely is that you come back to it later — from a reload, another tab,
+   or another day.
+
+   Everything here is a patch. Sending a title must not blank the voice the
+   record's vocal consistency hangs on, so only fields that were actually
+   changed are sent, and the server treats them as a patch as well. */
+function buildReview(p, plan) {
+  const box = el("div", "rev");
+  if (p.state === REVIEW_STATE) box.classList.add("open");
+  box.onclick = (e) => e.stopPropagation();      // typing must not toggle the drawer
+
+  box.appendChild(el("h4", null, "Before any music is made"));
+
+  const field = (parent, label, value, tag) => {
+    const w = el("div");
+    w.appendChild(el("label", null, label));
+    const input = document.createElement(tag || "input");
+    if (!tag) input.type = "text";
+    input.value = value || "";
+    input.dataset.was = input.value;             // so only real edits are sent
+    w.appendChild(input);
+    parent.appendChild(w);
+    return input;
+  };
+
+  const pair = el("div", "pair");
+  const planFields = {
+    title: field(pair, "Title", plan.title),
+    artist: field(pair, "Artist", plan.artist),
+    voice: field(pair, "Voice", plan.voice),
+  };
+  box.appendChild(pair);
+  const wide = el("div");
+  planFields.concept = field(wide, "Concept", plan.concept);
+  box.appendChild(wide);
+
+  const trackFields = (p.tracks || []).map((t) => {
+    const row = el("div", "trk");
+    row.appendChild(el("div", "n", "Track " + t.n));
+    const head = el("div", "pair");
+    const f = {
+      n: t.n,
+      title: field(head, "Title", t.title),
+      style: field(head, "Style", t.style),
+    };
+    row.appendChild(head);
+    // Instrumental records have no lyrics to review, and offering an empty box
+    // invites writing some into a press that will never sing them.
+    if (!(p.request || {}).instrumental) {
+      const ly = el("div");
+      f.lyrics = field(ly, "Lyrics", t.lyrics, "textarea");
+      row.appendChild(ly);
+    }
+    box.appendChild(row);
+    return f;
+  });
+
+  // Only what changed. dataset.was is the value the server last reported.
+  const patch = () => {
+    const planPatch = {};
+    Object.keys(planFields).forEach((k) => {
+      const i = planFields[k];
+      if (i.value !== i.dataset.was) planPatch[k] = i.value.trim();
+    });
+    const tracks = [];
+    trackFields.forEach((f) => {
+      const t = { n: f.n };
+      let dirty = false;
+      ["title", "style", "lyrics"].forEach((k) => {
+        if (f[k] && f[k].value !== f[k].dataset.was) { t[k] = f[k].value; dirty = true; }
+      });
+      if (dirty) tracks.push(t);
+    });
+    return { plan: planPatch, tracks: tracks };
+  };
+
+  const bar = el("div", "go2");
+  const save = el("button", "maybe", "Save changes");
+  const ok = el("button", "yes", "Approve — make the music");
+  const note = el("div", "said", "");
+  const send = async (btn, approve) => {
+    const label = btn.textContent;
+    const { plan: planPatch, tracks } = patch();
+    if (!approve && !Object.keys(planPatch).length && !tracks.length) {
+      note.textContent = "Nothing changed yet."; return;
+    }
+    btn.textContent = "Working…"; save.disabled = ok.disabled = true;
+    try {
+      await api("/v1/press/review", { method: "POST", body: {
+        id: p.id, plan: planPatch, tracks: tracks, approve: approve,
+      }});
+      if (approve) {
+        // The music starts now, so hand it back to the follower and let the
+        // card rebuild out of what the server says.
+        box.classList.remove("open");
+        followPress(p.id);
+      } else {
+        // Saved, not approved: the record still waits. Re-baseline so a second
+        // save does not resend what has already been stored.
+        [].concat(Object.values(planFields), trackFields.flatMap((f) =>
+          ["title", "style", "lyrics"].map((k) => f[k]).filter(Boolean)))
+          .forEach((i) => { i.dataset.was = i.value; });
+        note.textContent = "Saved. Still waiting for you.";
+      }
+    } catch (e) {
+      note.textContent = "Could not save: " + e.message;
+    } finally {
+      btn.textContent = label; save.disabled = ok.disabled = false;
+    }
+  };
+  save.onclick = () => send(save, false);
+  ok.onclick = () => send(ok, true);
+  bar.appendChild(ok); bar.appendChild(save); bar.appendChild(note);
+  box.appendChild(bar);
+  return box;
+}
+
 /* The record player.
    ------------------------------------------------------------------------
    Transport is a native <audio controls>, deliberately. Play/pause state, a
@@ -2555,6 +2728,17 @@ function pressSignature(p) {
   ]);
 }
 
+/* Is a review editor on this card in use? Either it has the caret, or it holds
+   an edit that has not been sent yet — dataset.was is the value the server last
+   reported, so anything differing from it is unsaved work. */
+function reviewBusy(card) {
+  const rev = card.querySelector(".rev.open");
+  if (!rev) return false;
+  if (rev.contains(document.activeElement)) return true;
+  return Array.from(rev.querySelectorAll("input, textarea"))
+    .some((i) => i.dataset.was !== undefined && i.value !== i.dataset.was);
+}
+
 function renderPresses() {
   const box = $("albums");
   // Records have their own tab now; they used to be shown under All/Music,
@@ -2575,6 +2759,14 @@ function renderPresses() {
 
   show.forEach((p, position) => {
     const already = existing[p.id];
+    if (already && reviewBusy(already)) {
+      // Someone is in the editor. Rebuilding the card would discard whatever
+      // they have typed and drop the caret, and a six-second poll makes that
+      // certain rather than unlikely. The card updates on the next tick after
+      // they are done.
+      if (box.children[position] !== already) box.insertBefore(already, box.children[position] || null);
+      return;
+    }
     if (already && already.dataset.sig === pressSignature(p)) {
       // Nothing changed. Keep it, and keep its place.
       if (box.children[position] !== already) box.insertBefore(already, box.children[position] || null);
@@ -2583,6 +2775,11 @@ function renderPresses() {
     const plan = p.plan || {};
     const wrap = el("div", "album");
     wrap.dataset.pressId = p.id;
+    // A record waiting for a person is the one thing on the page that is
+    // blocked on them, so it claims its drawer open. Before the body is built,
+    // not after: `done` is what releases max-height and it is read from
+    // openPresses below, so adding later left the drawer clipped to nothing.
+    if (p.state === REVIEW_STATE) openPresses.add(p.id);
     if (openPresses.has(p.id)) {
       // Restored open rather than animated open: `done` is what releases the
       // drawer's max-height, and without it a restored drawer clips whatever
@@ -2641,12 +2838,20 @@ function renderPresses() {
         " — the run was cut short. Resume picks up where it stopped.");
       w.style.color = "var(--heat-2)";
       body.appendChild(w);
+    } else if (p.state === REVIEW_STATE) {
+      const w = el("div", "prog", (p.stage || "Waiting for review") +
+        " — nothing is being generated until you approve it.");
+      w.style.color = "var(--heat-1)";
+      body.appendChild(w);
     } else if (!["done", "failed", "cancelled"].includes(p.state)) {
       body.appendChild(el("div", "prog", p.stage || p.state));
     }
     if (p.error) body.appendChild(el("div", "err", p.error));
 
     body.appendChild(buildPlayer(p, plan));
+
+    const rev = buildReview(p, plan);
+    if (p.state === REVIEW_STATE) body.appendChild(rev);
 
     const acts = el("div", "acts");
     const det = buildPressDetails(p, plan);
@@ -2659,6 +2864,18 @@ function renderPresses() {
     };
     acts.appendChild(info);
 
+    if (p.state === REVIEW_STATE) {
+      const back = el("button", null, "Review");
+      back.onclick = (e) => {
+        e.stopPropagation();
+        rev.classList.toggle("open");
+        back.textContent = rev.classList.contains("open") ? "Hide review" : "Review";
+        releaseDrawer(rev);        // it lives inside a drawer; let it grow
+      };
+      back.textContent = "Hide review";
+      acts.appendChild(back);
+    }
+
     const reuse = el("button", null, "Reuse brief");
     reuse.onclick = (e) => {
       e.stopPropagation();
@@ -2670,6 +2887,10 @@ function renderPresses() {
       if (r.quality) $("pQuality").value = r.quality;
       $("pArt").checked = r.art !== false;
       $("pInst").checked = !!r.instrumental;
+      $("pOutro").checked = r.outro !== false;
+      $("pReview").checked = !!r.review;
+      $("pAdopt").value = r.adopt_artist || "";
+      describeAdoption();
       setLibrary(false);
       setStatus("Brief loaded — adjust and press again.", "");
     };
@@ -3502,9 +3723,53 @@ function autoGrow(t) {
    Fire and follow. The job outlives the page, so this only starts it and then
    polls; closing the tab does not cancel anything. */
 let pressPoll = null;
+// The server's own name for the pause (builder.Press.REVIEW_STATE). Spelled
+// once here rather than at each of the four places that test for it.
+const REVIEW_STATE = "awaiting-review";
 // Records opened for you rather than by you. Kept apart so that closing one
 // stays closed: it is removed from openPresses and never re-added.
 const autoOpened = new Set();
+
+/* Artists you have already made records with. Answered from sqlite, so this
+   wakes nothing and can run on entering the tab. The list is whatever the
+   server reports — never a roster kept here, which goes stale the moment a
+   record is made. */
+async function loadArtists() {
+  const sel = $("pAdopt");
+  if (!sel) return;
+  try {
+    const list = ((await api("/v1/artists")).data || {}).artists || [];
+    const chosen = sel.value;
+    sel.textContent = "";
+    const none = el("option", null, "Someone new");
+    none.value = ""; sel.appendChild(none);
+    list.forEach((a) => {
+      const o = el("option", null,
+        a.name + " (" + a.records + " record" + (a.records === 1 ? "" : "s") + ")");
+      o.value = a.name;
+      o.dataset.voice = a.voice || "";
+      sel.appendChild(o);
+    });
+    // Nothing to adopt on a first run, and an empty control asking you to pick
+    // an artist you do not have reads as something being broken.
+    $("adoptField").classList.toggle("hidden", list.length === 0);
+    if (chosen) sel.value = chosen;
+  } catch (_) { /* the form still works without it */ }
+}
+
+function describeAdoption() {
+  const sel = $("pAdopt");
+  const opt = sel.options[sel.selectedIndex];
+  const voice = opt && opt.dataset ? opt.dataset.voice : "";
+  $("adoptHint").textContent = !sel.value
+    ? "Keeps the name and the singer from that artist's last record, so an album and its "
+      + "follow-up sound like the same act. The title is always new. Anything you type above "
+      + "still wins."
+    : voice
+      ? "Their singer: " + voice + ". The record gets a new title."
+      : "No singer on record for them — the name carries over and the planner picks a voice. "
+        + "Either they were instrumental, or the plan never named one.";
+}
 
 async function runPress() {
   const prompt = $("pPrompt").value.trim();
@@ -3518,8 +3783,10 @@ async function runPress() {
       art: $("pArt").checked,
       instrumental: $("pInst").checked,
       outro: $("pOutro").checked,
+      review: $("pReview").checked,
       title: $("pTitle").value.trim(),
       artist: $("pArtist").value.trim(),
+      adopt_artist: $("pAdopt").value,
     }})).data;
     setLibrary(true);                       // the record appears there as it builds
     followPress(d.press_id);
@@ -3567,13 +3834,14 @@ function followPress(id) {
         openPresses.add(id);
       }
       await loadPresses();
-      if (["done", "failed", "cancelled", "awaiting-review"].includes(p.state)) {
+      if (["done", "failed", "cancelled", REVIEW_STATE].includes(p.state)) {
         // Stop following *this* press. The standing poll keeps the list live,
         // which is what was missing when a queued press took over next.
         clearInterval(pressPoll); pressPoll = null;
-        const ok = p.state === "done" || p.state === "awaiting-review";
+        const ok = p.state === "done" || p.state === REVIEW_STATE;
         setStatus(ok ? p.stage : (p.error || p.state), ok ? "" : "err");
         loadLibrary();
+        if (p.state === "done") loadArtists();   // it invented an artist; offer them
       }
     } catch (_) { /* keep polling; a failed poll is not a failed job */ }
   };
@@ -3930,6 +4198,9 @@ document.querySelectorAll(".tab").forEach((tab) => {
     setEmptyLine(mode);
     if (isChat) { renderChat(); $("cInput").focus(); }
     else setLibrary(false);
+    // Refreshed on arrival rather than once at load: a record finished in this
+    // session adds an artist, and a stale list would not offer them.
+    if (mode === "press") loadArtists();
     hideStatus();
     showPage("studio");          // also swaps .cols for the chat view
     renderForge();
@@ -3946,6 +4217,7 @@ document.querySelectorAll("#mVocal button").forEach((b) => {
   };
 });
 $("go").onclick = run;
+$("pAdopt").onchange = describeAdoption;
 $("btnLibrary").onclick = () => setLibrary(!libView);
 $("varyCancel").onclick = clearVary;
 $("btnWrite").onclick = writeLyrics;
