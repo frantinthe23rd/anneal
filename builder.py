@@ -101,6 +101,12 @@ LYRIC_DENSITY = {
 # is why lo-fi comes before hip hop. Lo-fi hip hop is a beat with the occasional
 # vocal chop; boom bap is a rap record. One of those wants many words.
 _DENSITY_PATTERNS = (
+    # Collisions first, because the first match wins. "garage punk" and "garage
+    # rock" are guitar music with words; "garage" on its own is a dance genre
+    # sitting in the sparse list below, and it was winning. A real record —
+    # "east coast garage punk tells the story of coping with adulthood" — came
+    # back sparse because of it.
+    ("moderate", ("garage punk", "garage rock")),
     ("sparse", ("lo-fi", "lofi", "chillhop", "house", "techno", "trance", "edm",
                 "electronic", "electronica", "dance", "club", "rave", "dubstep",
                 "drum and bass", "drum & bass", "dnb", "d'n'b", "jungle",

@@ -212,6 +212,19 @@ class TestLyricDensity(QueueCase):
         occasional vocal chop, not a rap record."""
         self.assertEqual(self.density({"style": "lo-fi hip hop, dusty, mellow"}), "sparse")
 
+    def test_garage_punk_is_punk_and_not_uk_garage(self):
+        """The same trap from the other direction, and a real record got it
+        wrong: "east coast garage punk tells the story of..." was classified
+        sparse, because "garage" is a dance genre and is checked first. Punk
+        has words."""
+        self.assertEqual(self.density({}, {"prompt": "east coast garage punk, tells the story"}),
+                         "moderate")
+        self.assertEqual(self.density({"style": "fast garage rock, shouted vocals"}), "moderate")
+
+    def test_uk_garage_is_still_sparse(self):
+        # The fix must not cost the genre it was guarding.
+        self.assertEqual(self.density({"style": "2-step garage, chopped vocal"}), "sparse")
+
     def test_the_planner_can_say_so_explicitly(self):
         self.assertEqual(self.density({"style": "indie rock", "lyric_density": "sparse"}),
                          "sparse")
