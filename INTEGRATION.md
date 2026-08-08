@@ -325,6 +325,22 @@ stage with your edits and does not re-plan.
 Omit `approve` to save edits and keep waiting. Anything not awaiting review —
 already recording, finished, never paused — is a 409.
 
+**You can name the record, or be offered names.** Send `title` and `artist` on
+`/v1/press` and they are used instead of invented ones; name only one and the
+planner still supplies the other. An empty string is not an instruction to
+forget a name.
+
+To choose before committing, `POST /v1/press/names {"prompt": "…", "count": 5}`
+returns title/artist pairs for the brief. It is one call on the text model —
+light, coexists with a heavy one, and finishes in seconds — so it fits before
+the twenty minutes rather than after.
+
+```bash
+curl -X POST "$ANNEAL_URL/v1/press/names" -H "Authorization: Bearer $ANNEAL_KEY" \
+  -H 'Content-Type: application/json' -d '{"prompt":"a winter album","count":5}'
+# -> {"data": {"names": [{"title": "Winter Roads", "artist": "The Salt Line"}, …]}}
+```
+
 **Tracks are asked to end properly.** `outro` defaults to true. Before it
 existed, five of eight measured tracks played at full level to the last bar,
 stopped dead, and were padded with two to six seconds of silence to reach the
@@ -775,6 +791,7 @@ back rather than thrown away.
 | GET | `/v1/press/download?id=` | **no** | The whole record as a zip, transcoded on request |
 | POST | `/v1/press/resume` | in stages | Finish a press left `interrupted` by a restart |
 | POST | `/v1/press/review` | **no** | Amend and/or approve a press paused for review |
+| POST | `/v1/press/names` | text (light) | Suggest titles and artist names for a brief |
 | POST | `/v1/press/cancel` | **no** | Stop a press deliberately; keeps finished tracks |
 | DELETE | `/v1/press?id=` | **no** | Remove a record; `&files=1` takes its audio too |
 | GET | `/v1/outputs` | **no** | The library, filterable by `kind` |

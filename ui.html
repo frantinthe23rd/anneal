@@ -614,6 +614,16 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
    moves, and every attempt to rebuild that here got it wrong. It only appears
    inside the record that is playing, which is also how you can see which one
    that is. */
+/* Suggested names: a list you pick from, not a menu — each is a whole
+   title-and-artist pair and choosing one fills both fields. */
+#namesOut { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+#namesOut:empty { display: none; }
+.namepick { text-align: left; padding: 7px 10px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--text);
+  font-size: 13px; cursor: pointer; }
+.namepick:hover { border-color: var(--line-2); }
+.namepick.on { border-color: var(--heat-1); color: var(--heat-1); }
+
 .album .slot:empty { display: none; }
 .album audio.rec { width: 100%; height: 34px; display: block; margin: 2px 0 10px; }
 /* The record currently playing, so it reads at a glance from the list. */
@@ -1146,6 +1156,23 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
               <label class="check"><input type="checkbox" id="pArt" checked> Cover art</label>
             </div>
           </div>
+          <div class="field grid2">
+            <div>
+              <label class="f" for="pTitle">Title <span style="text-transform:none;letter-spacing:0">(optional)</span></label>
+              <input type="text" id="pTitle" placeholder="invented if left blank">
+            </div>
+            <div>
+              <label class="f" for="pArtist">Artist <span style="text-transform:none;letter-spacing:0">(optional)</span></label>
+              <input type="text" id="pArtist" placeholder="invented if left blank">
+            </div>
+          </div>
+          <div class="field">
+            <button type="button" class="iconbtn" id="btnNames">Suggest names</button>
+            <div class="hint" id="namesHint">A few titles and artists for this brief, from
+              the text model. Seconds, and it wakes nothing heavy.</div>
+            <div id="namesOut"></div>
+          </div>
+
           <div class="field">
             <label class="check"><input type="checkbox" id="pInst"> Instrumental — skip lyrics</label>
             <label class="check"><input type="checkbox" id="pOutro" checked>
@@ -3491,6 +3518,8 @@ async function runPress() {
       art: $("pArt").checked,
       instrumental: $("pInst").checked,
       outro: $("pOutro").checked,
+      title: $("pTitle").value.trim(),
+      artist: $("pArtist").value.trim(),
     }})).data;
     setLibrary(true);                       // the record appears there as it builds
     followPress(d.press_id);
@@ -3852,6 +3881,40 @@ $("btnKey").onclick = () => openGate();
 $("btnDocs").onclick = () => window.open("/docs", "_blank");
 
 /* ------------------------------------------------------------------- wiring */
+/* Suggest names before the twenty minutes, not after. One text call, so it can
+   sit in the form rather than behind a separate step. */
+$("btnNames").onclick = async () => {
+  const prompt = $("pPrompt").value.trim();
+  if (!prompt) { setStatus("Write the brief first.", "warn"); return; }
+  const btn = $("btnNames"), out = $("namesOut");
+  btn.disabled = true; btn.textContent = "Thinking…";
+  try {
+    const names = ((await api("/v1/press/names", {
+      method: "POST", body: { prompt, count: 5 } })).data || {}).names || [];
+    out.textContent = "";
+    if (!names.length) {
+      $("namesHint").textContent = "Nothing usable came back — try again, or write your own.";
+      return;
+    }
+    names.forEach((n) => {
+      const b = el("button", "namepick", n.title + " — " + n.artist);
+      b.type = "button";
+      b.onclick = () => {
+        $("pTitle").value = n.title;
+        $("pArtist").value = n.artist;
+        out.querySelectorAll(".namepick").forEach((x) => x.classList.remove("on"));
+        b.classList.add("on");
+      };
+      out.appendChild(b);
+    });
+    $("namesHint").textContent = "Click one to use it, or edit the fields above.";
+  } catch (e) {
+    $("namesHint").textContent = "Could not suggest names: " + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = "Suggest names";
+  }
+};
+
 $("sVoice").addEventListener("change", syncDirection);
 
 document.querySelectorAll(".tab").forEach((tab) => {

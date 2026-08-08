@@ -116,6 +116,23 @@ _DENSITY_PATTERNS = (
                   "r&b", "rnb", "jazz", "reggae", "ska", "emo", "grunge")),
 )
 
+# A title and an artist reach a filename, a cover prompt and a zip name. Long
+# enough to be a paragraph is a mistake, and refusing the whole press over one
+# would be the worse failure — so they are cut rather than rejected.
+MAX_NAME_CHARS = 120
+# Cheap, not free, and the count is caller-supplied.
+MAX_NAME_SUGGESTIONS = 10
+
+NAME_PROMPT = """Suggest {count} names for a record.
+
+Brief: {prompt}
+
+Each is a title and an invented artist that suit the brief and each other. Vary
+them — do not give {count} takes on the same idea.
+
+Reply with ONLY a JSON object, no commentary:
+{{"names": [{{"title": "album title", "artist": "band or artist name"}}]}}"""
+
 LYRIC_PROMPT = """Write song lyrics.
 
 Album: {album} — {concept}
@@ -480,6 +497,44 @@ class Press:
                      "tonic and let it decay, rather than stopping mid-phrase")
 
     @staticmethod
+    def apply_identity(plan, request):
+        """Let a caller name the record, and keep what they did not name.
+
+        A patch, not a replacement: asking for a title must not blank the artist
+        the planner invented, and an empty form field is not an instruction to
+        forget one. Same rule the review endpoint follows.
+        """
+        plan = dict(plan or {})
+        for key in ("title", "artist"):
+            supplied = (request or {}).get(key)
+            if isinstance(supplied, str) and supplied.strip():
+                plan[key] = supplied.strip()[:MAX_NAME_CHARS]
+        return plan
+
+    def suggest_names(self, request, count=5):
+        """Titles and artists for a brief, before anything expensive starts.
+
+        One text call on a model that is already light, so it can be offered
+        before the twenty minutes rather than discovered after. Junk from the
+        planner yields nothing rather than raising: this runs before a press
+        exists, and a formatting lapse is not something a caller should have to
+        handle.
+        """
+        count = max(1, min(int(count or 5), MAX_NAME_SUGGESTIONS))
+        raw = self.call_text(NAME_PROMPT.format(
+            count=count, prompt=(request or {}).get("prompt", "")), 600)
+        data = extract_json(raw) or {}
+        out = []
+        for entry in (data.get("names") or [])[:count]:
+            if not isinstance(entry, dict):
+                continue
+            title = (entry.get("title") or "").strip()[:MAX_NAME_CHARS]
+            artist = (entry.get("artist") or "").strip()[:MAX_NAME_CHARS]
+            if title and artist:
+                out.append({"title": title, "artist": artist})
+        return out
+
+    @staticmethod
     def wants_outro(request):
         """Whether tracks should be asked to finish. On by default, for Press.
 
@@ -579,6 +634,8 @@ class Press:
         tracks_plan = tracks_plan[:count]
         plan.setdefault("title", req["prompt"][:60])
         plan.setdefault("artist", "Unknown Artist")
+        # A name the caller gave wins over the one the planner invented.
+        plan = self.apply_identity(plan, req)
         plan.setdefault("concept", "")
         plan.setdefault("cover_art", req["prompt"])
         plan["tracks"] = tracks_plan

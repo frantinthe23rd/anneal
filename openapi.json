@@ -879,7 +879,7 @@
           "press"
         ],
         "summary": "Start a press",
-        "description": "Start a record: plan, lyrics, music, cover, in that order so each heavy model loads exactly once.\n\n**At most one press runs at a time.** Press assumes it owns the model ordering for its whole run, so a second submission is *queued* rather than started or refused — refusing would lose the brief you just typed. A queued press comes back with `state: \"queued\"`, a 1-based `queue_position` and a rough `estimated_start_seconds`; poll `/v1/press?id=` and both appear there too until it starts.\n\nThe queue survives a restart. Anything waiting is still waiting, the press that was mid-run is marked `interrupted` and can be resumed, and the next one starts on its own.\n\n**The lead vocalist is pinned across the record.** The planner names the singer once and every track's music prompt carries it, because each track is a separate generation and a per-track style line describes genre and mood rather than who is singing. Without it a brief asking for a female lead returned male vocals on most tracks. This makes the *request* consistent; nothing in this path conditions on a speaker, so expect the same described singer rather than an identical voice.\n\n**Lyric density follows the genre.** An electronic record came back with full verse-chorus-verse on every track, because one lyric instruction was sent to every genre alike. Club music does not work that way — the vocal is a hook and a handful of lines. The planner is now asked how wordy each track should be, and where it does not answer, the density is derived from the track's style line and then the brief. Send `lyric_density` (`sparse` | `moderate` | `full`) to decide for the whole record yourself.\n\n**Review before the expensive stage.** Send `review: true` and the press stops between lyrics and music — after the two cheap stages that decide what the record will be (under a minute) and before the one that makes it (twenty). The tracklist, the artist, the concept and every lyric can be edited, then it resumes. One-shot is still the default.\n\n**Tracks are asked to end properly** (`outro`, on by default). Nothing previously told the model a piece had to finish, so it spent the duration it was given and stopped wherever it happened to be.",
+        "description": "Start a record: plan, lyrics, music, cover, in that order so each heavy model loads exactly once.\n\n**At most one press runs at a time.** Press assumes it owns the model ordering for its whole run, so a second submission is *queued* rather than started or refused — refusing would lose the brief you just typed. A queued press comes back with `state: \"queued\"`, a 1-based `queue_position` and a rough `estimated_start_seconds`; poll `/v1/press?id=` and both appear there too until it starts.\n\nThe queue survives a restart. Anything waiting is still waiting, the press that was mid-run is marked `interrupted` and can be resumed, and the next one starts on its own.\n\n**The lead vocalist is pinned across the record.** The planner names the singer once and every track's music prompt carries it, because each track is a separate generation and a per-track style line describes genre and mood rather than who is singing. Without it a brief asking for a female lead returned male vocals on most tracks. This makes the *request* consistent; nothing in this path conditions on a speaker, so expect the same described singer rather than an identical voice.\n\n**Lyric density follows the genre.** An electronic record came back with full verse-chorus-verse on every track, because one lyric instruction was sent to every genre alike. Club music does not work that way — the vocal is a hook and a handful of lines. The planner is now asked how wordy each track should be, and where it does not answer, the density is derived from the track's style line and then the brief. Send `lyric_density` (`sparse` | `moderate` | `full`) to decide for the whole record yourself.\n\n**Review before the expensive stage.** Send `review: true` and the press stops between lyrics and music — after the two cheap stages that decide what the record will be (under a minute) and before the one that makes it (twenty). The tracklist, the artist, the concept and every lyric can be edited, then it resumes. One-shot is still the default.\n\n**Tracks are asked to end properly** (`outro`, on by default). Nothing previously told the model a piece had to finish, so it spent the duration it was given and stopped wherever it happened to be.\n\n**You can name the record.** Send `title` and/or `artist` and they are honoured instead of invented; whichever you leave out, the planner still supplies. POST /v1/press/names suggests some first, for the cost of one text call.",
         "requestBody": {
           "required": true,
           "content": {
@@ -950,6 +950,14 @@
                     "type": "boolean",
                     "default": true,
                     "description": "Ask every track to finish with a deliberate outro rather than stopping mid-phrase. Measured before this existed: five of eight tracks played at full level to the last bar, stopped dead, and were padded with silence. Turn it off for loops or beds, where a resolved ending is wrong.\n\nPress-only, deliberately. POST /release_task never adds it — a builder asking for a two-bar loop wants it to loop."
+                  },
+                  "title": {
+                    "type": "string",
+                    "description": "Name the record yourself. Omit and the planner invents one. Naming only the title leaves the invented artist alone, and an empty string is not an instruction to forget one."
+                  },
+                  "artist": {
+                    "type": "string",
+                    "description": "Name the artist yourself. Same rules as `title`."
                   }
                 }
               },
@@ -1202,6 +1210,74 @@
           },
           "409": {
             "description": "The press is not awaiting review."
+          }
+        }
+      }
+    },
+    "/v1/press/names": {
+      "post": {
+        "tags": [
+          "press"
+        ],
+        "summary": "Suggest titles and artist names for a brief",
+        "description": "One text call, before anything expensive starts. Press invents a title and an artist and you would otherwise find out what they are twenty minutes later, alongside the audio — this offers a few first, so a name can be chosen or written before the music is committed to.\n\nIt runs on the text model, which is light and coexists with a heavy one, so it wakes nothing expensive. Pass the chosen pair back as `title` and `artist` on POST /v1/press.\n\nA formatting lapse from the planner returns an empty list rather than an error: this runs before a press exists, and there is nothing to fail.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "prompt"
+                ],
+                "properties": {
+                  "prompt": {
+                    "type": "string",
+                    "description": "The brief, as you would send it to /v1/press."
+                  },
+                  "count": {
+                    "type": "integer",
+                    "default": 5,
+                    "maximum": 10,
+                    "description": "How many pairs to suggest."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Suggestions, possibly an empty list.",
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "names": [
+                      {
+                        "title": "Winter Roads",
+                        "artist": "The Salt Line"
+                      },
+                      {
+                        "title": "Low Tide",
+                        "artist": "Harbour Lights"
+                      }
+                    ]
+                  },
+                  "code": 200,
+                  "error": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No prompt, or a non-numeric count."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "502": {
+            "description": "The text model could not be reached."
           }
         }
       }

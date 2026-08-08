@@ -2312,6 +2312,30 @@ class Handler(BaseHTTPRequestHandler):
             self._make_sprites(payload, interpreter)
             return
 
+        if route == "/v1/press/names":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            payload, _ = self._body()
+            if payload is None:
+                return              # 413 already sent
+            if not (payload.get("prompt") or "").strip():
+                self._send_json({"code": 400, "error": "'prompt' is required"}, 400)
+                return
+            try:
+                count = int(payload.get("count", 5))
+            except (TypeError, ValueError):
+                self._send_json({"code": 400, "error": "'count' must be a number"}, 400)
+                return
+            try:
+                names = PRESS.suggest_names(payload, count=count)
+            except Exception as exc:
+                log("name suggestion failed: %r" % exc)
+                self._send_json({"code": 502, "error": str(exc)[:300]}, 502)
+                return
+            self._send_json({"data": {"names": names}, "code": 200, "error": None})
+            return
+
         if route == "/v1/press/review":
             if not self._authorized():
                 self._send_json({"code": 401, "error": "unauthorized"}, 401)
