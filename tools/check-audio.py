@@ -138,7 +138,7 @@ def main(argv=None):
           % (q * 100, f, "looks like music" if not verdict else "LOOKS LIKE NOISE"))
     for line in verdict:
         print("    " + line)
-    print("  A spectrogram is still the honest check: "
+    print("  A spectrogram is still the real check: "
           "ffmpeg -i %s -lavfi showspectrumpic=s=900x360 out.png" % args.path)
     return 1 if verdict else 0
 

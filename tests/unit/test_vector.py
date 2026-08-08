@@ -33,7 +33,7 @@ class ExtractTest(unittest.TestCase):
 
 
 class RejectionTest(unittest.TestCase):
-    """Cases where the honest answer is failure, not a repaired document."""
+    """Cases where the right answer is failure, not a repaired document."""
 
     def test_not_xml(self):
         self.assertRaises(vector.SvgRejected, vector.sanitise, "<svg><path d=></svg>")

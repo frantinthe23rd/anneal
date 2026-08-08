@@ -114,7 +114,7 @@ class TestTheForgeStripIsNotAFrozenList(unittest.TestCase):
                          "not in SERVICE_ORDER: %s" % (set(services.SERVICES) - listed))
 
 
-class TestTheHonestClaims(unittest.TestCase):
+class TestTheMeasuredClaims(unittest.TestCase):
     """Copy that would become a lie if the behaviour changed under it."""
 
     def setUp(self):

@@ -45,7 +45,7 @@ UI's About page.)
 
 **Vector** (`POST /v1/vector`) draws an SVG icon with the text model — markup,
 so it is text generation: two to seven seconds, no new weights, no heavy slot,
-nothing evicted. **Experimental, and honestly so**: on the model that fits here
+nothing evicted. **Experimental**: on the model that fits here
 the output is reliably well-formed and reliably not a recognisable icon. See
 [Vector output](#vector-output) before building on it. Everything it returns is
 sanitised first — a `<script>` inside an SVG a game loads is a real hazard.
@@ -72,7 +72,7 @@ segmentation model rather than by colour distance: keying lost a white robot on
 a white sheet, and pale characters are ordinary. Two minutes, and it evicts
 music.
 
-Two honest limits, both measured. **The frame count is a hint** — two runs
+Two limits. **The frame count is a hint** — two runs
 asking for four returned five, so read the response rather than assuming. And
 **identity comes free while motion does not**: left alone the poses come back
 near-identical, so passing `poses` (`["idle", "crouched to jump", "mid-air",
@@ -211,7 +211,7 @@ Intel Macs are out, and so is everything else, for two separable reasons:
   — it supports CUDA and XPU upstream — but the MLX DiT route and both local
   patches are Metal- and turbo-shaped.
 - **Four macOS-only system calls.** The supervisor's whole lifecycle rests on
-  `/usr/bin/footprint` (phys_footprint — the only honest memory number for an MLX
+  `/usr/bin/footprint` (phys_footprint — the only accurate memory number for an MLX
   process), `vm_stat`, `sysctl kern.memorystatus_vm_pressure_level` and
   `sysctl vm.swapusage`. Eviction, admission control and the host-pressure
   warning are all downstream of those.
@@ -823,7 +823,7 @@ anywhere else and they're ignored outright, since they could then be forged.
 ### Limits
 
 Everything a caller can ask for is bounded, so one request cannot exhaust the
-machine. These are deliberately generous — no honest request meets one.
+machine. They are generous — no ordinary request meets one.
 
 | Variable | Default | What it bounds |
 | --- | --- | --- |

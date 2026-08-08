@@ -790,7 +790,7 @@ Anything marked "wakes model: no" is answered by the gateway itself off disk, so
 polling, browsing the library and downloading finished work never cost a cold
 start.
 
-### 7a. Vector — the one fast endpoint, and its honest limits
+### 7a. Vector — the one fast endpoint, and its limits
 
 `POST /v1/vector {"prompt": "a compass rose", "style": "line", "size": 48}`
 returns SVG source in **2–7 seconds**. It runs on the text model, which is
