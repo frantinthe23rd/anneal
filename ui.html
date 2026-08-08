@@ -903,8 +903,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
       <span class="k">By API, or by agent</span>
       <span class="d">One HTTP gateway with an OpenAPI spec and an <b>MCP server</b>, so a build
         script — or a coding agent like Claude Code — can score a game, voice a demo or draw its
-        own artwork without a hosted service in the loop. That was the original point;
-        <b>Press</b> came out of how well the music worked.
+        own artwork without a hosted service in the loop.
         <a href="#" data-page-link="api">See the API</a>.</span>
     </div>
   </div>
@@ -1112,8 +1111,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
               </select>
               <div class="hint"><b>This makes another take of the same image, not an edit of it.</b>
                 Composition, subject and lighting are kept and the details are re-rendered.
-                Changing the prompt has little effect — measured: asking a brass watch to become
-                silver returned the same brass watch. For a different subject, generate afresh.</div>
+                Changing the prompt has little effect — ask a brass watch to become silver and
+                you get the same brass watch. For a different subject, generate afresh.</div>
             </div>
           </div>
         </section>
@@ -1154,9 +1153,9 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
             <label class="check"><input type="checkbox" id="pInst"> Instrumental — skip lyrics</label>
             <label class="check"><input type="checkbox" id="pOutro" checked>
               Ask for a proper ending</label>
-            <div class="hint">Without this, tracks spend the time they are given and stop
-              mid-phrase — measured on five of eight. Turn it off for loops or beds,
-              where an ending is the last thing you want.</div>
+            <div class="hint">Without this, tracks tend to use all the time they are given and
+              stop mid-phrase. Turn it off for loops or beds, where an ending is the last thing
+              you want.</div>
           </div>
         </section>
 
@@ -1388,19 +1387,6 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
     </div>
 
     <section>
-      <h3>Why it works this way</h3>
-      <p>The original problem was not “I would like to make music”. It was that the things I was
-         building with coding agents kept needing assets that code cannot produce: a game with no
-         soundtrack, a demo with no voiceover, a UI with placeholder art. Hosted services can fill
-         that gap at the cost of an account, a key, a per-request bill and sending the work off the
-         machine.</p>
-      <p>So Anneal was an API before it was an interface: something a build could call to get a
-         piece of music, a line of speech or a piece of artwork back, on hardware already sitting on
-         the desk. <b>Press</b> exists because the music turned out to be the part that worked
-         best — good enough that “one call, one finished record” was worth building properly.</p>
-    </section>
-
-    <section>
       <h3>Getting in</h3>
       <p>Anneal answers on whatever address you reached it on — over a tailnet that is the
          machine's tailnet name over TLS, on the host itself it is loopback. The samples below
@@ -1490,11 +1476,9 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
       <div class="note">
         <span class="k">A variation is not an edit</span>
         <p>It keeps the composition and re-renders the detail; it does not apply prompt changes
-           to the image. Measured: asking a brass watch to become silver returns the same brass
-           watch, at every retention down to 0.5. The server spends
-           <code>int(steps × retention)</code> steps reproducing the original, and schnell is
-           distilled to four — so keeping the image costs the steps that would redraw it.
-           Requests with an init image default to 8 steps for that reason.</p>
+           to the image. Ask a brass watch to become silver and you get the same brass watch, at
+           any retention. Requests with an init image default to 8 steps, since
+           <code>int(steps × retention)</code> of them go to reproducing the original.</p>
       </div>
     </section>
 
@@ -1550,12 +1534,11 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
          <code>generate_image</code>. <b>Press is not among them</b>, and neither are image
          variations — both are HTTP-only for now, so an agent that wants a whole record has to
          call <code>/v1/press</code> itself.</p>
-      <p>Two choices in there are deliberate, and both are about agents rather than about music.
-         <b>Music submits and returns a job id</b> instead of blocking for minutes, with the tool
-         descriptions telling the agent not to resubmit a slow job. <b>Binary comes back as a file
-         path</b>, not base64, because a 1.3 MB PNG is about 1.7 MB of text in a tool result. The
-         cold-start cost is written into the tool descriptions for the same reason: an agent that
-         does not know a call takes four minutes will conclude it has hung.</p>
+      <p><b>Music submits and returns a job id</b> rather than blocking for minutes;
+         <code>check_music_job</code> collects it, and the tool descriptions tell the agent not to
+         resubmit. <b>Binary comes back as a file path</b>, not base64 — a 1.3 MB PNG is about
+         1.7 MB of text in a tool result. Cold-start costs are stated in the tool descriptions, so
+         an agent does not read a four-minute call as a hang.</p>
     </section>
 
     <section>
@@ -1572,7 +1555,8 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
       <span class="eyebrow">About</span>
       <h2>What this is</h2>
       <p>A single Apple silicon Mac that makes music, speech, images and text on demand, for anyone
-         on the tailnet and for anything that can make an HTTP request. Built by Jon Moseley.</p>
+         on the machine and for anything on your network that can make an HTTP request.
+         Built by Jon Moseley.</p>
     </div>
 
     <section>
@@ -1605,8 +1589,8 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
          the eviction rules, the warnings before a slow request.</p>
       <p>The palette follows the same idea. A forge is dark and the heat is the only light source,
          so the orange is reserved for things that are genuinely hot or genuinely happening.
-         Nothing decorative is that colour. The plate behind the front door and this page was
-         generated by Anneal's own image model.</p>
+         The plate behind the front door and this page was generated by Anneal's own image
+         model.</p>
     </section>
 
     <section>
@@ -1622,8 +1606,7 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
          calls for memory pressure, paging and real process footprint.</p>
       <p><b>Contributions and ports are welcome.</b> It is MIT licensed, the memory calls are four
          functions behind an obvious interface, and adding a backend is a dictionary entry in
-         <code>services.py</code> rather than a rewrite. The repository's issues carry the reasoning
-         behind each decision, which is the right place to start.</p>
+         <code>services.py</code> rather than a rewrite.</p>
     </section>
 
     <section>
@@ -1668,10 +1651,11 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
       <div class="credit"><span class="n">Tailscale</span>
         <span class="w">Reach and identity: TLS termination and the caller's login, without exposing
           a port.</span><span class="l">BSD-3-Clause</span></div>
-      <div class="credit"><span class="n">marked · DOMPurify</span>
-        <span class="w">Markdown rendering and sanitising for chat replies, vendored into
-          <code>assets/vendor/</code> so the page still fetches nothing externally.</span>
-        <span class="l">MIT · Apache-2.0</span></div>
+      <div class="credit"><span class="n">marked · DOMPurify · KaTeX</span>
+        <span class="w">Markdown rendering, sanitising and maths typesetting for chat replies,
+          vendored into <code>assets/vendor/</code> so the page still fetches nothing
+          externally.</span>
+        <span class="l">MIT · Apache-2.0/MPL-2.0 · MIT</span></div>
       <div class="credit"><span class="n">Swagger UI</span>
         <span class="w">Renders the OpenAPI spec at <code>/docs</code> — the one page here that
           loads anything from a CDN.</span><span class="l">Apache-2.0</span></div>
@@ -1882,9 +1866,7 @@ function renderForge() {
     warn.querySelector(".st").textContent = sys.pressure_level === "critical" ? "critical" : "under pressure";
     warn.title = "macOS reports memory pressure" +
       (sys.pageouts_per_sec ? " (" + sys.pageouts_per_sec + " pageouts/sec)" : "") +
-      ". Generation may slow or fail. Close other apps, or unload a model you aren't using. "
-      + "Note a large swap file on its own is normal here — this appears only when the "
-      + "kernel says there is a problem.";
+      ". Generation may slow or fail — close other apps, or unload a model you are not using.";
     box.appendChild(warn);
   } else if (warn) {
     warn.remove();
@@ -3818,8 +3800,8 @@ async function showSettings() {
   } catch (_) { row("status", "unavailable"); }
   g2.appendChild(dl);
   g2.appendChild(el("div", "hint",
-    "Idle timeouts, model choices and ports live in env.sh on the host. They are shown here "
-    + "rather than edited, because a web page should not be rewriting the server's environment."));
+    "Idle timeouts, model choices and ports live in env.sh on the host. "
+    + "They are read-only here; change them there."));
   panel.appendChild(g2);
 
   // --- access -------------------------------------------------------------
