@@ -723,7 +723,7 @@ Black Forest Labs, although outputs are your own. Everything else Anneal runs is
 Apache-2.0 or MIT except Gemma, so this is the one component that constrains
 what you can do with the whole system — which is why it is opt-in, never the
 default, and stated here rather than only in the code. It also needs a separate
-~9.6 GB download.
+~9 GB download.
 
 **Backgrounds are removed with a segmentation model.** Colour keying is the
 fallback and its limit is why: a white robot on a white sheet came out

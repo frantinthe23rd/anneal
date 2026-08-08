@@ -1305,7 +1305,7 @@
                       "kontext"
                     ],
                     "default": "sheet",
-                    "description": "How the frames are made.\n\n`sheet` (default) puts every pose in one FLUX.1-schnell generation and cuts it up. Apache-2.0, and the only weights already installed.\n\n`kontext` generates one base sprite and then edits it once per pose, so the pose is an instruction rather than a hope. **It uses FLUX.1 Kontext [dev], which is non-commercial: the model may not be used commercially without a licence from Black Forest Labs, though outputs are your own.** It needs a separate ~9.6 GB download and is currently declared but not wired — it returns 501."
+                    "description": "How the frames are made.\n\n`sheet` (default) puts every pose in one FLUX.1-schnell generation and cuts it up. Apache-2.0, and the only weights already installed.\n\n`kontext` generates one base sprite and then edits it once per pose, so the pose is an instruction rather than a hope. **It uses FLUX.1 Kontext [dev], which is non-commercial: the model may not be used commercially without a licence from Black Forest Labs, though outputs are your own.** It needs a separate ~9 GB download and is currently declared but not wired — it returns 501."
                   }
                 }
               }

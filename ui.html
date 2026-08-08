@@ -879,7 +879,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
     </div>
     <div class="card" data-go="speech">
       <span class="k">Speech</span>
-      <span class="d">28 voices, about a second a sentence. Fast enough to use in a loop.</span>
+      <span class="d">28 plain voices, about a second a sentence, and nine you can direct.</span>
     </div>
     <div class="card" data-go="image">
       <span class="k">Image</span>
@@ -965,8 +965,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
            Video are the other modalities, and Chat is the side channel.
            Sprites (/v1/sprites) deliberately has no tab: it is for game-dev
            agents calling the API, and a frame sequence is not something anyone
-           was going to sit and make by hand. Video was removed entirely —
-           see the Credits note. -->
+           was going to sit and make by hand. Video was built, measured and
+           removed — see the README. -->
       <button class="tab" role="tab" data-mode="music"  aria-selected="true">Music</button>
       <button class="tab" role="tab" data-mode="press"  aria-selected="false">Press</button>
       <button class="tab" role="tab" data-mode="speech" aria-selected="false">Speech</button>
@@ -1401,7 +1401,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
             <code>env.local.sh</code> on the host.</li>
       </ul>
       <p>Public without either: <code>/health</code>, <code>/supervisor/status</code>,
-         <code>/supervisor/auth</code>, <code>/docs</code>, <code>/openapi.json</code> and this page.
+         <code>/supervisor/auth</code>, <code>/supervisor/whoami</code>,
+         <code>/v1/music/tiers</code>, <code>/docs</code>, <code>/openapi.json</code> and this page.
          Everything else needs one of the two.</p>
       <p>Every response has the same envelope. Check both — an HTTP 200 can still carry
          <code>code: 500</code>.</p>
@@ -1490,7 +1491,7 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
         <tr><td><code>POST</code></td><td><code>/query_result</code></td><td>Poll one or more task ids</td></tr>
         <tr><td><code>GET</code></td><td><code>/v1/audio</code></td><td>Download a generated take</td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/audio/speech</code></td><td>Speech, returns audio</td></tr>
-        <tr><td><code>GET</code></td><td><code>/v1/voices</code></td><td>Voice list (wakes the speech model)</td></tr>
+        <tr><td><code>GET</code></td><td><code>/v1/voices</code></td><td>Voice list — starts the speech process, loads no weights</td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/images/generations</code></td><td>Image, as a path or base64</td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/sprites</code></td><td>An animation set as separate transparent PNGs. <b>API only</b></td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/vector</code></td><td>An SVG icon. <b>Experimental</b> — see the README</td></tr>

@@ -1117,7 +1117,7 @@ def sheet_prompt(subject, frames=4, style="flat pixel art", poses=None):
 #             design drift. Both measured.
 #   kontext — one base sprite, then one *directed edit* per pose against it.
 #             Identity comes from the reference image and the pose is an
-#             instruction, so the two stop fighting. Costs a 9.6 GB download and
+#             instruction, so the two stop fighting. Costs a 9 GB download and
 #             a non-commercial licence.
 SPRITE_METHODS = {
     "sheet": {
@@ -1164,7 +1164,7 @@ def sprite_method_problem(method, model_path=None):
         pass
     path = model_path or paths.hf_snapshot(KONTEXT_MODEL)
     if not path or not os.path.isdir(path):
-        return ("the kontext model is not installed (~9.6 GB, and a "
+        return ("the kontext model is not installed (~9 GB, and a "
                 "non-commercial licence). See the sprites section of "
                 "INTEGRATION.md.")
     return None

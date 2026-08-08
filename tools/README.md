@@ -17,8 +17,8 @@ because it has to work on a machine where nothing has been installed yet.
 tools/test.sh          # unit always; acceptance too when a gateway answers on 8001
 ```
 
-304 unit tests need nothing — no network, no models, no running server — and are
-what CI runs. The 36 acceptance tests run against a live gateway and are
+The unit suite needs nothing — no network, no models, no running server — and is
+what CI runs. The acceptance suite runs against a live gateway and is
 deliberately confined to the surface that wakes no model; anything that would
 generate is skipped unless `ANNEAL_TEST_HEAVY=1`.
 

@@ -1,11 +1,9 @@
 # Anneal — design scheme
 
-Reference for anyone (human or Claude Code) changing `ui.html`. The live version
-of this document is `Anneal Design Scheme.dc.html`; open it in a browser to see
-every component in both themes.
+Reference for anyone changing `ui.html`.
 
-Files: `brand/tokens.css`, `brand/anneal-mark.svg`, `brand/favicon.svg`,
-`brand/anneal-mark-mono.svg`, `brand/social-preview.png`.
+Files: `design/tokens.css`, `assets/favicon.svg`, `assets/brand/anneal-mark.svg`,
+`assets/brand/anneal-mark-mono.svg`, `assets/brand/social-preview.png`.
 
 ---
 
@@ -55,7 +53,7 @@ anything but heat, close the gap, or add a second gap.
 
 ## Colour
 
-`brand/tokens.css` is authoritative. Paste it over the `:root` block in
+`design/tokens.css` is authoritative. Paste it over the `:root` block in
 `ui.html`; all existing names are preserved, so nothing downstream breaks.
 
 Dark is the default. Light is full parity — the same names, new values, under
@@ -125,7 +123,7 @@ above its parent.
 
 ## Components
 
-Rendered live in both themes in `Anneal Design Scheme.dc.html`. Summary:
+Summary:
 
 - **Primary button** — one per view. Heat gradient fill, `--heat-ink` text,
   `brightness(1.09)` on hover, `translateY(1px)` on press. Busy state drops to
@@ -174,40 +172,13 @@ before they reach the content, over an ember glow that breathes on 5.5s.
 It replaces the existing `body::before` bloom, and `.on` is toggled from the same
 place that sets `busy`. Full CSS is in section 07 of the live scheme.
 
-## Change list for `ui.html`
+## Applied
 
-In order; each is self-contained and can land as its own commit.
+The scheme above is what `ui.html` implements: the mark and favicon, the tokens
+from `design/tokens.css`, the theme toggle resolved before first paint, orange
+rationed to the six uses listed, per-tab empty states, `⌘↵` to forge, arrow keys
+across tabs, `Escape` to close any layer, and the hearth behind a generation.
 
-1. **Ship the mark.** `<link rel="icon" href="/assets/favicon.svg">`, the 24px
-   mark beside the header wordmark, the 168px one above the hero title. Serve
-   `brand/` from the same static route as `assets/hero.jpg`.
-2. **Replace the `:root` block with `brand/tokens.css`.**
-3. **Wire the theme.** Default to `prefers-color-scheme`, header toggle
-   overrides, persist under `anneal.theme`, set `data-theme` on `<html>` before
-   first paint so there is no flash.
-4. **Ration the orange** down to the six uses above.
-5. **Collapse `.item`, `.msg` and `.album > .hd`** into one `.card` plus
-   modifiers. They already share padding, radius and border with small drifts;
-   the output column currently looks like three separate features.
-6. **Say how long it will take** — expected range next to elapsed, real
-   percentage as soon as one exists.
-7. **Empty state per tab**, replacing the single anvil glyph and "Nothing forged
-   yet".
-8. **Keyboard.** `⌘↵` / `Ctrl↵` forges from any field, arrow keys move between
-   tabs, `Escape` closes the sheet, lightbox and gate.
-9. **The hearth.** Replace `body::before` with the generating background above,
-   toggled from wherever `busy` is set.
-10. **Contrast pass.** Nothing interactive on `--faint`; `--heat-2` becomes
-   `#9a5205` on light; every control clears 36px.
-
-## Voice
-
-Warm and plain-spoken, and specific about the machine. "Models heat up when you
-ask and cool down when you stop, because on 16 GB that is the only way they all
-fit" is the register: it explains rather than sells. Errors say what happened and
-what to do — "Backend evicted — an image request needed the memory," then a
-button. No exclamation marks, no emoji, no apologies.
-
-Forge, heat, cool, temper and quench are available and already earned. Do not
-extend the metaphor further; "smithing" naming for ordinary UI (a "bellows"
-settings sheet) is where this stops being charming.
+`tools/lint-ui.py` checks token parity between the two themes and fails on a
+`var(--x)` with no definition, which is how a colour declared in dark and
+forgotten in light gets caught.

@@ -6,88 +6,59 @@ Five models across four services on an Apple silicon Mac, behind a single HTTP
 gateway. Nothing leaves the machine.
 
 Named for what it does to its models: heat one up on demand, let it cool and
-release the memory when idle. On 16 GB that isn't an optimisation, it's the only
-way they all fit.
+release the memory when idle. On 16 GB that is not an optimisation — it is the
+only way they all fit.
 
-Concept, product direction and design by **Jon Moseley**; built with **Claude
-Code**, which is also what it was built to serve. It began as an API with no
-interface at all — somewhere a build script or a coding agent could ask for the
-assets code can't produce: a soundtrack, a voiceover, a title card. The music
-turned out to be the part that worked best, which is where **Press** came from.
-The UI came last, because judging a generated take by reading JSON is miserable.
-
-**Everything runs locally.** No inference request leaves the machine. `env.sh`
-sets `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1` at run time, so the model
-libraries resolve from the local cache and *raise* rather than quietly fetching
-anything — a missing or mis-pinned model fails loudly instead of being
-downloaded mid-request. `download-models.sh` and `update.sh` clear those flags
-deliberately; they are the only places a download happens. No hosted-model
-client (OpenAI, Anthropic, and so on) is installed in either virtualenv.
-
-The one external fetch is `/docs`, which pulls Swagger UI's CSS and JS from a
-CDN for the browser to render. No prompt or generated content is involved, and
-the spec itself is served locally. Say so if you want it vendored. The UI at `/`
-fetches nothing externally: its backdrop, favicon and the two browser libraries
-it uses are all served from `assets/`.
+**Nothing leaves the machine.** `env.sh` sets `HF_HUB_OFFLINE=1` and
+`TRANSFORMERS_OFFLINE=1`, so a missing or mis-pinned model raises rather than
+downloading mid-request. `download-models.sh` and `update.sh` are the only
+scripts that fetch anything, and no hosted-model client is installed. The one
+external request is `/docs`, which loads Swagger UI from a CDN to render the
+spec; the spec itself is local, and the UI at `/` fetches nothing.
 
 | Service | Model | Licence | Output |
 | --- | --- | --- | --- |
 | Music | [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) | MIT | Songs with vocals, instrumentals, covers, continuation — up to 10 min. Two quality tiers. |
-| Speech | [Kokoro-82M](https://huggingface.co/prince-canuma/Kokoro-82M) via [mlx-audio](https://github.com/Blaizzy/mlx-audio) | Apache-2.0 | 28 voices, en/uk |
+| Speech | [Kokoro-82M](https://huggingface.co/prince-canuma/Kokoro-82M) via [mlx-audio](https://github.com/Blaizzy/mlx-audio) | Apache-2.0 | 28 voices, American and British English |
 | Speech, directed | [Qwen3-TTS CustomVoice](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice) 4-bit via mlx-audio | Apache-2.0 | 9 named voices that take a written performance direction |
 | Image | FLUX.1-schnell 4-bit via [mflux](https://github.com/filipstrand/mflux) | Apache-2.0 | Up to ~1536px, plus variations of an earlier image |
 | Text | Gemma 4 e4b 4-bit via [mlx-lm](https://github.com/ml-explore/mlx-lm) | Gemma Terms of Use | Chat completions, streaming |
 
-(The Gemma row previously said Apache-2.0 here. That was wrong: the *tooling* is
-Apache/MIT, but Google's weights are under the Gemma Terms of Use. Full
-attribution for every model and library is in [Credits](#credits) and on the
-UI's About page.)
+Full attribution for every model and library is in [Credits](#credits) and on
+the UI's About page.
 
-**Vector** (`POST /v1/vector`) draws an SVG icon with the text model — markup,
-so it is text generation: two to seven seconds, no new weights, no heavy slot,
-nothing evicted. **Experimental**: on the model that fits here
-the output is reliably well-formed and reliably not a recognisable icon. See
-[Vector output](#vector-output) before building on it. Everything it returns is
-sanitised first — a `<script>` inside an SVG a game loads is a real hazard.
+**Press** (`POST /v1/press`) chains everything: one brief becomes a title, an
+artist, a tracklist, lyrics, the music and a cover. Poll `/v1/press?id=`; the
+finished record downloads as a zip, transcoded from FLAC masters. Send
+`review: true` to stop after the plan and lyrics so they can be edited before
+twenty minutes of audio is committed to.
 
-**Press** chains all four: one brief becomes a title, an artist name, a
-tracklist with varied lengths, lyrics, the music and a cover.
-`POST /v1/press {"prompt": "...", "tracks": 4}`, then poll `/v1/press?id=`.
-Results appear in the Library as a record you can play through, and
-`GET /v1/press/download?id=…&format=mp3&bitrate=320k` returns the whole thing as
-a zip — audio, cover and tracklist. Masters are FLAC, so lossy formats are
-transcoded from the original rather than from another lossy copy.
+**Speech** comes in two sets, chosen by the voice you name. Kokoro is the
+default: 350 MB, a second or two, 28 voices, and no expressive control — that is
+the whole of what the model exposes. The nine Qwen3-TTS voices take an
+`instruct` describing the performance ("panicked and breathless", "quietly
+furious") with the speaker held fixed, so a character can carry a scene. Sending
+a direction to a Kokoro voice returns 400 rather than ignoring it.
 
-**Sprites** (`POST /v1/sprites`) is **API-only, deliberately** — there is no
-Studio tab, because a frame sequence is not something anyone sits and makes by
-hand. It exists for game-dev agents calling the API. It turns a brief into an
-animation set: separate
-transparent PNGs, one per frame, plus an atlas giving each frame's position on
-the sheet it came from. The whole set comes out of **one** image generation,
-which is the design rather than an optimisation — generating four sprites
-separately gives you four different characters, because the model has no memory
-between samples. Frames are then located by content, since the poses are spaced
-irregularly and across however many rows the model chose, and matted with a
-segmentation model rather than by colour distance: keying lost a white robot on
-a white sheet, and pale characters are ordinary. Two minutes, and it evicts
-music.
+**Sprites** (`POST /v1/sprites`) turns a brief into an animation set: transparent
+PNGs, one per frame, plus an atlas. API-only — a frame sequence is not something
+anyone makes by hand. Two limits before you build on it: the frame
+count is a request rather than a guarantee, so read the response; and identity
+comes free while motion does not, so pass `poses` to get real movement, at the
+cost of more design drift between frames.
+[Details](INTEGRATION.md#6c-sprites-an-animation-set-that-stays-the-same-character).
 
-Two limits. **The frame count is a hint** — two runs
-asking for four returned five, so read the response rather than assuming. And
-**identity comes free while motion does not**: left alone the poses come back
-near-identical, so passing `poses` (`["idle", "crouched to jump", "mid-air",
-"landing splat"]`) is what produces real animation, at the cost of more design
-drift between frames. That trade-off is the temporal-coherence problem video
-models exist to solve, met halfway. See [INTEGRATION.md](INTEGRATION.md#6c-sprites-an-animation-set-that-stays-the-same-character).
+**Vector** (`POST /v1/vector`) draws an SVG icon with the text model — seconds,
+no new weights, nothing evicted. **Experimental**: the output is reliably
+well-formed and reliably not recognisable as its subject. See
+[Vector output](#vector-output) before building on it. Everything returned is
+sanitised.
 
-**Speech comes in two flavours, chosen by the voice you name.** Kokoro is the
-default — 350 MB, a second or two, 28 voices, and no expressive control at all;
-that is not an oversight in the wrapper, it is the whole of what the model
-exposes. The nine Qwen3-TTS CustomVoice speakers take an `instruct` describing
-the performance — "panicked and breathless", "quietly furious" — with the
-speaker held fixed, so a character can carry a scene. Sending a direction to a
-Kokoro voice is a 400 rather than a silent no-op, because flat delivery is
-indistinguishable from a model that tried and failed.
+**What it does not do:** video. It was built, measured and removed — nine frames
+at 480×272 took three minutes at a 22 GB peak, and the 4-bit transformer was
+only 837 MB of that against 11.4 GB for the text encoder. See
+[#37](https://github.com/frantinthe23rd/anneal/issues/37) for the animation that
+replaced it.
 
 **Using it by hand?** Open the web UI at **`/`** — prompt window, output view,
 and a forge strip showing which models are hot.
@@ -133,7 +104,7 @@ whether it is optional, before anything is downloaded:
 | Speech — Qwen3-TTS CustomVoice | 2.2 GB | optional: the nine directed voices |
 | Image — FLUX.1-schnell 4-bit | 9.0 GB | required for images |
 | Text — Gemma 4 e4b 4-bit | 4.8 GB | required for text, and for Press |
-| Sprites — FLUX.1-Kontext 4-bit | 9.0 GB | optional, **non-commercial licence** |
+| Sprites — FLUX.1-Kontext 4-bit | 9.0 GB | optional, **non-commercial licence**; the method that uses it is declared but not yet implemented ([#37](https://github.com/frantinthe23rd/anneal/issues/37)) |
 
 Plus ~2.7 GB for the ACE-Step checkout, ~1.3 GB for the model virtualenv and a
 few GB of wheel cache. About 45 GB for all of it; about 20 GB for music and
@@ -234,9 +205,11 @@ make sense with the measurement attached.
 ## Architecture
 
 ```
-                                        ┌─► ACE-Step  :8011  (on demand, ~21 GB, heavy)
-tailnet ─TLS─► tailscale serve ─► supervisor.py :8001 ─┼─► Kokoro    :8012  (on demand, ~400 MB, light)
-                                  (always on, ~25 MB)  └─► FLUX      :8013  (on demand, ~11 GB, heavy)
+                              ┌─► ACE-Step :8011  (on demand, ~21 GB, heavy)
+                              ├─► FLUX     :8013  (on demand, ~11 GB, heavy)
+client ─► supervisor.py :8001 ┤
+          (always on, ~25 MB) ├─► Kokoro / Qwen3-TTS :8012  (on demand, light)
+                              └─► Gemma    :8014  (on demand, ~5 GB, light)
 ```
 
 16 GB of unified memory can't hold these permanently, and none of the backends
@@ -252,26 +225,13 @@ from 4 GB to 17 GB; stopping it hands all of that back. The cost is a ~3–4 min
 cold start for music (~30–60 s for images) after an idle period or an eviction.
 Speech and chat are light enough to stay resident alongside either.
 
-**On swap.** Idle, a large swap file costs nothing: pageouts sit near one per
-second and the kernel reports *normal*. Under an actual music generation it is
-different — measured with `./monitor.py` across a 5-minute run:
-
-```
-peak pagein/s 9025   peak pageout/s 32   min free 1421M   worst pressure warning
-```
-
-Pageout stays near zero while **pagein** hits thousands per second: the working
-set is larger than RAM and is being continuously re-read from swap, not newly
-written to it. That is ~140 MB/s, which an Apple NVMe absorbs without the
-machine feeling any different — which is exactly why it *seems* free. But the
-kernel does report warning and occasionally critical, and the headroom is real:
-a second large model would not fit alongside it.
-
-So both things are true. It works fine, and it is genuinely tight. Anneal
-reports `pressure_level` from the kernel plus both paging rates, and only raises
-the host chip when the kernel says so — not merely because swap is large.
-
-Run `./monitor.py` during a generation to see it for yourself.
+**On swap.** Under a music generation the working set exceeds RAM: measured
+with `./monitor.py`, pagein peaks around 9,000/s while pageout stays near zero —
+the model is being continuously re-read from swap, not written to it. The kernel
+reports warning and occasionally critical. It works, and the headroom is real: a
+second large model would not fit alongside it. Anneal reports `pressure_level`
+and both paging rates, and raises the host chip only when the kernel does, since
+a large swap file on its own is normal.
 
 `ANNEAL_FREE_TORCH_DECODER=1` releases a duplicated copy of the DiT decoder
 after MLX conversion, taking the peak footprint from 22 GB to 18 GB. It is off
@@ -279,17 +239,16 @@ by default: 18 GB still exceeds physical RAM so the paging is unchanged, and it
 costs the PyTorch diffusion fallback plus Gradio's LRC and lyric-scoring
 features. See [#32](https://github.com/frantinthe23rd/anneal/issues/32).
 
-**Measure with `phys_footprint`, never RSS.** MLX allocates through Metal, which
-`ps` does not attribute to the process — a backend genuinely holding 21 GB
-reports an RSS of ~120 MB that jitters as ordinary heap moves around. The
-supervisor shells out to `footprint`, the same figure Activity Monitor shows.
-Every memory number here was wrong until that was fixed.
+**Measure with `phys_footprint`, never RSS.** MLX allocates through Metal,
+which `ps` does not attribute to the process — a backend holding 21 GB reports
+an RSS of ~120 MB. The supervisor shells out to `footprint`, the same figure
+Activity Monitor shows.
 
 `/health`, `/supervisor/status`, `/docs`, `/openapi.json` and `/v1/audio` are all
 answered by the supervisor itself, so health checks, docs and re-downloads never
 wake a model.
 
-Adding a fourth modality means adding an entry to `services.py` — the supervisor
+Adding another modality means adding an entry to `services.py` — the supervisor
 is generic.
 
 **Press** (`builder.py`) chains them. Stage order is the design: doing
@@ -303,8 +262,8 @@ plan (text) → lyrics ×N (text) → music ×N (music) → cover (image)
 
 It calls the gateway's own endpoints on loopback rather than the services
 directly, so it inherits tier switching, admission control, the durable job
-queue and library persistence for free. State is in sqlite, because a five-track
-album is twenty minutes of work that must survive a restart or a closed browser.
+queue and library persistence for free. State is in sqlite, so a press survives a
+restart or a closed browser.
 
 A press runs in a thread, so a gateway restart leaves a record claiming to be
 working with nothing behind it. On startup anything non-terminal is marked
@@ -351,103 +310,22 @@ update clobbers it; without it the server silently re-downloads 9.4 GB.
 
 ## The UI
 
-Arrives at a **front door**: what Anneal is, which models are warm, a card per
-capability, and — with equal weight — the fact that everything here is also an
-API a build script or coding agent can call. The backdrop was generated by
-Anneal's own image model and lives in `assets/`, served by the gateway. Click
-the wordmark to return to it.
+Open `/` in a browser. A front door, then four pages behind a subnav —
+**Studio** (the application: five modes, output, library), **Guide**, **API**
+and **About** — deep-linkable as `#guide`, `#api`, `#about`.
 
-Four pages behind a subnav, deep-linkable as `#guide`, `#api`, `#about`:
+The page makes **no external requests**: `marked`, `DOMPurify` and KaTeX are
+vendored into `assets/vendor/` with versions and hashes recorded, and the
+backdrop was generated by Anneal's own image model.
 
-| Page | |
-| --- | --- |
-| **Studio** | The application — five modes, output, library. |
-| **Guide** | How to get a good result out of each mode, and the cold-start arithmetic behind all of them. |
-| **API** | Why it is a service first, auth, the job protocol, the endpoint table, and the MCP setup. Code samples quote the address you are actually on. |
-| **About** | What it is, why it exists, why it is called Anneal — and full attribution for every model and library. |
+The header strip shows every model `/health` reports as **cold**, **heating** or
+**hot** with its true footprint, and a **host** chip appears when the machine is
+short of memory. Cold-start warnings appear before you commit to a slow request;
+a `409` offers to stop the other heavy model and retry rather than just failing.
 
-The page still makes **no external requests**. `marked`, `DOMPurify` and KaTeX
-(chat Markdown, sanitising, and maths) are vendored into `assets/vendor/` with their
-versions and hashes recorded in `assets/vendor/README.md`, rather than pulled
-from a CDN. The favicon is an SVG of the same anvil the empty state uses.
-
-Motion runs through three CSS variables, so `prefers-reduced-motion` switches the
-whole interface to still in one place. Transitions are used where they carry
-meaning — the cold → heating → hot lifecycle, drawers opening — not as
-decoration.
-
-**Settings** (header, or from the front door) holds client-side defaults for
-new work, a read-only view of the server's state with the environment variable
-that changes each one, and the API key. A web page should not be rewriting the
-gateway's environment, so it shows rather than edits.
-
-Open `https://<tailnet-host>/` from anywhere on the tailnet — **no key, no
-login**. `tailscale serve` stamps the caller's identity onto every request it
-proxies, and Anneal trusts that, so the browser is already authenticated.
-
-The `http://127.0.0.1:8001/` loopback address carries no such identity, so it
-still asks for the key. Using the tailnet address on the host itself avoids
-that.
-
-- **Music / Press / Speech / Image / Chat** tabs, prompt box, and the options that matter per mode.
-- **Forge strip** in the header shows every model `/health` reports — music,
-  speech, chat and image — as **cold**, **heating** or **hot**, with the
-  true footprint once
-  loaded. Updated from `/health`, which never wakes anything. "Heating" matters:
-  the process answers long before the weights are in, and reporting that as
-  ready was actively misleading. The pill pulses for whichever service is
-  actually working, which is not always the tab you're on — the lyric writer
-  runs on the chat model from the Music tab.
-- A **host** chip appears when the machine is short on memory or swapping hard,
-  which on 16 GB is the usual reason a job crawls or dies.
-- Cold-start warnings appear *before* you commit to a slow request, so a 4-minute
-  music generation isn't a surprise.
-- A `409` (the other heavy model is mid-job) offers to stop it and retry rather
-  than just failing.
-- Results stack newest-first with inline playback or preview and a download link.
-- **Vary this** on any generated image feeds it back as an init latent, keeping
-  the composition and re-rendering the detail. It is not an edit: it
-  does **not** apply prompt changes to an existing image. Measured — asking a
-  brass watch to become silver returns the same brass watch. Distillation is
-  why: keeping the image spends the steps that would redraw it. Use it for
-  variants of a shot, not to change what is in one. See
-  [#37](https://github.com/frantinthe23rd/anneal/issues/37).
-- **Chat** is a plain conversation with the local Gemma model, streamed, in the
-  shape every chat interface has: transcript above, composer below, **Enter to
-  send** and Shift+Enter for a newline. Replies render as **Markdown**, with
-  equations typeset by KaTeX — the model writes both whether or not you render
-  them, and a wall of literal `**`, backticks and `\text{}` was the worst thing
-  in the interface. Reasoning is off by default — Gemma 4 will otherwise spend a
-  short budget thinking before answering — with a checkbox to show it. Each
-  reply has a **Copy** button: chat is the one mode whose output is text you
-  take somewhere else, and it copies the reply without the reasoning.
-
-  The transcript **survives a reload**, kept in `localStorage` alongside the
-  preferences and the key. The server still holds no conversation state — that
-  property is unchanged — but the browser now does, which matters on a shared
-  machine. It is bounded (roughly 500 KB, oldest turns dropped first,
-  reasoning shed before whole messages) because the quota is ~5 MB and
-  exceeding it throws. "New conversation" asks before discarding, and Settings'
-  **Forget key, preferences and chat history** clears it. One conversation, not
-  a list.
-- **Write for me** in the lyrics block drafts lyrics from the style prompt,
-  streaming into the box. Click again to stop; your text is restored on failure.
-- **Library** switches to everything the server has kept — filter by kind, play
-  or preview, download, delete, **Details** and **Reuse**. Details shows exactly
-  what produced a file: every submitted parameter, the full prompt and lyrics,
-  which DiT and planning model ran, and the planned bpm/key labelled as such.
-  Reuse loads those settings straight back into the form. Served off disk, so
-  browsing wakes no model.
-
-  When comparing takes: **generation is not deterministic**, even
-  with `use_random_seed: false`. Two identical requests produce different audio.
-  Details tells you what was asked for; it cannot tell you why two takes of the
-  same request differ. See [Determinism](#determinism) — the cause is not the
-  one this file used to claim.
-- `Cmd/Ctrl+Enter` submits.
-
-Dark by design — the accent colour is reserved for things that are genuinely hot
-or genuinely in progress.
+Reaching the UI over a tailnet address needs **no key** — `tailscale serve`
+stamps the caller's identity onto each request and Anneal trusts it. The
+loopback address carries no identity, so it asks for the key.
 
 ## Usage
 
@@ -508,10 +386,9 @@ curl -X POST -H "Authorization: Bearer $ACESTEP_API_KEY" localhost:8001/supervis
 
 ## Surviving a reboot
 
-Nothing started Anneal at boot until recently. After a restart the tailnet URL
-was still up — that configuration lives in Tailscale's own state and survives on
-its own — proxying to a dead port, which from outside is indistinguishable from
-a crash.
+Anneal does not come back after a restart unless you install the launchd job.
+Tailscale's serve configuration *does* survive on its own, so without it the
+tailnet URL stays up while proxying to a dead port.
 
 ```bash
 ./service.sh install     # start at login, restart if it dies
@@ -519,54 +396,24 @@ a crash.
 ./service.sh uninstall   # stop doing that
 ```
 
-`install` stops a hand-started gateway first, then bootstraps the LaunchAgent and
-**verifies it by seeing whether the job actually comes up** rather than by
-checking a box. It exits non-zero with the launchd exit code and the log tail if
-it does not.
+`install` stops a hand-started gateway, bootstraps the LaunchAgent, and verifies
+it by seeing whether the job comes up — exiting non-zero with the launchd exit
+code and the log tail if it does not.
 
-**The permission this needs, and why it is arranged the way it is.** Models,
-venvs and outputs live on an external volume, and macOS blocks a LaunchAgent
-from touching one *entirely* — measured with a probe agent that could not even
-`ls` the directory. So boot persistence requires Full Disk Access however it is
-arranged. The question is what holds the grant.
+**It needs Full Disk Access, and you should know where that grant goes.** macOS
+blocks a LaunchAgent from touching an external volume entirely, so this is
+unavoidable if the install root is on one. Granting it to `/bin/bash` would give
+full disk access to every shell script anything on the machine runs. Instead,
+`service.sh` places an ad-hoc signed private copy at
+`~/Library/Anneal/anneal-bash` and the job runs that; macOS prompts on first run,
+and the grant applies to that copy alone.
 
-Granting it to `/bin/bash` works and is what most guides suggest. It also means
-every shell script anything on this machine runs — including one piped from a
-URL — inherits full disk access. Instead, `service.sh` puts an **ad-hoc signed
-private copy** at `~/Library/Anneal/anneal-bash` and the LaunchAgent runs
-`anneal-bash boot.sh`. The grant applies to that copy alone. macOS prompts for it
-the first time launchd runs it; the ad-hoc signature is what makes prompting
-possible, since plain `/bin/bash` cannot prompt and is simply denied.
+It starts at **login**, not at boot — a LaunchAgent, not a daemon, because
+`tailscale serve` is configured per user. For an unattended machine, enable
+automatic login rather than adding a second code path.
 
-Three details that cost time and are now handled:
-
-- Copying a signed system binary invalidates its signature and macOS **SIGKILLs**
-  the copy before it runs a line. It is re-signed ad-hoc after every copy.
-- `launchd` opens `StandardOutPath` itself, before the job runs and before any
-  grant applies to it, so a log path on the external volume fails the spawn with
-  `EX_CONFIG` and no diagnostic anywhere. The launchd log lives in
-  `~/Library/Logs/Anneal/`; the supervisor's own log still sits beside the models.
-- A pre-flight "can I read the volume?" check run from your terminal inherits
-  *that terminal's* access and reported success while the real agent was denied
-  everything. It is now used only to rule out, never to confirm.
-
-`boot.sh` is the launchd entry point and differs from `start-api.sh` in two ways
-that matter: it **waits** for the external volume rather than failing (launchd
-starts login items well before an external disk mounts), and it **execs** the
-supervisor so the pid launchd supervises is the real one. `start-api.sh`
-backgrounds and exits, which is right for a human and would make `KeepAlive`
-restart it forever.
-
-`stop-api.sh` unloads the job before killing anything, so a deliberate stop is
-not undone a second later; `start-api.sh` bootstraps it back, so a stop/start
-cycle does not quietly leave the machine without persistence it was configured
-to have.
-
-**It starts at login, not at boot** — a LaunchAgent, not a daemon. A daemon runs
-with nobody signed in but also with no user session, and `tailscale serve` is
-configured per user; getting that wrong gives you a gateway that starts at boot
-and is reachable by nobody. If you need it up before login, enable automatic
-login for this user rather than adding a second code path.
+launchd's own log is in `~/Library/Logs/Anneal/`; it cannot live on the external
+volume, because launchd opens it before any grant applies.
 
 ## Configuration
 
@@ -584,7 +431,8 @@ Useful knobs:
 | `ACESTEP_LM_MODEL_PATH` | `acestep-5Hz-lm-0.6B` | Prompt/lyric planning LM |
 | `ANNEAL_MIN_FREE_MB` | `1200` | Refuse to load a heavy model below this much free RAM |
 | `SPEECH_QWEN_MODEL` | `mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-4bit` | The directed-speech model, loaded only when one of its voices is asked for |
-| `ANNEAL_SPRITE_PYTHON` | `$AIMUSIC_ROOT/tools-venv/bin/python` | Interpreter used to cut and matte sprite sheets. Needs rembg, so it is deliberately not the pinned environment that serves the models |
+| `ANNEAL_EXPOSE` | `loopback` | Set to `tailnet` to publish through `tailscale serve`. The gateway binds loopback either way |
+| `ANNEAL_SPRITE_PYTHON` | `$AIMUSIC_ROOT/tools-venv/bin/python` | Interpreter used to cut and matte sprite sheets. Needs rembg, so it is kept out of the pinned environment that serves the models |
 | `UV_BIN`, `TS_BIN`, `TAILNET_HOST` | auto-detected | Override only if detection picks wrong |
 
 Tool paths and the tailnet hostname are resolved at startup rather than
@@ -622,37 +470,23 @@ better is a judgement for your ears** — see the note on verification below.
 
 ### Determinism
 
-This file, `CLAUDE.md` and the UI's Guide all used to say generation is
-non-deterministic *because the planning LM samples at temperature*. That
-explanation is wrong, or at least badly incomplete, and it was never tested.
-Measured on 2026-08-07, four 30-second draft-tier generations through the
-gateway:
+**Generation is not reproducible.** A fixed seed is accepted and recorded, and
+two identical requests still produce different audio.
 
-| Request | Planned `metas` | Audio |
-| --- | --- | --- |
-| `thinking: false`, `use_random_seed: false`, `seed: 424242`, ×2 | **differ** — E major vs F major | differ |
-| the same plus `bpm: 84`, `key_scale: "C major"`, ×2 | **identical** | **still differ** |
+`thinking: false` does not turn the planning LM off — upstream's own request
+model says *"regardless of thinking, if some metas are missing, server may use
+LM to fill them"*. It selects whether the LM generates audio *codes*; it will
+still fill an unspecified `bpm` or `key_scale`, and it samples when it does, so
+two identical requests can come back in different keys.
 
-Two things follow.
+Pinning `bpm` and `key_scale` is not enough either. With both supplied the
+reported `metas` are byte-identical across runs and the audio still differs, so
+something below the plan is sampling too.
 
-**`thinking: false` does not turn the planning LM off.** Upstream's own request
-model says so: *"Regardless of thinking, if some metas are missing, server may
-use LM to fill them."* `thinking` selects whether the LM generates audio
-*codes*; it still fills in an unspecified bpm and key, and it samples when it
-does. That is why the key changed between two identical requests.
-
-**Pinning the plan is not enough either.** With `bpm` and `key_scale` supplied,
-the reported `metas` were byte-identical across both runs and the audio still
-was not. The take's own record echoes `"seed": "424242"`, so the seed was
-accepted rather than silently ignored. Something downstream of the plan is
-still sampling — MLX/Metal reduction order is the obvious suspect, but that is
-a hypothesis and has not been tested.
-
-So: byte-comparing two runs still proves nothing about quality, and "same seed,
-same output" is not available here by any route currently known.
-[#35](https://github.com/frantinthe23rd/anneal/issues/35) has the consequences
-for iterative refinement — including that **repaint does not need
-determinism**, and is already exposed by the REST API.
+Consequences: byte-comparing two runs proves nothing, and "same seed, same
+output" is not available by any route currently known.
+[#35](https://github.com/frantinthe23rd/anneal/issues/35) covers what that means
+for iterative refinement.
 
 ### `metas` is intent, not measurement
 
@@ -697,46 +531,15 @@ and shield:
 | temperature 0.2, rules naming the observed failures | **5/5** | **0/5** |
 | the same, plus two worked examples | 5/5 | 1/5 at best |
 
-Each well-formed result was rendered and looked at. The gear came back as a
-plain filled circle. The compass rose was a single dot — its lines had no
-stroke, so they drew nothing. The health bar was one solid rectangle, its three
-segments abutting in the same colour. The heart was a blob. Few-shot examples
-improved the *markup* — right line style, strokes present — and did not change
-whether the drawing resembles its subject.
+Each result was rendered and looked at: the gear came back as a plain filled
+circle, the compass rose as a single dot, the health bar as one solid rectangle.
+Few-shot examples improved the *markup* and did not change whether the drawing
+resembles its subject.
 
-So the plumbing works and the capability does not, and that is why there is no
-Vector tab in the UI. The ceiling here looks like the model rather than the
-prompt: a larger text model ([#33](https://github.com/frantinthe23rd/anneal/issues/33))
-is the obvious thing to retest against. This is the same trap as the audio
-below — a number moving the right way is not evidence the output is good.
-
-### Verifying generated audio
-
-An earlier "improvement" here was garbled noise shipped on the strength of a
-spectral measurement that moved in the expected direction. Noise is broadband,
-so it *raises* high-frequency energy. Numbers alone cannot tell good audio from
-bad.
-
-What does work, short of listening:
-
-- **Spectrogram** — `ffmpeg -i x.flac -lavfi showspectrumpic=s=900x360 out.png`.
-  Music shows harmonic bands, note onsets, section changes and silence. Noise is
-  a uniform wash. The difference is unmistakable.
-- **Near-silent frame fraction** — music breathes; the garbled take had *zero*
-  quiet frames against 22.8% for a good one. This was the sharpest single
-  discriminator.
-- **Spectral flatness** — the garbled take measured 5× higher.
-
-Use those to catch catastrophic failure. Use your ears for everything else.
-
-ACE-Step fixes its DiT at startup and can only route between models already
-resident, which on 16 GB is one. **Switching tiers restarts the backend**, so
-the first request after a switch pays a cold load. `GET /v1/music/tiers` reports
-which is loaded, so a client can warn before committing.
-
-Output is **FLAC by default**. The backend's MP3 encoder is fixed at 128 kbps
-and does not expose a bitrate through the API — a null test puts its discarded
-residual at −42 dB, around 24 dB below programme level, which is audible.
+The plumbing works and the capability does not, which is why there is no Vector
+tab. Larger text models were tried and produced better output, not good enough
+to change the verdict, and the sizes that helped do not coexist with a heavy
+model here — see [#36](https://github.com/frantinthe23rd/anneal/issues/36).
 
 ## Keeping it current
 
@@ -767,38 +570,18 @@ the pin back.
 
 ## Working on it
 
-`CLAUDE.md` has the full working notes — layout, the traps, and what has already
-cost time. Three rules are worth stating here, where someone reading about the
-API will meet them.
-
-**API endpoints are written test-first.** The test comes before the handler:
-request shape, the `{data, code, error}` envelope, what an unauthenticated call
-gets, and each failure mode with its status. It is a rule about endpoints
-specifically, because they are the part other people build against — and three
-got out without one. `/v1/press/cancel` shipped documented nowhere: not the
-spec, not the guide, not the endpoint tables. `init_image` and `retention`
-shipped and, outside the server, existed only in the UI's own JavaScript.
-`JobStore.prune()` exists and nothing calls it. All three were found by hand, in
-an audit prompted by someone asking whether the docs were still true — which is
-not a mechanism.
-
-**An endpoint change updates `openapi.json` and `INTEGRATION.md` in the same
-commit.** `/openapi.json` is what integrators point their tooling at, so a spec
-that lags the server is worse than no spec: it is confidently wrong.
-
-**`ui.html` is linted and photographed before it is committed.** `tools/lint-ui.py`
-needs no Node — standard library plus the JavaScriptCore shell macOS already
-ships — and checks the faults that raise nothing in a browser: `getElementById`
-targets that no longer exist, unresolved `var(--x)`, colour tokens missing from
-the light theme, duplicate ids, a syntax error in the inline script, and any
-`http(s)` subresource, which would quietly break the guarantee above that the
-page fetches nothing externally. Then take a screenshot — `tools/README.md`
-explains how, and lists three faults that only a picture caught.
-
 ```bash
-tools/lint-ui.py     # before committing ui.html
-tools/test.sh        # the suite in tests/
+tools/lint-ui.py      # before committing ui.html
+tools/lint-prose.py   # self-characterising words in user-facing copy
+./anneal test         # unit and acceptance suites
 ```
+
+API endpoints are written test-first: the request shape, the
+`{data, code, error}` envelope, the unauthenticated response and each failure
+mode, before the handler exists — endpoints are the part other people build
+against. `README.md`, `INTEGRATION.md` and `openapi.json` change in the same
+commit as the code. `CLAUDE.md` has the rest of the conventions and the traps
+that have already cost time.
 
 ## Security
 
@@ -845,8 +628,8 @@ on its own, because generation is not reproducible and a wrongly deleted take
 cannot be regenerated.
 
 Public without auth: `/health`, `/supervisor/status`, `/supervisor/auth`,
-`/supervisor/whoami`, `/docs`, `/openapi.json` and the UI itself. Everything
-else requires one of the two methods above.
+`/supervisor/whoami`, `/v1/music/tiers`, `/docs`, `/openapi.json`, the UI and
+its assets. Everything else requires one of the two methods above.
 
 ## Notes on this hardware
 
