@@ -20,10 +20,10 @@ from __future__ import annotations
 import os
 import sys
 
-ACESTEP_DIR = os.environ.get(
-    "ACESTEP_DIR",
-    os.path.join(os.environ.get("AIMUSIC_ROOT", "/Volumes/Storage/AIMusic"), "ACE-Step-1.5"),
-)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import paths  # noqa: E402  — repo root, stdlib only
+
+ACESTEP_DIR = os.environ.get("ACESTEP_DIR") or paths.under_root("ACE-Step-1.5")
 
 MARKER = "# ANNEAL-PATCH"
 

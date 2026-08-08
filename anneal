@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+# One front door. Everything else stays where it is.
+#
+#   ./anneal setup            install, or finish an install (safe to re-run)
+#   ./anneal doctor           what is missing, and the command that fixes it
+#   ./anneal status           what is installed, what is warm, what it is using
+#   ./anneal start|stop|restart
+#   ./anneal models [list|all|<service>,...]
+#   ./anneal update [--check|--deps|--smoke|--smoke-deep]
+#   ./anneal test [--unit|--acceptance|--heavy]
+#   ./anneal logs [supervisor|api|speech|image|text|launchd] [-f]
+#   ./anneal service install|uninstall|status
+#   ./anneal warm|cool <music|speech|image|text>
+#   ./anneal prune --older-than <days> [--delete]
+#   ./anneal monitor          paging and memory pressure during a generation
+#   ./anneal generate "..."   a track, from the command line
+#
+# Ten executable entry points sat in the repo root and knowing which to run
+# when was undocumented (#21). This does not replace them — every one still
+# works and is still the thing being run. It is a lid on the toolbox: a name
+# for each operation, in one `--help`, so nobody has to reconstruct the set by
+# reading the directory listing.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON="${PYTHON:-/usr/bin/python3}"
+
+# The header comment above, to the first line that is not one. Anchored to the
+# shape of the file rather than to line numbers, so adding a subcommand does
+# not quietly start printing shell code as help.
+usage() { awk 'NR > 1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"; }
+
+# Sourced lazily: `setup` and `doctor` have to work before there is anything to
+# source *for*, and env.sh generates an API key as a side effect of being read.
+load_env() {
+    # shellcheck source=/dev/null
+    source "$HERE/env.sh"
+}
+
+api() {
+    # A gateway call with the bearer token already attached. Every management
+    # operation that used to mean hand-writing curl with a header goes through
+    # here, which is most of the reason this file exists.
+    local method="$1" path="$2" body="${3:-}"
+    local args=(-fsS -m "${ANNEAL_API_TIMEOUT:-600}" -X "$method"
+                -H "Authorization: Bearer ${ACESTEP_API_KEY:-}")
+    [[ -n "$body" ]] && args+=(-H 'Content-Type: application/json' -d "$body")
+    curl "${args[@]}" "http://127.0.0.1:${SUPERVISOR_PORT:-8001}$path"
+}
+
+need_service_name() {
+    [[ -n "${1:-}" ]] && return 0
+    echo "usage: ./anneal $2 <service>" >&2
+    # The names come from the source of truth, not from a list typed here. A
+    # copied list of services has gone stale in this repo four times.
+    "$PYTHON" -c "
+import sys; sys.path.insert(0, '$HERE')
+import services; print('services: ' + ', '.join(services.SERVICES))" >&2
+    exit 2
+}
+
+CMD="${1:-help}"
+[[ $# -gt 0 ]] && shift || true
+
+case "$CMD" in
+
+setup)     exec "$HERE/setup.sh" "$@" ;;
+doctor)    exec "$PYTHON" "$HERE/tools/doctor.py" "$@" ;;
+
+status)
+    # `|| true`: doctor exits 1 when something required is missing, and under
+    # `set -e` that would abort `status` before it printed anything about the
+    # gateway — on exactly the machine where you most want both halves.
+    "$PYTHON" "$HERE/tools/doctor.py" --brief "$@" || true
+    load_env
+    echo
+    if curl -fsS -m 5 "http://127.0.0.1:${SUPERVISOR_PORT}/health" -o /tmp/anneal-health.$$ 2>/dev/null; then
+        "$PYTHON" - /tmp/anneal-health.$$ <<'PYSTATUS'
+import json, sys
+data = json.load(open(sys.argv[1])).get("data") or {}
+system = data.get("system") or {}
+storage = data.get("storage") or {}
+print("services")
+for name, svc in sorted((data.get("services") or {}).items()):
+    mem = svc.get("memory_mb")
+    print("  %-8s %-6s %s%s"
+          % (name, svc.get("state", "?"),
+             "%5d MB  " % mem if mem else "           ",
+             "%d in flight" % svc["in_flight"] if svc.get("in_flight") else ""))
+# Printed from whatever /health actually returns rather than from a list of
+# keys copied into this file, which is the failure mode CLAUDE.md names four
+# times: the copy goes stale the moment a field is added, and does so
+# silently. Pressure first because it is the number that decides whether a
+# generation is about to thrash — swap volume alone is not (a large swap file
+# here is normal).
+if system:
+    print("\nhost")
+    for key in sorted(system, key=lambda k: (k != "pressure_level", k)):
+        print("  %-20s %s" % (key, system[key]))
+if storage:
+    print("\nstorage")
+    free = storage.get("volume_free_bytes")
+    if free is not None:
+        print("  %-20s %.0f GB free" % ("volume", free / 1e9))
+    for kind, info in sorted((storage.get("by_kind") or {}).items()):
+        print("  %-20s %s files, %.0f MB"
+              % (kind, info.get("files"), (info.get("bytes") or 0) / 1e6))
+PYSTATUS
+        rm -f /tmp/anneal-health.$$
+    fi
+    ;;
+
+start)     exec "$HERE/start-api.sh" "$@" ;;
+stop)      exec "$HERE/stop-api.sh" "$@" ;;
+restart)   "$HERE/stop-api.sh"; exec "$HERE/start-api.sh" ;;
+
+models)
+    # `./anneal models` with no argument lists rather than downloads. Fetching
+    # tens of gigabytes is not a sensible default for a bare noun.
+    if [[ $# -eq 0 ]]; then
+        exec "$HERE/update.sh" --models list
+    fi
+    exec "$HERE/update.sh" --models "$@"
+    ;;
+
+verify)
+    # gen-venv when it exists: safetensors is only importable there, and
+    # without it the header check silently does not run.
+    load_env
+    GEN="$AIMUSIC_ROOT/gen-venv/bin/python"
+    [[ -x "$GEN" ]] && exec "$GEN" "$HERE/verify-models.py" "$@"
+    exec "$HERE/verify-models.py" "$@"
+    ;;
+update)    exec "$HERE/update.sh" "${1:---check}" ;;
+test)      exec "$HERE/tools/test.sh" "$@" ;;
+service)   exec "$HERE/service.sh" "$@" ;;
+monitor)   exec "$HERE/monitor.py" "$@" ;;
+generate)  exec "$HERE/generate.py" "$@" ;;
+prune)     exec "$PYTHON" "$HERE/tools/prune.py" "$@" ;;
+lint)      exec "$PYTHON" "$HERE/tools/lint-ui.py" "$@" ;;
+
+warm|cool)
+    load_env
+    need_service_name "${1:-}" "$CMD"
+    [[ "$CMD" == warm ]] && ENDPOINT=/supervisor/start || ENDPOINT=/supervisor/stop
+    # Pre-warming blocks until the model is resident: about 3-4 minutes for
+    # music from cold. The default curl timeout in api() is 120s, which would
+    # report a failure for a load that is going fine, so this one waits.
+    api POST "$ENDPOINT" "{\"service\": \"$1\"}" 2>/dev/null \
+        | "$PYTHON" -c "
+import json, sys
+data = json.load(sys.stdin).get('data') or {}
+for name, svc in sorted((data.get('services') or {}).items()):
+    print('%-8s %s' % (name, svc.get('state', '?')))" \
+        || { echo "$CMD failed — is the gateway running? ./anneal status" >&2; exit 1; }
+    ;;
+
+logs)
+    load_env
+    WHICH="${1:-supervisor}"; [[ $# -gt 0 ]] && shift || true
+    case "$WHICH" in
+        supervisor) FILE="$AIMUSIC_ROOT/supervisor.log" ;;
+        api|music)  FILE="$AIMUSIC_ROOT/api-server.log" ;;
+        speech)     FILE="$AIMUSIC_ROOT/speech-server.log" ;;
+        image)      FILE="$AIMUSIC_ROOT/image-server.log" ;;
+        text)       FILE="$AIMUSIC_ROOT/text-server.log" ;;
+        launchd)    FILE="$HOME/Library/Logs/Anneal/launchd.log" ;;
+        *) echo "unknown log: $WHICH" >&2
+           echo "one of: supervisor api speech image text launchd" >&2; exit 2 ;;
+    esac
+    [[ -f "$FILE" ]] || { echo "$FILE does not exist yet" >&2; exit 1; }
+    exec tail -n 100 "$@" "$FILE"
+    ;;
+
+help|-h|--help) usage ;;
+*) echo "unknown command: $CMD" >&2; echo >&2; usage >&2; exit 2 ;;
+esac

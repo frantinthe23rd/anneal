@@ -35,8 +35,12 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import paths  # noqa: E402  — stdlib only, so it imports fine under gen-venv
+
 MODEL_REPO = os.environ.get("IMAGE_MODEL", "dhairyashil/FLUX.1-schnell-mflux-4bit")
-OUTPUT_DIR = os.environ.get("IMAGE_OUTPUT_DIR", "/Volumes/Storage/AIMusic/outputs/images")
+OUTPUT_DIR = os.environ.get("IMAGE_OUTPUT_DIR") or paths.under_root("outputs", "images")
 
 # schnell is a distilled 4-step model; more steps mostly just costs time.
 DEFAULT_STEPS = int(os.environ.get("IMAGE_STEPS", "4"))

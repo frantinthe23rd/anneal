@@ -92,8 +92,7 @@ def _set_entry(directory, kind, meta):
 
 
 def root():
-    base = os.environ.get("AIMUSIC_ROOT", "/Volumes/Storage/AIMusic")
-    return os.path.join(base, "outputs")
+    return paths.under_root("outputs")
 
 
 def kind_dir(kind):

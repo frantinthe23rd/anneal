@@ -1,5 +1,16 @@
 # Tools
 
+## Is anything missing?
+
+```bash
+./anneal doctor        # or tools/doctor.py --brief, --json, --prereqs
+```
+
+Names every prerequisite, model and optional environment, says which are absent,
+and prints the command that installs each one. Exit 1 if anything *required* is
+missing, so `setup.sh` can gate on it. Stdlib only and run by `/usr/bin/python3`,
+because it has to work on a machine where nothing has been installed yet.
+
 ## Tests
 
 ```bash
@@ -91,13 +102,14 @@ None of them produced an error. All three were obvious in a picture.
 
 ## On this host
 
-Installed outside the repo, on the external volume, because the internal disk is
-nearly full. `gen-venv` is deliberately untouched — it is version-pinned and
-serves models, so tooling gets its own environment.
+Installed outside the repo, under `$AIMUSIC_ROOT`. `gen-venv` is deliberately
+untouched — it is version-pinned and serves models, so tooling gets its own
+environment.
 
 ```bash
-export PLAYWRIGHT_BROWSERS_PATH=/Volumes/Storage/AIMusic/playwright-browsers
-/Volumes/Storage/AIMusic/tools-venv/bin/python tools/shot.py /tmp/anneal-shots
+source ./env.sh
+export PLAYWRIGHT_BROWSERS_PATH="$AIMUSIC_ROOT/playwright-browsers"
+"$AIMUSIC_ROOT/tools-venv/bin/python" tools/shot.py /tmp/anneal-shots
 ```
 
 Then look at the PNGs. `shot.py` captures the front door, studio, chat, Press and
@@ -107,15 +119,21 @@ and reports console errors.
 To rebuild that environment from scratch:
 
 ```bash
-export UV_CACHE_DIR=/Volumes/Storage/AIMusic/uv-cache
-export UV_PYTHON_INSTALL_DIR=/Volumes/Storage/AIMusic/uv-python
-export PLAYWRIGHT_BROWSERS_PATH=/Volumes/Storage/AIMusic/playwright-browsers
-uv venv --python 3.12 /Volumes/Storage/AIMusic/tools-venv
-uv pip install --python /Volumes/Storage/AIMusic/tools-venv/bin/python playwright
-/Volumes/Storage/AIMusic/tools-venv/bin/playwright install chromium
+./setup.sh --tools
 ```
 
-About 735 MB, all on `/Volumes/Storage`: 139 MB venv, 554 MB browsers, the rest
+That builds `tools-venv` with rembg *and* Playwright and installs Chromium, all
+under `$AIMUSIC_ROOT`. By hand, if you want only part of it:
+
+```bash
+source ./env.sh
+export PLAYWRIGHT_BROWSERS_PATH="$AIMUSIC_ROOT/playwright-browsers"
+uv venv --python 3.12 "$AIMUSIC_ROOT/tools-venv"
+uv pip install --python "$AIMUSIC_ROOT/tools-venv/bin/python" playwright
+"$AIMUSIC_ROOT/tools-venv/bin/playwright" install chromium
+```
+
+About 735 MB, all under `$AIMUSIC_ROOT`: 139 MB venv, 554 MB browsers, the rest
 wheel cache. Chromium and the headless shell are both fetched; Playwright offers
 no supported flag to take only the shell.
 

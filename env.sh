@@ -1,12 +1,46 @@
 #!/usr/bin/env bash
-# Shared environment for the local ACE-Step 1.5 music generation server.
-# Everything heavy (venv, wheel cache, model weights, generated audio) lives on
-# the external SSD at /Volumes/Storage/AIMusic — the internal disk is nearly full.
+# Shared environment for Anneal. Everything heavy (venvs, wheel cache, model
+# weights, generated audio, logs) lives under one directory, $AIMUSIC_ROOT.
 
-# Where models, venvs, logs and output live. Override to relocate the whole
-# installation; nothing below assumes this specific path.
-export AIMUSIC_ROOT="${AIMUSIC_ROOT:-/Volumes/Storage/AIMusic}"
-export ACESTEP_DIR="$AIMUSIC_ROOT/ACE-Step-1.5"
+# Where models, venvs, logs and output live. Resolved in the same order, and
+# with the same rules, as paths.aimusic_root() — the two must agree, because
+# bash decides what the launchers do and Python decides what the gateway does,
+# and a disagreement means the server writes somewhere the scripts do not look.
+# tests/unit/test_root_resolution.py pins them together.
+#
+#   1. $AIMUSIC_ROOT              explicit wins, always
+#   2. <repo>/.anneal-root        written by setup.sh, gitignored
+#   3. /Volumes/Storage/AIMusic   only if it exists *and* looks like an install
+#   4. ~/anneal                   the default for everyone else
+#
+# The old default was (3) unconditionally, which is one person's external SSD.
+# On a fresh clone that produced "is the Storage SSD mounted?" — a hardware
+# fault, apparently, rather than a default nobody else can satisfy. See #17.
+_ANNEAL_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# `read` rather than a pipeline: `head -1` mid-pipeline SIGPIPEs the stage
+# feeding it, and under the launchers' `set -euo pipefail` that silently aborts
+# the whole script. This repo has been bitten by exactly that once already.
+if [[ -z "${AIMUSIC_ROOT:-}" && -s "$_ANNEAL_REPO/.anneal-root" ]]; then
+    IFS= read -r AIMUSIC_ROOT < "$_ANNEAL_REPO/.anneal-root" || true
+    AIMUSIC_ROOT="${AIMUSIC_ROOT#"${AIMUSIC_ROOT%%[![:space:]]*}"}"
+    AIMUSIC_ROOT="${AIMUSIC_ROOT%"${AIMUSIC_ROOT##*[![:space:]]}"}"
+    AIMUSIC_ROOT="${AIMUSIC_ROOT/#\~/$HOME}"
+fi
+# ANNEAL-LEGACY-ROOT — the one place bash is allowed to name it. Overridable
+# only so the tests can reach branches 3 and 4 on the machine that has the
+# volume; with it mounted they are otherwise unreachable.
+_ANNEAL_LEGACY_ROOT="${ANNEAL_LEGACY_ROOT:-/Volumes/Storage/AIMusic}"  # ANNEAL-LEGACY-ROOT
+if [[ -z "${AIMUSIC_ROOT:-}" ]]; then
+    for _marker in models gen-venv hf-cache ACE-Step-1.5 outputs; do
+        if [[ -e "$_ANNEAL_LEGACY_ROOT/$_marker" ]]; then
+            AIMUSIC_ROOT="$_ANNEAL_LEGACY_ROOT"
+            break
+        fi
+    done
+    unset _marker
+fi
+export AIMUSIC_ROOT="${AIMUSIC_ROOT:-$HOME/anneal}"
+export ACESTEP_DIR="${ACESTEP_DIR:-$AIMUSIC_ROOT/ACE-Step-1.5}"
 
 # --- keep all bulk data off the internal disk ---
 export UV_CACHE_DIR="$AIMUSIC_ROOT/uv-cache"
@@ -53,7 +87,7 @@ export ACESTEP_API_HOST="127.0.0.1"
 export ACESTEP_API_PORT="8001"
 
 # The API key lives in env.local.sh, which is gitignored. Generated on first run.
-_ENV_LOCAL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env.local.sh"
+_ENV_LOCAL="$_ANNEAL_REPO/env.local.sh"
 if [[ ! -f "$_ENV_LOCAL" ]]; then
     printf '#!/usr/bin/env bash\n# Local secrets — not tracked in git.\nexport ACESTEP_API_KEY="sk-aimusic-%s"\n' \
         "$(LC_ALL=C tr -dc 'A-Za-z0-9_-' </dev/urandom | head -c 32)" >"$_ENV_LOCAL"

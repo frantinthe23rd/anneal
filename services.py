@@ -21,11 +21,22 @@ Fields:
 
 from __future__ import annotations
 
+import json
 import os
+import shutil
 
-AIMUSIC_ROOT = os.environ.get("AIMUSIC_ROOT", "/Volumes/Storage/AIMusic")
-ACESTEP_DIR = os.environ.get("ACESTEP_DIR", os.path.join(AIMUSIC_ROOT, "ACE-Step-1.5"))
-UV_BIN = os.environ.get("UV_BIN", "/opt/homebrew/bin/uv")
+import paths
+
+AIMUSIC_ROOT = paths.aimusic_root()
+ACESTEP_DIR = os.environ.get("ACESTEP_DIR") or os.path.join(AIMUSIC_ROOT, "ACE-Step-1.5")
+# Homebrew is /opt/homebrew on Apple silicon and /usr/local on Intel and most
+# manual installs, so a single absolute default is one machine's layout stated
+# as a fact. env.sh resolves this properly and exports UV_BIN; this fallback
+# only matters when the module is imported on its own.
+UV_BIN = (os.environ.get("UV_BIN")
+          or shutil.which("uv")
+          or next((c for c in ("/opt/homebrew/bin/uv", "/usr/local/bin/uv")
+                   if os.path.isfile(c)), "uv"))
 GEN_PYTHON = os.path.join(AIMUSIC_ROOT, "gen-venv", "bin", "python")
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -59,6 +70,56 @@ MUSIC_TIERS = {
     },
 }
 DEFAULT_MUSIC_TIER = os.environ.get("ANNEAL_MUSIC_TIER", "draft")
+
+# The text model, named once. mlx_lm is given a *resolved local snapshot*
+# rather than a repo id, so nothing can attempt a Hub lookup at run time.
+#
+# That path used to be written out in full — including the sha of one machine's
+# download — which meant a second install had a different sha and the text
+# service failed to start with a path nobody had ever typed. The revision now
+# comes from models.lock.json (the same place the downloader reads it) and the
+# location from HF_HOME, so it is derived on whatever machine is running.
+TEXT_MODEL_REPO = os.environ.get("ANNEAL_TEXT_MODEL_REPO",
+                                 "mlx-community/gemma-4-e4b-it-4bit")
+
+
+def _locked_revision(repo_id, lock_path=None):
+    """The pinned revision for `repo_id`, or None if the lockfile cannot say."""
+    try:
+        with open(lock_path or os.path.join(HERE, "models.lock.json")) as handle:
+            return json.load(handle)["models"][repo_id]["revision"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def text_model_path():
+    """Where mlx_lm should load the text model from.
+
+    When nothing is downloaded this returns the path the pinned revision *will*
+    occupy rather than the bare repo id. Two reasons, the second found by
+    running the suite on a fresh clone:
+
+    - the error names the directory `./anneal models text` is about to create,
+      which is more use than "not found in cache";
+    - `supervisor.TEXT_MODEL_NAME` derives the model's display name from this
+      path's grandparent. Handed a bare repo id it produced an empty string, so
+      `/health` reported `"model": ""` on any machine that had not downloaded
+      the text model. Returning the canonical location keeps that derivation
+      right without the caller having to know about it.
+
+    Still nothing is fetched: env.sh sets HF_HUB_OFFLINE=1, and a path that does
+    not exist cannot become a download.
+    """
+    override = os.environ.get("ANNEAL_TEXT_MODEL")
+    if override:
+        return override
+    revision = _locked_revision(TEXT_MODEL_REPO)
+    snapshot = paths.hf_snapshot(TEXT_MODEL_REPO, revision)
+    if snapshot:
+        return snapshot
+    return os.path.join(paths.hf_home(), "hub",
+                        "models--" + TEXT_MODEL_REPO.replace("/", "--"),
+                        "snapshots", revision or "main")
 
 # Roughly how long a cold start takes, measured on the reference machine. Not a
 # timeout and not a promise — it is what the interface needs in order to warn
@@ -119,9 +180,9 @@ SERVICES = {
         "routes": ["/v1/chat/completions", "/v1/completions", "/v1/text"],
         "port": _int("TEXT_PORT", 8014),
         "cmd": [GEN_PYTHON, "-m", "mlx_lm", "server",
-                # Resolved local snapshot rather than a repo id, so nothing can
-                # attempt a Hub lookup at run time.
-                "--model", os.environ.get("ANNEAL_TEXT_MODEL", '/Volumes/Storage/AIMusic/hf-cache/hub/models--mlx-community--gemma-4-e4b-it-4bit/snapshots/475b9088d29754a3379866cf5aeb6b41acd313c2'),
+                # See text_model_path(): a resolved local snapshot, derived on
+                # this machine rather than one person's download sha.
+                "--model", text_model_path(),
                 "--host", "127.0.0.1", "--port", str(_int("TEXT_PORT", 8014))],
         "cwd": HERE,
         "env": {},

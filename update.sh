@@ -8,10 +8,24 @@
 #
 #   ./update.sh --check     what would change (default, read-only)
 #   ./update.sh --deps      rebuild gen-venv from gen-venv.lock.txt
+#   ./update.sh --smoke     just run the smoke test against what's installed
 #   ./update.sh --smoke-deep  also generate on the patched high tier and
 #                             check the result is music, not noise
-#   ./update.sh --models    re-fetch weights at the pinned revisions
-#   ./update.sh --smoke     just run the smoke test against what's installed
+#
+#   ./update.sh --models              required weights for every service
+#   ./update.sh --models all          everything, including the optional ones
+#   ./update.sh --models music,speech only those services
+#   ./update.sh --models list         print the plan and the sizes, fetch nothing
+#
+# Naming a service takes *all* of its models, optional ones included: asking for
+# speech and getting only half of the voices would be the more surprising rule.
+# `list` accepts the same argument, so any of these can be priced first.
+#
+# Selection exists because several models are large and genuinely optional --
+# the high music tier, directed speech, the Kontext sprite path -- and roughly
+# 40 GB of weights were deleted from this machine after they turned out not to
+# earn their disk. Someone trying Anneal should not have to fetch those to find
+# out. Sizes are printed before anything is downloaded, for the same reason.
 set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env.sh"
@@ -24,7 +38,20 @@ export HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0
 
 MODE="${1:---check}"
 
-py() { "$AIMUSIC_ROOT/gen-venv/bin/python" "$@"; }
+# Everything here runs under gen-venv, the only environment with
+# huggingface_hub in it. --models therefore depends on --deps having run, and
+# that ordering used to fail as "no such file or directory" naming a path
+# nobody recognised. Say what is actually wrong instead.
+GEN_PYTHON="$AIMUSIC_ROOT/gen-venv/bin/python"
+py() {
+    if [[ ! -x "$GEN_PYTHON" ]]; then
+        echo "ERROR: $GEN_PYTHON does not exist." >&2
+        echo "  The model environment has not been built yet. Run:" >&2
+        echo "    ./update.sh --deps      (or ./setup.sh, which does both in order)" >&2
+        exit 1
+    fi
+    "$GEN_PYTHON" "$@"
+}
 
 # --------------------------------------------------------------- check
 check() {
@@ -77,24 +104,106 @@ deps() {
 }
 
 # --------------------------------------------------------------- models
+# `selection` is one of: empty/"required", "all", "list", or a comma-separated
+# list of service names taken from models.lock.json. An unknown name is an
+# error that lists the real ones, rather than a run that downloads nothing and
+# reports success.
 models() {
-    echo "Fetching weights at pinned revisions (Xet disabled — it writes sparse files here) ..."
-    py - "$LOCK" "$ACESTEP_CHECKPOINTS_DIR" <<'PY'
-import json, sys
-from huggingface_hub import snapshot_download
-lock, ckpt = json.load(open(sys.argv[1])), sys.argv[2]
-for repo, spec in lock["models"].items():
+    local selection="${1:-required}"
+    local dry=0
+    # `list` is a leading token, so a selection can be previewed as well as
+    # applied: `--models list` shows everything, `--models list music` shows
+    # what asking for music would fetch.
+    if [[ "$selection" == "list" ]]; then dry=1; selection="${2:-all}"; fi
+
+    py - "$LOCK" "$ACESTEP_CHECKPOINTS_DIR" "$selection" "$dry" <<'PYFETCH'
+import json, os, sys
+
+lock_path, ckpt, selection = sys.argv[1], sys.argv[2], sys.argv[3]
+dry = sys.argv[4] == "1"
+lock = json.load(open(lock_path))
+models = lock["models"]
+
+# Services come from the lockfile, never from a list written out here. A copied
+# list is how the forge strip silently omitted video and how three tests went
+# stale after the change they were meant to catch had already shipped.
+services = []
+for spec in models.values():
+    if spec.get("service") and spec["service"] not in services:
+        services.append(spec["service"])
+
+only_required = False
+if selection in ("required", "all"):
+    wanted = list(services)
+    only_required = selection == "required"
+else:
+    wanted = [s.strip() for s in selection.split(",") if s.strip()]
+    unknown = [s for s in wanted if s not in services]
+    if unknown:
+        sys.exit("unknown service(s): %s\nknown: %s"
+                 % (", ".join(unknown), ", ".join(services)))
+
+
+def local_dir(spec):
     target = spec["target"]
-    kwargs = {"repo_id": repo, "revision": spec["revision"], "max_workers": 4}
     if target == "checkpoints_dir":
-        kwargs["local_dir"] = ckpt
-    elif target.startswith("checkpoints_dir/"):
-        kwargs["local_dir"] = "%s/%s" % (ckpt, target.split("/", 1)[1])
+        return ckpt
+    if target.startswith("checkpoints_dir/"):
+        return os.path.join(ckpt, target.split("/", 1)[1])
+    return None            # hf_cache: the hub cache decides the layout, not us
+
+
+def size(spec):
+    try:
+        return float(spec.get("size_gb") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+chosen, skipped = [], []
+for repo, spec in models.items():
+    take = spec.get("service") in wanted and (spec.get("required", True) or not only_required)
+    (chosen if take else skipped).append((repo, spec))
+
+# Size before bytes. Someone deciding whether to do this at all needs the
+# number first, not after 9 GB has already moved.
+print("Plan - %d model(s), about %.1f GB:" % (len(chosen), sum(size(s) for _, s in chosen)))
+for repo, spec in chosen:
+    print("  %-52s %5.1f GB  %-8s %s"
+          % (repo, size(spec), spec.get("service", "?"),
+             "" if spec.get("required", True) else "optional"))
+    if "Non-Commercial" in (spec.get("licence") or ""):
+        print("      licence: %s" % spec["licence"])
+if skipped:
+    print()
+    print("Not fetching (%.1f GB): %s"
+          % (sum(size(s) for _, s in skipped), ", ".join(r for r, _ in skipped)))
+    print("  ./update.sh --models all         everything")
+    print("  ./update.sh --models <service>   one of: %s" % ", ".join(services))
+print()
+
+if dry:
+    raise SystemExit(0)
+
+from huggingface_hub import snapshot_download
+
+for repo, spec in chosen:
+    kwargs = {"repo_id": repo, "revision": spec["revision"], "max_workers": 4}
+    dest = local_dir(spec)
+    if dest:
+        kwargs["local_dir"] = dest
     print("  %s @ %s" % (repo, spec["revision"][:12]), flush=True)
+    # Resumable by construction: snapshot_download resumes from partial blobs
+    # in the cache, so an interrupted fetch is re-run, not restarted.
     snapshot_download(**kwargs)
 print("fetched")
-PY
-    "$HERE/verify-models.py"
+PYFETCH
+    (( dry )) && return 0
+    # Under gen-venv, not the system Python: safetensors lives there, and
+    # without it only half the check runs — the sparseness half — while the
+    # output still reads like a pass. The header check is the one that catches
+    # the failure this exists for.
+    py "$HERE/verify-models.py"
 }
 
 # --------------------------------------------------------------- smoke
@@ -159,8 +268,9 @@ smoke() {
 case "$MODE" in
     --check)  check ;;
     --deps)   deps ;;
-    --models) models ;;
+    --models) models "${2:-required}" "${3:-}" ;;
     --smoke)  smoke ;;
     --smoke-deep) DEEP=yes smoke ;;
-    *) echo "usage: $0 [--check|--deps|--models|--smoke|--smoke-deep]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--check|--deps|--models [all|list|<service>,...]|--smoke|--smoke-deep]" >&2
+       exit 2 ;;
 esac

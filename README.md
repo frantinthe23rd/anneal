@@ -1,9 +1,9 @@
 # Anneal
 
-**Local, on-demand generation — music, speech and images behind one API.**
+**Local, on-demand generation — music, speech, images and text behind one API.**
 
-Three models on a Mac mini M4, behind a single HTTP gateway, reachable from the
-host and over the tailnet. Nothing leaves the machine.
+Five models across four services on an Apple silicon Mac, behind a single HTTP
+gateway. Nothing leaves the machine.
 
 Named for what it does to its models: heat one up on demand, let it cool and
 release the memory when idle. On 16 GB that isn't an optimisation, it's the only
@@ -100,6 +100,95 @@ and a forge strip showing which models are hot.
 | `/` | Web UI |
 | `/docs` | Swagger UI |
 | `/openapi.json` | Raw spec |
+
+## Install
+
+```bash
+git clone https://github.com/frantinthe23rd/anneal.git
+cd anneal
+./setup.sh
+./anneal start
+open http://127.0.0.1:8001
+```
+
+`setup.sh` asks one question — where to install — and does the rest: checks the
+prerequisites, clones the upstream ACE-Step repo at the pinned commit, builds the
+model environment and downloads the weights, in the order they depend on each
+other. It is safe to re-run; every step notices what is already done. If it stops,
+run it again and it picks up from where it stopped.
+
+**Before it: `brew install uv ffmpeg`, and Xcode's command line tools
+(`xcode-select --install`).** `./anneal doctor` checks those and everything else,
+names anything missing, and prints the command that installs it — run it first if
+you would rather find out before starting.
+
+**How much disk.** `./anneal models list` prints every model, its size, and
+whether it is optional, before anything is downloaded:
+
+| | | |
+| --- | --- | --- |
+| Music — ACE-Step bundle + planning LM | 10.7 GB | required for music |
+| Music — `acestep-v15-sft` | 4.5 GB | optional: the `high` quality tier |
+| Speech — Kokoro-82M | 0.3 GB | required for speech |
+| Speech — Qwen3-TTS CustomVoice | 2.2 GB | optional: the nine directed voices |
+| Image — FLUX.1-schnell 4-bit | 9.0 GB | required for images |
+| Text — Gemma 4 e4b 4-bit | 4.8 GB | required for text, and for Press |
+| Sprites — FLUX.1-Kontext 4-bit | 9.0 GB | optional, **non-commercial licence** |
+
+Plus ~2.7 GB for the ACE-Step checkout, ~1.3 GB for the model virtualenv and a
+few GB of wheel cache. About 45 GB for all of it; about 20 GB for music and
+speech alone. Take a subset:
+
+```bash
+./setup.sh --models music,speech      # just those two
+./anneal models image                 # add another later
+./anneal models all                   # including the optional ones
+./anneal models list speech           # price it first, download nothing
+```
+
+Naming a service takes all of its models, optional ones included — asking for
+speech and getting half the voices would be the more surprising rule. The bare
+default (`./setup.sh`, `./anneal models required`) takes only what each service
+cannot run without: about 24 GB, leaving the high music tier, directed speech
+and Kontext behind.
+
+Everything is pinned in `models.lock.json` and downloaded with the Xet transfer
+backend disabled — it silently wrote sparse, zero-filled weight files to an
+external APFS volume here, which then failed deep inside model loading with
+"invalid JSON in header". `verify-models.py` runs afterwards and checks both the
+header and the file's allocated blocks, and downloads resume rather than restart.
+
+**Where it installs.** `AIMUSIC_ROOT` — `~/anneal` by default. `setup.sh` records
+the choice in `.anneal-root` (gitignored, per machine) so the launchers, the
+gateway, the launchd job and the tests all agree without anyone exporting a
+variable. Put it on an external volume if the internal disk is tight:
+
+```bash
+./setup.sh --root /Volumes/Something/anneal
+```
+
+**The first music request takes about 3-4 minutes** and looks like a hang if you
+do not know why. It is not: only one heavy model fits in 16 GB, so each is loaded
+when it is first asked for and released once idle. Everything after that is
+faster, and `./anneal warm music` loads it before you need it.
+
+### One front door
+
+```
+./anneal setup            install, or finish an install
+./anneal doctor           what is missing, and the command that fixes it
+./anneal status           what is installed, what is warm, what it is using
+./anneal start | stop | restart
+./anneal models [list | all | music,speech]
+./anneal warm | cool <service>
+./anneal logs [supervisor | api | speech | image | text | launchd]
+./anneal update [--check | --deps | --smoke]
+./anneal test | prune | monitor | generate | service
+```
+
+Every one of these delegates to the script that already did the job —
+`start-api.sh`, `update.sh`, `service.sh` and the rest all still work and are
+still what runs. `./anneal` is a lid on the toolbox, not a replacement for it.
 
 ## What it runs on
 
@@ -225,19 +314,31 @@ removes a record, with `&files=1` to take its audio and cover with it.
 
 ## Where things live
 
-Everything bulky is on the **Storage SSD**; the internal disk holds only these scripts.
+Everything bulky is under **`$AIMUSIC_ROOT`**; the repo holds only these scripts.
+It is `~/anneal` by default, and on the machine this was built on it is an
+external SSD because the internal disk is nearly full — `./anneal doctor` prints
+which one this install resolved to, and why.
 
 | Path | Contents |
 | --- | --- |
-| `/Volumes/Storage/AIMusic/ACE-Step-1.5` | upstream repo + `.venv` (1.6 GB) |
-| `/Volumes/Storage/AIMusic/models` | ACE-Step weights (15 GB — turbo 4.5, sft 4.5, planning LMs 4.8, Qwen3 embedder 1.1, VAE 0.3) |
-| `/Volumes/Storage/AIMusic/hf-cache` | FLUX 9.0 GB, Gemma 4.8 GB, Kokoro 0.3 GB |
-| `/Volumes/Storage/AIMusic/gen-venv` | venv for speech + image (mlx-audio, mflux) — 1.3 GB |
-| `/Volumes/Storage/AIMusic/uv-cache`, `uv-python` | wheel cache + Python 3.12 (4.3 GB) |
-| `/Volumes/Storage/AIMusic/outputs/{music,speech,images,vectors,sprites}` | **everything generated**, prompt-named, with JSON sidecars |
-| `/Volumes/Storage/AIMusic/supervisor.log` | supervisor lifecycle log |
-| `/Volumes/Storage/AIMusic/api-server.log` | ACE-Step server log |
-| `/Volumes/Storage/AIMusic/speech-server.log`, `image-server.log` | backend logs |
+| `$AIMUSIC_ROOT/ACE-Step-1.5` | upstream repo + `.venv` (2.7 GB) |
+| `$AIMUSIC_ROOT/models` | ACE-Step weights (15 GB — turbo 4.5, sft 4.5, planning LMs 4.8, Qwen3 embedder 1.1, VAE 0.3) |
+| `$AIMUSIC_ROOT/hf-cache` | FLUX 9.0 GB, Gemma 4.8 GB, Qwen3-TTS 2.2 GB, Kokoro 0.3 GB, and Kontext 9.0 GB if installed |
+| `$AIMUSIC_ROOT/gen-venv` | venv for speech + image (mlx-audio, mflux) — 1.3 GB |
+| `$AIMUSIC_ROOT/tools-venv` | rembg for sprite matting, Playwright for UI shots — optional |
+| `$AIMUSIC_ROOT/uv-cache`, `uv-python` | wheel cache + Python 3.12 (4.3 GB) |
+| `$AIMUSIC_ROOT/outputs/{music,speech,images,vectors,sprites}` | **everything generated**, prompt-named, with JSON sidecars |
+| `$AIMUSIC_ROOT/supervisor.log` | supervisor lifecycle log |
+| `$AIMUSIC_ROOT/api-server.log` | ACE-Step server log |
+| `$AIMUSIC_ROOT/speech-server.log`, `image-server.log`, `text-server.log` | backend logs |
+
+The root is resolved in one order by everything that needs it — `$AIMUSIC_ROOT`,
+then `.anneal-root` (written by `setup.sh`, gitignored, per machine), then an
+existing `/Volumes/Storage/AIMusic` if one is there, then `~/anneal`. `env.sh`
+and `paths.aimusic_root()` implement it separately because one is bash and the
+other is Python; `tests/unit/test_root_resolution.py` runs both and requires
+them to agree, since a disagreement would put the databases somewhere the
+launchers do not look and neither side would raise.
 
 3.5 GB of that is `acestep-5Hz-lm-1.7B`, which arrives in ACE-Step's bundle and is
 never loaded here — this hardware classifies as tier4, which permits only the
@@ -288,7 +389,7 @@ The `http://127.0.0.1:8001/` loopback address carries no such identity, so it
 still asks for the key. Using the tailnet address on the host itself avoids
 that.
 
-- **Music / Speech / Image** tabs, prompt box, and the options that matter per mode.
+- **Music / Press / Speech / Image / Chat** tabs, prompt box, and the options that matter per mode.
 - **Forge strip** in the header shows every model `/health` reports — music,
   speech, chat and image — as **cold**, **heating** or **hot**, with the
   true footprint once
@@ -366,7 +467,7 @@ source ./env.sh
 ./generate.py "driving synthwave" --bpm 118 --key-scale "F# minor" --batch-size 2
 ```
 
-Audio lands in `/Volumes/Storage/AIMusic/outputs` (`--out` to change).
+Audio lands in `$AIMUSIC_ROOT/outputs` (`--out` to change).
 
 **Everything generated is saved server-side regardless of client**, under
 `outputs/{music,speech,images}/`, named from the prompt and paired with a JSON
@@ -476,7 +577,7 @@ Useful knobs:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `AIMUSIC_ROOT` | `/Volumes/Storage/AIMusic` | Where models, venvs, logs and output live |
+| `AIMUSIC_ROOT` | `~/anneal`, or what `.anneal-root` records | Where models, venvs, logs and output live |
 | `ACESTEP_IDLE_TIMEOUT` | `600` | Seconds idle before the model is unloaded |
 | `ACESTEP_BACKEND_PORT` | `8011` | Where ACE-Step itself listens |
 | `SUPERVISOR_PORT` | `8001` | Public port |
@@ -645,11 +746,20 @@ Without pins, a re-download silently pulls whatever upstream is current, so a
 rebuilt machine can get different weights than the one that was tested.
 
 ```bash
-./update.sh --check     # what has moved upstream (read-only, the default)
-./update.sh --models    # re-fetch at the pinned revisions, then verify
-./update.sh --deps      # rebuild gen-venv from the lockfile
-./update.sh --smoke     # generate on all three services and report
+./anneal update --check     # what has moved upstream (read-only, the default)
+./anneal models list        # every model, its size, and whether it is optional
+./anneal models all         # re-fetch at the pinned revisions, then verify
+./anneal update --deps      # rebuild gen-venv from the lockfile
+./anneal update --smoke     # generate on all three services and report
+./anneal verify             # are the weights on disk actually complete
 ```
+
+`verify` checks both places weights land — the ACE-Step checkpoints directory
+and the Hub cache. It only ever checked the first, which left the larger half of
+the install (FLUX at 9 GB, Gemma at 4.8) unverified against the sparse-file
+failure it exists to catch. It also runs under `gen-venv` when that exists,
+because `safetensors` is only importable there and without it the header check
+silently does not run at all.
 
 Updates are never automatic. To take a new revision, edit `models.lock.json`,
 run `--models`, then `--smoke` — and treat a smoke failure as a reason to roll
@@ -756,7 +866,7 @@ else requires one of the two methods above.
 If you'd rather click than curl (bypasses the supervisor and holds memory while running):
 
 ```bash
-cd /Volumes/Storage/AIMusic/ACE-Step-1.5 && source ~/dev/AIMusic/env.sh && ./start_gradio_ui_macos.sh
+source ./env.sh && cd "$ACESTEP_DIR" && ./start_gradio_ui_macos.sh
 ```
 
 ## MCP server
@@ -768,9 +878,9 @@ it needs no environment of its own.
 {
   "mcpServers": {
     "anneal": {
-      "command": "/Users/jon/dev/AIMusic/mcp_server.py",
+      "command": "/path/to/anneal/mcp_server.py",
       "env": {
-        "ANNEAL_URL": "https://jons-mac-mini.pangolin-darter.ts.net",
+        "ANNEAL_URL": "http://127.0.0.1:8001",
         "ANNEAL_KEY": "sk-aimusic-..."
       }
     }
@@ -826,7 +936,13 @@ license:
 
 - **The models.** They keep their own terms (see Credits above). Gemma's weights
   in particular are under Google's Gemma Terms of Use, not an OSI licence.
-- **Generated output.** Yours, subject to those upstream model terms.
+- **Generated output.** Yours, subject to those upstream model terms. The music
+  model will imitate a described style, so do not name a specific living artist
+  in a prompt and then publish the result commercially.
+- **`/v1/sprites` with `method: "kontext"`.** That method uses FLUX.1 Kontext
+  [dev], which is **non-commercial** — the weights may not be used commercially
+  without a licence from Black Forest Labs, though the output is yours. The
+  default `sheet` method is Apache-2.0 and unaffected.
 - **The upstream ACE-Step checkout**, which lives outside this repo under its own
   MIT licence.
 
@@ -834,11 +950,7 @@ MIT asks one thing in return: keep the copyright and permission notice in copies
 and substantial portions. That is the only attribution it can require — it does
 not oblige anyone to credit Anneal in a UI, a README or a product page.
 
-[NOTICE](NOTICE) asks for two things it cannot require, and says so plainly: a
-credit if you run this publicly, and — more useful — an issue saying what you
-built. This exists to be called by other people's build scripts and agents, so
-knowing what it ended up feeding is worth more than a footer line. Ignoring
-either breaches nothing.
+If you build something with this, an issue saying what you made is welcome.
 
 Built for **local, personal use on a private network**. It binds to loopback and
 reaches the tailnet through `tailscale serve`; it is not hardened for public

@@ -17,7 +17,11 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LABEL="com.anneal.gateway"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
-source "$HERE/env.sh" >/dev/null 2>&1 || true
+# env.sh must succeed here: AIMUSIC_ROOT decides which directory the Full Disk
+# Access probe checks and which root the plist's job will use, and a swallowed
+# failure would silently probe the empty string. It is sourced quietly, not
+# optionally.
+source "$HERE/env.sh" >/dev/null
 
 # The interpreter launchd runs, and the only thing that needs Full Disk Access.
 #
@@ -74,7 +78,7 @@ ensure_shell() {
 # claim success; success is verified after install by seeing whether the job
 # actually comes up.
 probably_denied() {
-    ! "$SHELL_BIN" -c "ls '${AIMUSIC_ROOT:-/Volumes/Storage/AIMusic}'" >/dev/null 2>&1
+    ! "$SHELL_BIN" -c "ls '${AIMUSIC_ROOT}'" >/dev/null 2>&1
 }
 
 grant_instructions() {
@@ -209,7 +213,7 @@ status)
     if [[ ! -x "$SHELL_BIN" ]]; then
         echo "access:  $SHELL_BIN not created yet"
     elif probably_denied; then
-        echo "access:  DENIED — anneal-bash cannot read ${AIMUSIC_ROOT:-/Volumes/Storage/AIMusic}"
+        echo "access:  DENIED — anneal-bash cannot read ${AIMUSIC_ROOT}"
         echo "         a reboot will not bring Anneal back until this is granted"
     else
         # Deliberately not "granted": this ran in your shell, which has its own

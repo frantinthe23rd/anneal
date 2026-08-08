@@ -1,6 +1,9 @@
 # Secrets
 env.local.sh
 
+# The installation root chosen by setup.sh — per machine, never shared.
+.anneal-root
+
 # Runtime state (lives on the SSD, but keep these out if ever produced here)
 *.log
 *.pid

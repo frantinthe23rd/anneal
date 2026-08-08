@@ -8,9 +8,9 @@ is; this file is about working on it.
 
 | | |
 | --- | --- |
-| Repo / scripts | `/Users/jon/dev/AIMusic` — small files only |
-| Models, venvs, outputs, logs | `/Volumes/Storage/AIMusic` — the internal disk is nearly full |
-| Upstream ACE-Step checkout | `/Volumes/Storage/AIMusic/ACE-Step-1.5` — **not part of this repo** |
+| Repo / scripts | the checkout — small files only |
+| Models, venvs, outputs, logs | `$AIMUSIC_ROOT`, resolved by `paths.aimusic_root()`: `$AIMUSIC_ROOT`, then `.anneal-root` (written by `setup.sh`, gitignored), then `~/anneal`. On this machine an external volume, because the internal disk is nearly full |
+| Upstream ACE-Step checkout | `$AIMUSIC_ROOT/ACE-Step-1.5` — **not part of this repo**, cloned at a pinned commit by `setup.sh` |
 
 `supervisor.py` is the gateway: owns port 8001, routes to backends declared in
 `services.py`, and manages their lifecycle. `builder.py` is Press. `jobstore.py`
@@ -18,6 +18,12 @@ and `outputs.py` are durability and the library. Backends: `speech_server.py`,
 `image_server.py`; music and text are upstream servers we launch.
 
 ## Running it
+
+`./anneal` is the front door and delegates to the scripts below, which all still
+work directly: `setup doctor status start stop restart models verify update test
+service warm cool logs prune monitor generate lint`. `./anneal doctor` is the
+first thing to run when something is wrong — it names what is missing and the
+command that fixes it.
 
 ```bash
 ./start-api.sh     # applies upstream patches, starts the gateway, configures tailscale serve

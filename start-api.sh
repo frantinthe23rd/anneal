@@ -6,6 +6,11 @@
 # weights are only resident while they're being used.
 set -euo pipefail
 
+# Captured before env.sh, which resolves and exports AIMUSIC_ROOT — afterwards
+# there is no way to tell a value the caller chose from one env.sh worked out,
+# and the error below would confidently name the wrong reason.
+_ROOT_FROM_ENV="${AIMUSIC_ROOT:-}"
+
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env.sh"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -37,14 +42,32 @@ if [[ -f "$PLIST" ]] && ! launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1;
     echo "launchd did not bring it up; starting directly instead." >&2
 fi
 
+# This used to say "is the Storage SSD mounted?", which on a fresh clone was a
+# hardware diagnosis for a default nobody else could satisfy — the single most
+# misleading message in the repo, and the opening example in #17. Say which root
+# was chosen and where the choice came from, then name the command that makes it.
 if [[ ! -d "$AIMUSIC_ROOT" ]]; then
-    echo "ERROR: $AIMUSIC_ROOT not found — is the Storage SSD mounted?" >&2
+    echo "ERROR: the install root $AIMUSIC_ROOT does not exist." >&2
+    if [[ -n "$_ROOT_FROM_ENV" ]]; then
+        echo "  (from AIMUSIC_ROOT in the environment)" >&2
+    elif [[ -s "$HERE/.anneal-root" ]]; then
+        echo "  (recorded in $HERE/.anneal-root — an external volume that is not mounted?)" >&2
+    else
+        echo "  (the default — nothing has been installed here yet)" >&2
+    fi
+    echo >&2
+    echo "  ./setup.sh        install, or finish an install" >&2
+    echo "  ./anneal doctor   what is missing, and the command that fixes it" >&2
     exit 1
 fi
 
 # The API server hardcodes <project>/checkpoints and ignores ACESTEP_CHECKPOINTS_DIR,
 # so point it at the shared model dir. Without this it re-downloads ~9.4 GB.
-if [[ ! -L "$ACESTEP_DIR/checkpoints" ]]; then
+# mkdir first: without it this makes a dangling symlink on a machine whose
+# weights have not been downloaded yet, and upstream then treats the target as
+# absent and starts fetching 9.4 GB of its own.
+if [[ -d "$ACESTEP_DIR" && ! -L "$ACESTEP_DIR/checkpoints" ]]; then
+    mkdir -p "$ACESTEP_CHECKPOINTS_DIR"
     rm -rf "$ACESTEP_DIR/checkpoints"
     ln -s "$ACESTEP_CHECKPOINTS_DIR" "$ACESTEP_DIR/checkpoints"
 fi

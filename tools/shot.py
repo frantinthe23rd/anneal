@@ -6,8 +6,9 @@ a light theme that painted near-black text onto a near-black plate, a forge
 strip that never rendered on first load, and a scrollbar that scrolled nothing.
 All three were obvious in a screenshot.
 
-    export PLAYWRIGHT_BROWSERS_PATH=/Volumes/Storage/AIMusic/playwright-browsers
-    /Volumes/Storage/AIMusic/tools-venv/bin/python tools/shot.py [outdir]
+    source ./env.sh
+    export PLAYWRIGHT_BROWSERS_PATH="$AIMUSIC_ROOT/playwright-browsers"
+    "$AIMUSIC_ROOT/tools-venv/bin/python" tools/shot.py [outdir]
 
 See tools/README.md for how that environment was built.
 """

@@ -10,7 +10,12 @@
 # *sparse* files to this external APFS volume — correct logical size, zero-filled
 # interiors — which then failed deep inside model loading with an opaque
 # "invalid JSON in header". That is what verify-models.py exists to catch.
+#
+#   ./download-models.sh                required weights for every service
+#   ./download-models.sh all            everything, optional models included
+#   ./download-models.sh music,speech   only those services
+#   ./download-models.sh list           what it would fetch, and how big
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec "$HERE/update.sh" --models
+exec "$HERE/update.sh" --models "${1:-required}" "${2:-}"

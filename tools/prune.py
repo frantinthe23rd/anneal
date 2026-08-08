@@ -32,8 +32,9 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 
 import outputs  # noqa: E402
+import paths    # noqa: E402
 
-AIMUSIC_ROOT = os.environ.get("AIMUSIC_ROOT", "/Volumes/Storage/AIMusic")
+AIMUSIC_ROOT = paths.aimusic_root()
 PRESS_DB = os.path.join(AIMUSIC_ROOT, "presses.db")
 
 

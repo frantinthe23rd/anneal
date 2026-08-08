@@ -44,13 +44,20 @@ done
 
 cd "$HERE"
 
-# Keep the sandbox off the internal disk when the external volume is there;
-# it is only a few sqlite files, but the repo's rule is that bulk goes on
-# Storage and this is one less thing to think about.
-if [[ -z "${ANNEAL_TEST_ROOT:-}" && -d /Volumes/Storage/AIMusic ]]; then
-    ANNEAL_TEST_ROOT="$(mktemp -d /Volumes/Storage/AIMusic/anneal-tests-XXXXXX)"
-    export ANNEAL_TEST_ROOT
-    trap 'rm -rf "$ANNEAL_TEST_ROOT"' EXIT
+# Keep the sandbox beside the install rather than on the internal disk when
+# they differ; it is only a few sqlite files, but the repo's rule is that bulk
+# goes where AIMUSIC_ROOT points and this is one less thing to think about.
+# Resolved via env.sh so it follows whatever root this machine actually uses,
+# and skipped silently when that root does not exist yet — a first-run test
+# should not depend on setup having finished.
+if [[ -z "${ANNEAL_TEST_ROOT:-}" ]]; then
+    # shellcheck source=/dev/null
+    source "$HERE/env.sh" >/dev/null 2>&1 || true
+    if [[ -n "${AIMUSIC_ROOT:-}" && -d "$AIMUSIC_ROOT" && -w "$AIMUSIC_ROOT" ]]; then
+        ANNEAL_TEST_ROOT="$(mktemp -d "$AIMUSIC_ROOT/anneal-tests-XXXXXX")"
+        export ANNEAL_TEST_ROOT
+        trap 'rm -rf "$ANNEAL_TEST_ROOT"' EXIT
+    fi
 fi
 
 failed=0

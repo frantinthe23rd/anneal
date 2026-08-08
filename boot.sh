@@ -20,13 +20,25 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Before env.sh, because env.sh reads paths under the volume.
-ROOT="${AIMUSIC_ROOT:-/Volumes/Storage/AIMusic}"
+# env.sh first, so the root is resolved by the same rules as everything else
+# rather than by a second copy of the default that can drift from it. It only
+# builds strings and reads files inside the repo, so it is safe to source
+# before the volume that holds the models is mounted.
+#
+# One caveat, and it is why setup.sh always writes .anneal-root: with no
+# AIMUSIC_ROOT in the environment and no .anneal-root, env.sh detects the
+# legacy external volume by looking *inside* it — which cannot work before it
+# is mounted. The recorded root removes the ordering problem entirely.
+source "$HERE/env.sh"
+
+ROOT="$AIMUSIC_ROOT"
 WAIT_SECONDS="${ANNEAL_BOOT_WAIT:-300}"
 waited=0
 while [[ ! -d "$ROOT" ]]; do
     if (( waited >= WAIT_SECONDS )); then
         echo "$(date '+%F %T') boot: $ROOT never appeared after ${WAIT_SECONDS}s — giving up" >&2
+        [[ -s "$HERE/.anneal-root" ]] \
+            || echo "$(date '+%F %T') boot: no .anneal-root recorded — run ./setup.sh, or set AIMUSIC_ROOT" >&2
         exit 1
     fi
     [[ $waited -eq 0 ]] && echo "$(date '+%F %T') boot: waiting for $ROOT to mount ..."
@@ -34,8 +46,6 @@ while [[ ! -d "$ROOT" ]]; do
     waited=$((waited + 5))
 done
 [[ $waited -gt 0 ]] && echo "$(date '+%F %T') boot: $ROOT appeared after ${waited}s"
-
-source "$HERE/env.sh"
 
 LOG="$AIMUSIC_ROOT/supervisor.log"
 PIDFILE="$AIMUSIC_ROOT/supervisor.pid"
@@ -47,7 +57,8 @@ fi
 rm -f "$PIDFILE"
 
 # Same upstream setup start-api.sh does. Both are idempotent by design.
-if [[ ! -L "$ACESTEP_DIR/checkpoints" ]]; then
+if [[ -d "$ACESTEP_DIR" && ! -L "$ACESTEP_DIR/checkpoints" ]]; then
+    mkdir -p "$ACESTEP_CHECKPOINTS_DIR"
     rm -rf "$ACESTEP_DIR/checkpoints"
     ln -s "$ACESTEP_CHECKPOINTS_DIR" "$ACESTEP_DIR/checkpoints"
 fi

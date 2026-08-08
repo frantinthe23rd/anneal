@@ -3,46 +3,100 @@
     "Exact model revisions this deployment is known to work with.",
     "Without these, a re-download silently pulls whatever upstream is current,",
     "so a rebuilt machine can get different weights than the one that was tested.",
-    "Bump deliberately via ./update.sh, never by hand-editing during a fix."
+    "Bump deliberately via ./update.sh, never by hand-editing during a fix.",
+    "",
+    "Every entry carries the service it belongs to, its measured size on disk,",
+    "and whether it is required. `./anneal models` groups by service and reports",
+    "the total before downloading anything: about 32 GB for everything, 11 GB for",
+    "a working music-and-speech install. Optionality is not decoration — 40 GB of",
+    "models were deleted from this machine after they turned out not to earn it,",
+    "and nobody should have to fetch those to try the ones that do.",
+    "",
+    "size_gb is `du -sh` on this install, not the download size. They are close",
+    "for weights and the difference is not worth a second number to keep true."
   ],
-  "recorded": "2026-08-05",
+  "recorded": "2026-08-08",
   "models": {
     "ACE-Step/Ace-Step1.5": {
       "revision": "19671f406d603126926c1b7e2adc169acbcade22",
       "target": "checkpoints_dir",
-      "note": "Bundle: vae, Qwen3-Embedding-0.6B, acestep-v15-turbo, acestep-5Hz-lm-1.7B"
+      "service": "music",
+      "required": true,
+      "size_gb": 9.4,
+      "licence": "Apache-2.0",
+      "note": "Bundle: vae, Qwen3-Embedding-0.6B, acestep-v15-turbo, acestep-5Hz-lm-1.7B. 3.5 GB of that is the 1.7B planning LM, which this hardware tier never loads — it cannot be dropped without making verify-models.py unhappy about a partial bundle."
     },
     "ACE-Step/acestep-5Hz-lm-0.6B": {
       "revision": "148d8ea0225bdab342ee1ae3a354275ccd60ca80",
       "target": "checkpoints_dir/acestep-5Hz-lm-0.6B",
+      "service": "music",
+      "required": true,
+      "size_gb": 1.3,
+      "licence": "Apache-2.0",
       "note": "The planning LM this hardware tier actually uses; the bundled 1.7B is never loaded here"
-    },
-    "prince-canuma/Kokoro-82M": {
-      "revision": "e02c9eada7ce7416798af36b190a8a2dd2ecd566",
-      "target": "hf_cache",
-      "note": "Speech. Fetched through mlx-audio's get_model_path"
-    },
-    "dhairyashil/FLUX.1-schnell-mflux-4bit": {
-      "revision": "0e0b247ac48b8bf86fd5b440813b7da5854e238b",
-      "target": "hf_cache",
-      "note": "Image. Ungated pre-quantized mirror \u2014 black-forest-labs' own repo is gated"
     },
     "ACE-Step/acestep-v15-sft": {
       "revision": "c410d249e71ea9385a7b586865e65b1473e1098d",
       "target": "checkpoints_dir/acestep-v15-sft",
-      "note": "High-quality tier. Non-distilled, runs 32 steps."
+      "service": "music",
+      "required": false,
+      "size_gb": 4.5,
+      "licence": "Apache-2.0",
+      "note": "The 'high' quality tier. Without it, quality=high 503s and draft still works."
+    },
+    "prince-canuma/Kokoro-82M": {
+      "revision": "e02c9eada7ce7416798af36b190a8a2dd2ecd566",
+      "target": "hf_cache",
+      "service": "speech",
+      "required": true,
+      "size_gb": 0.34,
+      "licence": "Apache-2.0",
+      "note": "Speech. Fetched through mlx-audio's get_model_path"
+    },
+    "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-4bit": {
+      "revision": "f35faf19b0cc2160865af64ecf0f22f83d335135",
+      "target": "hf_cache",
+      "service": "speech",
+      "required": false,
+      "size_gb": 2.2,
+      "licence": "Apache-2.0",
+      "note": "Directed speech — the nine voices that take an `instruct`. Without it those voices 503; Kokoro's 28 are unaffected. Was absent from this lockfile for its whole life, which is what tests/unit/test_models_lock.py now prevents."
+    },
+    "dhairyashil/FLUX.1-schnell-mflux-4bit": {
+      "revision": "0e0b247ac48b8bf86fd5b440813b7da5854e238b",
+      "target": "hf_cache",
+      "service": "image",
+      "required": true,
+      "size_gb": 9.0,
+      "licence": "Apache-2.0",
+      "note": "Image. Ungated pre-quantized mirror — black-forest-labs' own repo is gated"
+    },
+    "akx/FLUX.1-Kontext-dev-mflux-4bit": {
+      "revision": "36e7dc0001f8f93129966ba87547eb87595a91f3",
+      "target": "hf_cache",
+      "service": "sprites",
+      "required": false,
+      "size_gb": 9.0,
+      "licence": "FLUX.1 [dev] Non-Commercial License",
+      "note": "Only for the 'kontext' sprite method, which edits one base sprite per pose instead of cutting a sheet. NON-COMMERCIAL: the weights may not be used commercially without a licence from Black Forest Labs. The default sheet method needs nothing extra."
     },
     "mlx-community/gemma-4-e4b-it-4bit": {
       "revision": "475b9088d29754a3379866cf5aeb6b41acd313c2",
       "target": "hf_cache",
-      "note": "Text/code generation, served by mlx_lm.server. Reasoning model \u2014 send chat_template_kwargs.enable_thinking=false for direct answers."
+      "service": "text",
+      "required": true,
+      "size_gb": 4.8,
+      "licence": "Gemma Terms of Use",
+      "note": "Text/code generation, served by mlx_lm.server, and what Press uses to plan. Reasoning model — send chat_template_kwargs.enable_thinking=false for direct answers."
     }
   },
   "upstream": {
     "ACE-Step/ACE-Step-1.5": {
       "commit": "6d467e4b5081ccb0abf1ec1bf4fdf9051a2d34b0",
       "date": "2026-06-26",
-      "note": "Cloned to $ACESTEP_DIR. Its own .venv follows the repo's uv.lock."
+      "url": "https://github.com/ace-step/ACE-Step-1.5",
+      "size_gb": 2.7,
+      "note": "Cloned to $ACESTEP_DIR by setup.sh. Its own .venv follows the repo's uv.lock and is built by the first `uv run`."
     }
   }
 }

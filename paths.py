@@ -27,7 +27,8 @@ from __future__ import annotations
 
 import os
 
-__all__ = ["contained", "resolve_within", "safe_file"]
+__all__ = ["contained", "resolve_within", "safe_file", "ffmpeg_bin",
+           "aimusic_root", "under_root", "hf_home", "hf_snapshot"]
 
 
 def _real(path):
@@ -132,3 +133,109 @@ def ffmpeg_bin(candidates=FFMPEG_CANDIDATES, search_path=True):
     if search_path and candidates is FFMPEG_CANDIDATES:
         _FFMPEG = found
     return found
+
+
+# ------------------------------------------------------------- installation root
+# Everything bulky — models, virtualenvs, logs, generated output, the upstream
+# ACE-Step checkout — lives under one directory. On the machine this was built
+# on that is an external SSD, because the internal disk is nearly full. Baking
+# that path in as the default made a fresh clone fail with
+#
+#     ERROR: /Volumes/Storage/AIMusic not found — is the Storage SSD mounted?
+#
+# which reads as a hardware fault rather than "this default is one person's
+# external disk" (#17). The resolution order below keeps that machine working
+# without asking a stranger to own the same disk:
+#
+#   1. $AIMUSIC_ROOT              explicit wins, always
+#   2. <repo>/.anneal-root        written by setup.sh, gitignored
+#   3. /Volumes/Storage/AIMusic   only if it exists *and* looks like an install
+#   4. ~/anneal                   the default for everyone else
+#
+# Step 3 is deliberately narrow. A bare directory of that name is not enough —
+# it has to contain something Anneal put there — so a stranger who happens to
+# have a volume called Storage does not silently inherit someone else's layout.
+
+# Overridable only so both halves of the resolution can be tested on the very
+# machine the constant describes: with the real volume mounted, branches 3 and
+# 4 are unreachable and a test of them would be a test of nothing.
+LEGACY_ROOT = os.environ.get("ANNEAL_LEGACY_ROOT") or "/Volumes/Storage/AIMusic"
+LEGACY_MARKERS = ("models", "gen-venv", "hf-cache", "ACE-Step-1.5", "outputs")
+DEFAULT_ROOT = "~/anneal"
+ROOT_FILE = ".anneal-root"
+
+
+def repo_dir():
+    """The checkout this file belongs to."""
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def root_file():
+    """Path of the file setup.sh writes the chosen root into."""
+    return os.path.join(repo_dir(), ROOT_FILE)
+
+
+def _looks_installed(path):
+    try:
+        if not os.path.isdir(path):
+            return False
+        return any(os.path.exists(os.path.join(path, m)) for m in LEGACY_MARKERS)
+    except OSError:
+        return False
+
+
+def aimusic_root():
+    """Where models, venvs, logs and output live. Never raises.
+
+    Resolved on every call rather than cached: the tests change AIMUSIC_ROOT
+    between cases, and a module-level constant computed at import time is
+    exactly the bug that made `tests/context.py` have to run before any app
+    module could be imported.
+    """
+    env = (os.environ.get("AIMUSIC_ROOT") or "").strip()
+    if env:
+        return os.path.expanduser(env)
+    try:
+        with open(root_file()) as handle:
+            recorded = handle.read().strip()
+        if recorded:
+            return os.path.expanduser(recorded)
+    except OSError:
+        pass
+    legacy = os.environ.get("ANNEAL_LEGACY_ROOT") or LEGACY_ROOT
+    if _looks_installed(legacy):
+        return legacy
+    return os.path.expanduser(DEFAULT_ROOT)
+
+
+def under_root(*parts):
+    """A path under the installation root."""
+    return os.path.join(aimusic_root(), *parts)
+
+
+def hf_home():
+    return os.environ.get("HF_HOME") or under_root("hf-cache")
+
+
+def hf_snapshot(repo_id, revision=None, hf_root=None):
+    """The local snapshot directory for a Hub repo, without touching the network.
+
+    Returns None when nothing is downloaded. `revision` is preferred when it is
+    present; otherwise the newest snapshot wins, because a cache holding two
+    revisions of the same repo has no other way to choose and the alternative
+    (alphabetical by sha) is arbitrary in a way that looks deliberate.
+    """
+    base = os.path.join(hf_root or hf_home(), "hub",
+                        "models--" + repo_id.replace("/", "--"), "snapshots")
+    if revision:
+        pinned = os.path.join(base, revision)
+        if os.path.isdir(pinned):
+            return pinned
+    try:
+        names = [n for n in os.listdir(base) if os.path.isdir(os.path.join(base, n))]
+    except OSError:
+        return None
+    if not names:
+        return None
+    names.sort(key=lambda n: os.path.getmtime(os.path.join(base, n)), reverse=True)
+    return os.path.join(base, names[0])

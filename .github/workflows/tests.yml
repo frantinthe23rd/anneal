@@ -58,4 +58,9 @@ jobs:
       - name: Compile every module the gateway loads
         # Catches a syntax error on a Python version the host does not run,
         # without importing anything that needs a model.
-        run: python -m compileall -q supervisor.py services.py jobstore.py outputs.py builder.py image_server.py speech_server.py generate.py monitor.py mcp_server.py verify-models.py
+        #
+        # A glob rather than a list of filenames. The list was one, it went
+        # stale — paths.py, sprites.py, vector.py and trim.py were all absent
+        # from it — and a stale copied list is the mistake this repo has made
+        # five times. There is nothing to keep in step now.
+        run: python -m compileall -q *.py tools/*.py patches/*.py
