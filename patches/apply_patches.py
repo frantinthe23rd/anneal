@@ -86,7 +86,7 @@ PATCHES = [
             "MLX diffusion fails, and Gradio's LRC timestamping and lyric-alignment scoring, both "
             "of which reach for model.decoder. Paying two real costs for a saving that does not "
             "cross the threshold that matters is a bad trade, so it is opt-in: set "
-            "ANNEAL_FREE_TORCH_DECODER=1. Worth revisiting alongside the fp32->fp16 half of #7, "
+            "ANNEAL_FREE_TORCH_DECODER=1. Worth revisiting alongside the fp32->fp16 work, "
             "which together might get under 16 GB where this alone cannot."
         ),
         "anchor": '            mlx_decoder.materialize_static_buffers()\n'

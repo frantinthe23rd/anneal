@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stop after the plan and lyrics, let them be edited, then carry on (#22).
+"""Stop after the plan and lyrics, let them be edited, then carry on (#35).
 
 Press is one-shot: a brief goes in and twenty minutes later a record comes out.
 If the tracklist is wrong or a lyric is weak, the whole run is wasted — and on
@@ -12,7 +12,7 @@ amended, then it resumes into the music stage with whatever the human left
 behind. One-shot stays the default.
 
 The constraint that shapes everything here: **a press waiting for a human must
-not hold the heavy slot.** #14 made presses queue because only one can own the
+not hold the heavy slot.** Presses queue because only one can own the
 model ordering; a press paused at review for an hour while its author has lunch
 would block every other press behind it.
 """
@@ -49,7 +49,7 @@ class ReviewCase(unittest.TestCase):
 
 
 class TestTheWaitingStateReleasesTheSlot(ReviewCase):
-    """The part that would break #14 if it were wrong."""
+    """The part that would break the press queue if it were wrong."""
 
     def test_awaiting_review_is_not_a_running_state(self):
         self.assertNotIn("awaiting-review", builder.Press.RUNNING_STATES)
@@ -153,7 +153,7 @@ class TestResuming(ReviewCase):
 
 class TestTheRequestFlag(ReviewCase):
     def test_review_is_off_by_default(self):
-        """One-shot stays the default; #22 asked for both, not a replacement."""
+        """One-shot stays the default; both are wanted, not one or the other."""
         self.assertFalse(self.press.wants_review({"prompt": "x"}))
 
     def test_review_is_on_when_asked_for(self):

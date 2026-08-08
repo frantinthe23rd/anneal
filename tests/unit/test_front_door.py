@@ -1,7 +1,7 @@
 """`./anneal`, `./setup.sh` and `tools/doctor.py` — the parts a stranger meets.
 
 Ten executable entry points sat in the repo root with no documented order
-(#21), and there was no path from clone to running at all (#17). What is worth
+and there was no path from clone to running at all. What is worth
 testing about the fix is not the wording: it is that the front door still
 delegates to files that exist, that `--help` lists commands the script actually
 implements, and that the doctor names a prerequisite rather than letting it

@@ -16,7 +16,7 @@
 #   ./anneal generate "..."   a track, from the command line
 #
 # Ten executable entry points sat in the repo root and knowing which to run
-# when was undocumented (#21). This does not replace them — every one still
+# when was undocumented. This does not replace them — every one still
 # works and is still the thing being run. It is a lid on the toolbox: a name
 # for each operation, in one `--help`, so nobody has to reconstruct the set by
 # reading the directory listing.

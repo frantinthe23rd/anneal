@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Request and resource limits (#13).
+"""Request and resource limits.
 
 Importing supervisor.py has side effects — it opens jobs.db and presses.db
 under AIMUSIC_ROOT and resolves the roots it will serve files from — which is
@@ -125,7 +125,7 @@ class ServedExtensionTest(unittest.TestCase):
 
 
 class JobPruneTest(unittest.TestCase):
-    """prune() existed from the start and was called from nowhere (#13)."""
+    """prune() existed from the start and was called from nowhere."""
 
     def setUp(self):
         self.db = os.path.join(tempfile.mkdtemp(), "jobs.db")
@@ -160,7 +160,7 @@ class JobPruneTest(unittest.TestCase):
         self.assertEqual(self.store.stats(), {"pending": 1})
 
     def test_the_reaper_is_wired_to_call_it(self):
-        """The whole point of #13's item: it must actually be invoked."""
+        """The whole point of it: it must actually be invoked."""
         import inspect
         source = inspect.getsource(supervisor.reaper)
         self.assertIn("JOBS.prune", source)

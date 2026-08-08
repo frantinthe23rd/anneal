@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A sprite set is one asset, not a scattering of PNGs (#19).
+"""A sprite set is one asset, not a scattering of PNGs (#37).
 
 Cutting a sheet produces a directory of frames. The library listed each frame as
 its own row, so a four-pose walk cycle arrived as four unrelated entries sorted

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The SVG sanitiser (#18).
+"""The SVG sanitiser (#36).
 
 The issue's words: "a generated `<script>` inside an SVG a game loads is a real
 hazard, not a theoretical one." Everything here is a way that hazard arrives.

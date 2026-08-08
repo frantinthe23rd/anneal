@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect finished music before the backend that holds it is stopped (#31).
+"""Collect finished music before the backend that holds it is stopped.
 
 A job is only marked done, and its audio only copied out of the backend's
 prunable cache, when a client polls /query_result. ACE-Step keeps results in

@@ -1,4 +1,4 @@
-"""The numbers a client would otherwise hardcode, served instead (#15).
+"""The numbers a client would otherwise hardcode, served instead.
 
 Written before the endpoint, per the convention in CLAUDE.md. The point is not
 that /health grows a field — it is that every number in this file has exactly

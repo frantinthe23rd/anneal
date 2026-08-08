@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""SVG the text model draws — extracted, sanitised and normalised (#18).
+"""SVG the text model draws — extracted, sanitised and normalised (#36).
 
 SVG is markup, so drawing an icon is a text-generation task rather than an
 image-generation one. That makes it the first Anneal capability that is fast:
 2–7 seconds on an already-warm Gemma, no new weights, no heavy slot, nothing
 evicted.
 
-**Measured quality, and it is not what #18 assumed.** The issue expected
+**Measured quality, and it is not what was assumed.** The expectation was
 LLM-authored SVG to be "good at geometric, iconographic and UI work". On the
 model that actually fits here — `gemma-4-e4b-it-4bit` — that is not what
 happens. Against five subjects (gear, heart, compass rose, health bar, shield):
@@ -28,7 +28,7 @@ So: well-formed is not good, in exactly the way this repo's audio verification
 notes warn about. The endpoint exists, the safety work below is real and is
 needed the moment this improves, and the capability is **not** presented in the
 UI as something that works. Whether to keep it, and whether a larger text model
-(#9) changes the answer, is a decision rather than a fix.
+([#33](https://github.com/frantinthe23rd/anneal/issues/33)) changes the answer, is a decision rather than a fix.
 
 **The output is untrusted markup.** That is the whole reason this module is
 separate and tested. An SVG is not a picture; it is a document that can carry

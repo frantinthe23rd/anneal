@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Boot persistence (#21).
+"""Boot persistence.
 
 Anneal did not survive a machine reboot. Nothing had ever started it at boot —
 there was no launchd job at all — so after a restart the tailnet URL was still
@@ -217,7 +217,7 @@ class TestBootWaitsForTheVolume(unittest.TestCase):
 
     def test_exposure_is_still_opt_in_at_boot(self):
         """A boot path that ignored ANNEAL_EXPOSE would put a fresh clone on the
-        tailnet without being asked — the thing #10 was closed for fixing."""
+        tailnet without being asked."""
         self.assertIn("ANNEAL_EXPOSE", self.src)
 
 

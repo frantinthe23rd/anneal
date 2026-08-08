@@ -144,7 +144,7 @@ def ffmpeg_bin(candidates=FFMPEG_CANDIDATES, search_path=True):
 #     ERROR: /Volumes/Storage/AIMusic not found — is the Storage SSD mounted?
 #
 # which reads as a hardware fault rather than "this default is one person's
-# external disk" (#17). The resolution order below keeps that machine working
+# external disk". The resolution order below keeps that machine working
 # without asking a stranger to own the same disk:
 #
 #   1. $AIMUSIC_ROOT              explicit wins, always

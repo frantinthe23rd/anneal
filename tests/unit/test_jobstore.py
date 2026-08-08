@@ -5,7 +5,7 @@ encoded on top of it: what is still worth replaying, how a caller's original
 task id keeps working after a replay gave the job a new one, and what prune()
 actually removes.
 
-prune() is defined and never called from anywhere in the tree (issue #27). It
+prune() was defined and never called from anywhere in the tree. It
 is tested here on the assumption that it is meant to be wired up, and the tests
 record exactly what it does and does not clean.
 """
@@ -234,7 +234,7 @@ class TestPrune(StoreCase):
         self.assertEqual(self.rows("jobs"), 0)
 
     def test_prune_takes_the_alias_and_saved_rows_with_the_job(self):
-        """#27. These outlived the job they belonged to, so both tables grew
+        """These outlived the job they belonged to, so both tables grew
         without bound — and an alias pointing at a deleted job is worse than
         useless, because it resolves to an id the store no longer knows."""
         self.store.record("orig", {})

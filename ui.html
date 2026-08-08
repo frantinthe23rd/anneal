@@ -966,7 +966,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
            Sprites (/v1/sprites) deliberately has no tab: it is for game-dev
            agents calling the API, and a frame sequence is not something anyone
            was going to sit and make by hand. Video was removed entirely —
-           see the Credits note and #20. -->
+           see the Credits note. -->
       <button class="tab" role="tab" data-mode="music"  aria-selected="true">Music</button>
       <button class="tab" role="tab" data-mode="press"  aria-selected="false">Press</button>
       <button class="tab" role="tab" data-mode="speech" aria-selected="false">Speech</button>
@@ -3125,7 +3125,7 @@ function renderMarkdown(node, src) {
     // Markdown treats _ as emphasis, so a formula carrying two of them —
     // which every chemical subscript does — had its underscores eaten and an
     // <em> spliced through the middle: \text{C}_6\text{H}_{12} arrived as
-    // \text{C}<em>6\text{H}</em>{12}. Issue #24. Nothing could repair that
+    // \text{C}<em>6\text{H}</em>{12}. Nothing could repair that
     // afterwards, because by then the source was gone.
     const taken = [];
     const guarded = takeMathOut(src, taken);
@@ -4134,7 +4134,7 @@ async function boot() {
 
 /* Facts the API serves are written once, in the code that owns them, and
    fetched here. Any element carrying a data-cap attribute names a path through
-   /health's `limits` block and is filled from it — see #15, and tests/unit/test_capabilities.py, which fails if
+   /health's `limits` block and is filled from it — see tests/unit/test_capabilities.py, which fails if
    one of them is typed back into the markup. */
 function fillCapabilities(limits) {
   if (!limits) return;

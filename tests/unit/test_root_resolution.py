@@ -6,7 +6,7 @@ was built on that is an external SSD; on a fresh clone it produced
     ERROR: /Volumes/Storage/AIMusic not found — is the Storage SSD mounted?
 
 which reads as a hardware fault rather than a default nobody else can satisfy
-(#17). The default now resolves, and the interesting part is that it resolves
+The default now resolves, and the interesting part is that it resolves
 *twice*: once in bash (env.sh, which decides what the launchers do) and once in
 Python (paths.aimusic_root, which decides where the gateway writes). A
 disagreement between them would put the databases somewhere the scripts do not

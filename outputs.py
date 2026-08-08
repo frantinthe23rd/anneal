@@ -17,7 +17,7 @@ anything.
                2026-08-06T09-14-02_warm-lo-fi-hip-hop_a1b2c3.mp3.json
       speech/  ...
       images/  ...
-      vectors/ ...   SVG drawn by the text model (#18)
+      vectors/ ...   SVG drawn by the text model
 """
 
 from __future__ import annotations

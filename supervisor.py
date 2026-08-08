@@ -123,7 +123,7 @@ MAX_ZIP_SOURCE_BYTES = int(os.environ.get("ANNEAL_MAX_ZIP_BYTES", str(4 * 1024 *
 # AUDIO_ROOTS used to include the whole of AIMUSIC_ROOT, which is also where
 # jobs.db, presses.db, the four log files, hf-cache and 9.4 GB of weights live.
 # Any authenticated caller could read all of it through `/v1/audio?path=`. That
-# is defensible on a personal tailnet and is precisely what #13 is about, so the
+# is defensible on a personal tailnet and is exactly the assumption to state, so the
 # root is now outputs/ — the only place under AIMUSIC_ROOT that holds audio —
 # alongside the backend's own temp cache, which is where a take lives until
 # _persist_music_takes copies it out.
@@ -462,7 +462,7 @@ class Service:
             log("%s: stopping (%s), peak memory was ~%s MB"
                 % (self.name, reason, self.peak_rss_mb or self.memory_mb()))
             # Before the process goes, not after: its results live in its
-            # memory, and once it is gone they are unrecoverable. #31.
+            # memory, and once it is gone they are unrecoverable.
             if self.name == "music":
                 try:
                     drain_music_results()
@@ -689,7 +689,7 @@ def drain_music_results(store=None, ask=None, persist=None):
     stayed `pending` for ever, the caller polled an id the restarted backend had
     never heard of and got an empty list, and the take sat orphaned in a cache
     the backend prunes. Measured twice, both times costing a cold start plus
-    minutes of generation. See #31.
+    minutes of generation.
 
     Best-effort by design. A backend that is already dead must not turn
     recoverable work into lost work, so any failure leaves the store untouched.
@@ -985,7 +985,7 @@ def reaper():
         # Collect finished music while the backend is still up. The stop hook
         # covers an orderly shutdown; this covers everything else — a crash, an
         # OOM kill, a kill -9 — none of which reach stop(). Free when there is
-        # nothing pending, which is almost always. #31.
+        # nothing pending, which is almost always.
         if time.time() - last_drain > DRAIN_INTERVAL:
             last_drain = time.time()
             try:
@@ -1039,7 +1039,7 @@ def press_limits(payload):
     600s, but nothing bounded their product. Eight ten-minute tracks is 80
     minutes of *audio*, which on this hardware is hours of generation from one
     unattended POST — and it holds the heavy slot for all of it, so nothing else
-    on the machine runs meanwhile (#14).
+    on the machine runs meanwhile.
 
     The cap is on the worst case the request can produce, not on the plan the LM
     eventually returns: the point is to answer at submit time, while there is
@@ -1206,7 +1206,7 @@ def capability_limits():
     openapi.json, or both — which is how the spec came to claim the high tier
     ran 32 steps while services.py said 50. Serving them means a page can ask
     rather than repeat, and tests/unit/test_capabilities.py fails if one is
-    written down again. See #15.
+    written down again.
     """
     return {
         "press": {
@@ -1567,7 +1567,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- vector -----------------------------------------------------------
     def _send_vector(self, payload):
-        """Draw an SVG with the text model (#18).
+        """Draw an SVG with the text model.
 
         The first Anneal capability that is genuinely fast: SVG is markup, so
         this is text generation. Gemma is light, coexists with a heavy model,
@@ -1590,7 +1590,7 @@ class Handler(BaseHTTPRequestHandler):
 
         mode = (payload.get("mode") or "draw").lower()
         if mode != "draw":
-            # `trace` is the other half of #18 and needs vtracer or potrace,
+            # `trace` is the other half of #36 and needs vtracer or potrace,
             # neither of which is installed. Say which, rather than 400ing with
             # "unknown mode" and leaving the caller to guess.
             self._send_json({

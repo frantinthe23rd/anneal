@@ -44,7 +44,7 @@ fi
 
 # This used to say "is the Storage SSD mounted?", which on a fresh clone was a
 # hardware diagnosis for a default nobody else could satisfy — the single most
-# misleading message in the repo, and the opening example in #17. Say which root
+# misleading message in the repo. Say which root
 # was chosen and where the choice came from, then name the command that makes it.
 if [[ ! -d "$AIMUSIC_ROOT" ]]; then
     echo "ERROR: the install root $AIMUSIC_ROOT does not exist." >&2

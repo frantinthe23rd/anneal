@@ -124,7 +124,7 @@ def text_model_path():
 # Roughly how long a cold start takes, measured on the reference machine. Not a
 # timeout and not a promise — it is what the interface needs in order to warn
 # before a slow request, and it belongs next to the services it describes
-# rather than in prose on three pages. See #15.
+# rather than in prose on three pages.
 COLD_START_SECONDS = {
     "music": _int("ACESTEP_COLD_START", 210),
     "speech": _int("SPEECH_COLD_START", 8),

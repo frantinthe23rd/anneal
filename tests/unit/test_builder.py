@@ -248,14 +248,14 @@ class TestDurationDerivation(PressCase):
                          [t["duration"] for t in press["tracks"]])
 
     def test_the_ten_minute_ceiling_cannot_be_breached(self):
-        """Was issue #25: clamping only dmax let the `dmax <= dmin` guard push
+        """Clamping only dmax let the `dmax <= dmin` guard push
         the window back out, planning tracks past the ceiling the clamp exists
         to enforce."""
         self.run_press({"prompt": "a brief", "tracks": 3, "duration": 1000})
         self.assertLessEqual(self.bounds()[1], 600)
 
     def test_a_single_is_bounded_by_the_same_ceiling_as_an_album_track(self):
-        """Was issue #25: a single took `duration` verbatim, so one track could
+        """A single took `duration` verbatim, so one track could
         ask ACE-Step for an hour while the same request with two was capped."""
         _, press = self.run_press({"prompt": "a brief", "tracks": 1, "duration": 3600})
         self.assertLessEqual(press["tracks"][0]["duration"], 600)

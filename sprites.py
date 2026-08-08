@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cut a generated sprite sheet into frames (#19).
+"""Cut a generated sprite sheet into frames.
 
 The reason sheets are generated whole rather than a frame at a time is
 identity: four separate generations of "the same character" produce four

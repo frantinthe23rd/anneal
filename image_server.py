@@ -137,7 +137,7 @@ def generate(prompt, width, height, steps, seed, init_path=None, retention=None)
     # image, leaving the remainder to act on the prompt. schnell is distilled to
     # four steps, so at high retention there is only one step left — which is
     # the point for variations, and why this cannot restructure a subject. See
-    # issue #19: measured, not assumed.
+    # Measured, not assumed.
     extra = {}
     if init_path:
         extra = {"image_path": init_path, "image_strength": retention}

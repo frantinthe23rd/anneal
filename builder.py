@@ -237,7 +237,7 @@ class Press:
     # not here: it has no worker, so it is neither running nor interrupted.
     # Deliberately excludes "awaiting-review": a press paused for a human holds
     # no model and must not hold the queue either, or one person going to lunch
-    # blocks every other press behind them. See #14 and #22.
+    # blocks every other press behind them. See #35.
     RUNNING_STATES = ("planning", "lyrics", "music", "art")
     TERMINAL_STATES = ("done", "failed", "cancelled", "interrupted")
     # Not running, not finished. sweep_interrupted() must leave it alone: it has
@@ -246,7 +246,7 @@ class Press:
 
     @staticmethod
     def wants_review(request):
-        """One-shot stays the default; #22 asked for both, not a replacement."""
+        """One-shot stays the default; both are wanted, not one or the other."""
         return bool((request or {}).get("review"))
 
     def amend(self, pid, plan_patch, track_patches):
@@ -387,7 +387,7 @@ class Press:
             pid = waiting[0]["id"]
             # A press that already has a plan is one that was reviewed and
             # approved (or interrupted). Re-running from the top would discard
-            # the edits the human just made, which is the whole point of #22.
+            # the edits the human just made, which is the whole point of review.
             press = waiting[0]
             resume = bool(press.get("plan") and press.get("tracks"))
             # Leave 'queued' here rather than waiting for the worker's first
@@ -553,7 +553,7 @@ class Press:
         # every derived bound has to sit under it — including the lower one.
         # Clamping only dmax did not work: the `dmax <= dmin` guard below then
         # pushed the window straight back out, so duration=2000 planned tracks
-        # of 1200-1230s against a 600s cap. Issue #25.
+        # of 1200-1230s against a 600s cap.
         target = min(MAX_TRACK_SECONDS, max(MIN_TRACK_SECONDS, int(req.get("duration", 90))))
         dmin = int(req.get("duration_min", round(target * 0.6)))
         dmax = int(req.get("duration_max", round(target * 1.5)))

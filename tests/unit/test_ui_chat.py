@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Structural checks on the chat transcript persistence in ui.html (#16).
+"""Structural checks on the chat transcript persistence in ui.html.
 
 **These are not behavioural tests and should not be mistaken for them.** There
 is no JavaScript runtime on this machine (`node`, `deno` and `bun` are all

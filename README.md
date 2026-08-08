@@ -198,7 +198,7 @@ model's ~21 GB footprint already exceeds physical RAM and pages continuously
 throughout a generation. Below that, nothing about this design helps: FLUX alone
 wants ~11 GB. More memory is strictly better and currently under-exploited,
 because every model choice is hardcoded for this machine
-([#9](https://github.com/frantinthe23rd/anneal/issues/9)).
+([#33](https://github.com/frantinthe23rd/anneal/issues/33)).
 
 **About 40 GB of free disk**, measured on this install: ~26 GB of weights that
 are actually used, ~3 GB of virtualenvs, ~4 GB of wheel cache, and room for
@@ -223,7 +223,7 @@ The two boundaries above are where the work is, and they are more separable than
 they look: the memory calls are four functions in `supervisor.py` behind an
 obvious interface, and `services.py` is already generic enough that a CUDA
 backend is a dictionary entry rather than a rewrite. A Linux/NVIDIA port would
-also make [#9](https://github.com/frantinthe23rd/anneal/issues/9) real work
+also make [#33](https://github.com/frantinthe23rd/anneal/issues/33) real work
 rather than a thought experiment, since on a 24 GB card the eviction logic that
 exists purely because only one heavy model fits stops being necessary at all.
 
@@ -277,7 +277,7 @@ Run `./monitor.py` during a generation to see it for yourself.
 after MLX conversion, taking the peak footprint from 22 GB to 18 GB. It is off
 by default: 18 GB still exceeds physical RAM so the paging is unchanged, and it
 costs the PyTorch diffusion fallback plus Gradio's LRC and lyric-scoring
-features. See [#7](https://github.com/frantinthe23rd/anneal/issues/7).
+features. See [#32](https://github.com/frantinthe23rd/anneal/issues/32).
 
 **Measure with `phys_footprint`, never RSS.** MLX allocates through Metal, which
 `ps` does not attribute to the process — a backend genuinely holding 21 GB
@@ -411,7 +411,7 @@ that.
   brass watch to become silver returns the same brass watch. Distillation is
   why: keeping the image spends the steps that would redraw it. Use it for
   variants of a shot, not to change what is in one. See
-  [#19](https://github.com/frantinthe23rd/anneal/issues/19).
+  [#37](https://github.com/frantinthe23rd/anneal/issues/37).
 - **Chat** is a plain conversation with the local Gemma model, streamed, in the
   shape every chat interface has: transcript above, composer below, **Enter to
   send** and Shift+Enter for a newline. Replies render as **Markdown**, with
@@ -429,7 +429,7 @@ that.
   reasoning shed before whole messages) because the quota is ~5 MB and
   exceeding it throws. "New conversation" asks before discarding, and Settings'
   **Forget key, preferences and chat history** clears it. One conversation, not
-  a list — see [#16](https://github.com/frantinthe23rd/anneal/issues/16).
+  a list.
 - **Write for me** in the lyrics block drafts lyrics from the style prompt,
   streaming into the box. Click again to stop; your text is restored on failure.
 - **Library** switches to everything the server has kept — filter by kind, play
@@ -650,7 +650,7 @@ a hypothesis and has not been tested.
 
 So: byte-comparing two runs still proves nothing about quality, and "same seed,
 same output" is not available here by any route currently known.
-[#22](https://github.com/frantinthe23rd/anneal/issues/22) has the consequences
+[#35](https://github.com/frantinthe23rd/anneal/issues/35) has the consequences
 for iterative refinement — including that **repaint does not need
 determinism**, and is already exposed by the REST API.
 
@@ -672,7 +672,7 @@ something.
 returns SVG source, saves it under `outputs/vectors/` with a sidecar, and lists
 it in the Library under `kind=vectors`. Styles are `flat`, `line`, `duotone`
 and `geometric`. `mode: "trace"` — vectorising the image model's output — is
-specified in [#18](https://github.com/frantinthe23rd/anneal/issues/18) and
+specified in [#36](https://github.com/frantinthe23rd/anneal/issues/36) and
 returns `501`: it needs `vtracer` or `potrace`, and neither is installed.
 
 **Everything returned is sanitised.** The reply is parsed, must have a single
@@ -706,7 +706,7 @@ whether the drawing resembles its subject.
 
 So the plumbing works and the capability does not, and that is why there is no
 Vector tab in the UI. The ceiling here looks like the model rather than the
-prompt: a larger text model ([#9](https://github.com/frantinthe23rd/anneal/issues/9))
+prompt: a larger text model ([#33](https://github.com/frantinthe23rd/anneal/issues/33))
 is the obvious thing to retest against. This is the same trap as the audio
 below — a number moving the right way is not evidence the output is good.
 
@@ -839,9 +839,10 @@ the extension is a media type Anneal produces. `paths.py` is the single
 containment check; `tests/test_paths.py` covers the traversal, symlink and
 shared-prefix cases that a hand-rolled `startswith` gets wrong.
 
-**`outputs/` still has no retention policy** and grows without bound — see
-[#13](https://github.com/frantinthe23rd/anneal/issues/13). Deleting generated
-work automatically is a decision, not a default.
+**`outputs/` has no automatic retention policy** and grows without bound.
+`./anneal prune` removes old output when you ask it to; nothing removes anything
+on its own, because generation is not reproducible and a wrongly deleted take
+cannot be regenerated.
 
 Public without auth: `/health`, `/supervisor/status`, `/supervisor/auth`,
 `/supervisor/whoami`, `/docs`, `/openapi.json` and the UI itself. Everything
@@ -952,7 +953,7 @@ not oblige anyone to credit Anneal in a UI, a README or a product page.
 
 If you build something with this, an issue saying what you made is welcome.
 
-Built for **local, personal use on a private network**. It binds to loopback and
-reaches the tailnet through `tailscale serve`; it is not hardened for public
-exposure, and [#13](https://github.com/frantinthe23rd/anneal/issues/13) tracks
-what would need doing first.
+Built for **local, personal use on a private network**. It binds to loopback,
+and reaching it from elsewhere is opt-in through `tailscale serve`. It has
+request and resource limits, path containment and two authentication paths, but
+it has not been through an audit and is not intended to face the open internet.

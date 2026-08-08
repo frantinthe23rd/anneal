@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sprite animation by directed editing rather than one lucky sheet (#19).
+"""Sprite animation by directed editing rather than one lucky sheet (#37).
 
 The sheet method works and its limit was measured: one generation containing
 every pose keeps the character identical for free, and produces almost no

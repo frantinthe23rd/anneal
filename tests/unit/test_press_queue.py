@@ -1,4 +1,4 @@
-"""At most one press runs; the rest wait their turn (#14).
+"""At most one press runs; the rest wait their turn.
 
 Press's whole design is that every text stage runs, then every music stage,
 then the cover — so each heavy model loads exactly once. Two presses at a time
@@ -136,7 +136,7 @@ class TestRestart(QueueCase):
         self.assertEqual(self.started, [second])
 
 class TestVoiceConsistency(QueueCase):
-    """One record, one singer (#28 follow-up).
+    """One record, one singer.
 
     A brief asking for a British female lead came back with male vocals on
     three of four tracks. The music prompt was the planner's per-track `style`
@@ -174,7 +174,7 @@ class TestVoiceConsistency(QueueCase):
         self.assertIn("a winter album", out)
 
 class TestLyricDensity(QueueCase):
-    """How many words a genre wants (#28 follow-up).
+    """How many words a genre wants.
 
     An electronic record came back with full verse-chorus-verse lyrics on every
     track. That is not what the style does: house, techno and most club music

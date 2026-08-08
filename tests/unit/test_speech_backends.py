@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Two speech models behind one endpoint, chosen by voice (#30).
+"""Two speech models behind one endpoint, chosen by voice.
 
 Kokoro has no expressive control at all — its generate() takes text, voice,
 speed and a language code, and the server already exposed every one of them.

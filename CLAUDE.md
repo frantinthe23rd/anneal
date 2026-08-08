@@ -68,7 +68,7 @@ loaded; if behaviour doesn't match the code, check the process start time first.
   guide, not the endpoint tables. `init_image` and `retention` shipped and
   appeared in no spec, no guide and no page; outside the server they existed
   only in the UI's own JavaScript. `JobStore.prune()` existed and nothing called
-  it (#27 — it has a caller now, and takes its dependent rows with it).
+  it, until it did — and it takes its dependent rows with it now.
   A test written first catches all three, because you cannot write one
   without naming the path, the payload and the response — and once they are
   named, the difference between that and `openapi.json` is something you can
@@ -104,7 +104,7 @@ loaded; if behaviour doesn't match the code, check the process start time first.
   upstream hardcodes that path. Without it the server re-downloads 9.4 GB.
 - **ACE-Step's REST API assumes turbo.** Non-turbo models need `dcw_enabled=false`
   and must not use the MLX DiT, which is a turbo-specific port. Both are patched;
-  see #8.
+  both are patched.
 - **Generation is not deterministic** even with a fixed seed. The reason given
   here for months — "the planning LM samples at temperature" — was never tested
   and is wrong. Measured: with `thinking: false`, a fixed seed *and* `bpm` /

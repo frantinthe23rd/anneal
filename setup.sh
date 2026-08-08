@@ -12,7 +12,7 @@
 # failure partway through — a download interrupted, a disk that filled — and
 # starting from the top should cost nothing but the step that failed.
 #
-# The order matters and used to be tribal knowledge (#17):
+# The order matters and used to be tribal knowledge:
 #
 #   1. prerequisites          uv, ffmpeg, git, Apple silicon, RAM, disk
 #   2. a root to install into $AIMUSIC_ROOT, recorded in .anneal-root

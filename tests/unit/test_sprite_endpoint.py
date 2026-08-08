@@ -1,4 +1,4 @@
-"""POST /v1/sprites — a brief becomes a cut, matted sprite sheet (#19).
+"""POST /v1/sprites — a brief becomes a cut, matted sprite sheet (#37).
 
 Written before the endpoint, per CLAUDE.md.
 

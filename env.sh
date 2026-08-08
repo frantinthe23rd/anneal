@@ -15,7 +15,7 @@
 #
 # The old default was (3) unconditionally, which is one person's external SSD.
 # On a fresh clone that produced "is the Storage SSD mounted?" — a hardware
-# fault, apparently, rather than a default nobody else can satisfy. See #17.
+# fault, apparently, rather than a default nobody else can satisfy.
 _ANNEAL_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # `read` rather than a pipeline: `head -1` mid-pipeline SIGPIPEs the stage
 # feeding it, and under the launchers' `set -euo pipefail` that silently aborts

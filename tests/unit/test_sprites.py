@@ -1,4 +1,4 @@
-"""Cutting a generated sheet into frames (#19).
+"""Cutting a generated sheet into frames (#37).
 
 The sheet is one generation, which is what keeps every frame the same character.
 What it is not is a grid: the model places poses at different sizes and

@@ -173,7 +173,7 @@ class TestMusicTierDocumentation(unittest.TestCase):
             self.assertEqual(tier["model"], MUSIC_TIERS[name]["model"], name)
 
     def test_the_example_step_counts_match_the_service_table(self):
-        """Was issue #26: the spec said 32 steps where the code said 50.
+        """The spec said 32 steps where the code said 50.
 
         A caller sizing a timeout from the spec got it wrong by 60%. Kept as a
         live assertion so the two cannot drift apart again silently.

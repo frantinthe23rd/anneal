@@ -275,7 +275,7 @@ def check_install(rep, root, lock):
         rep.add("install", "ACE-Step checkout", FAIL, "%s is not a git checkout" % acestep,
                 "./setup.sh   clones it at the pinned commit. Nothing in this repo "
                 "used to do that, which is the single largest reason a clone could "
-                "not be run by anyone else (#17).")
+                "not be run by anyone else.")
     else:
         head = _run(["git", "-C", acestep, "rev-parse", "HEAD"])
         if pinned and head == pinned:
