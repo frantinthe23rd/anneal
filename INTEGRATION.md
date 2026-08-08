@@ -326,6 +326,23 @@ stage with your edits and does not re-plan.
 Omit `approve` to save edits and keep waiting. Anything not awaiting review —
 already recording, finished, never paused — is a 409.
 
+**Tracks are asked to end properly.** `outro` defaults to true. Before it
+existed, five of eight measured tracks played at full level to the last bar,
+stopped dead, and were padded with two to six seconds of silence to reach the
+requested duration — nothing in the prompt ever said the piece had to finish.
+Set `outro: false` for loops or background beds, where a resolved ending is
+exactly wrong.
+
+This is **Press-only**. `POST /release_task` never adds it: a builder asking
+that endpoint for a two-bar loop wants it to loop, and an outro welded onto
+every music request would ruin the use the API exists for.
+
+**Trailing silence is trimmed** from every saved take, Press or not. That
+padding is not music — it reads as part of the track in a player and breaks a
+loop outright. Only the tail is touched; a rest inside the arrangement and any
+lead-in are left alone, and a FLAC master stays lossless. Set
+`ANNEAL_TRIM_SILENCE=0` on the server to keep the raw output.
+
 **Downloading.** `GET /v1/press/download?id=…&format=mp3&bitrate=320k` returns
 the whole record as a zip: audio, cover and tracklist. Masters are FLAC, so a
 lossy format is transcoded from the original rather than from another lossy copy.

@@ -1152,6 +1152,11 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
           </div>
           <div class="field">
             <label class="check"><input type="checkbox" id="pInst"> Instrumental — skip lyrics</label>
+            <label class="check"><input type="checkbox" id="pOutro" checked>
+              Ask for a proper ending</label>
+            <div class="hint">Without this, tracks spend the time they are given and stop
+              mid-phrase — measured on five of eight. Turn it off for loops or beds,
+              where an ending is the last thing you want.</div>
           </div>
         </section>
 
@@ -3493,6 +3498,7 @@ async function runPress() {
       quality: $("pQuality").value,
       art: $("pArt").checked,
       instrumental: $("pInst").checked,
+      outro: $("pOutro").checked,
     }})).data;
     setLibrary(true);                       // the record appears there as it builds
     followPress(d.press_id);

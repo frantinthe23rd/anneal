@@ -53,6 +53,7 @@ from services import (SERVICES, MUSIC_TIERS, DEFAULT_MUSIC_TIER,
 from jobstore import JobStore  # noqa: E402
 import outputs  # noqa: E402
 import paths  # noqa: E402
+import trim  # noqa: E402
 import vector  # noqa: E402
 import builder  # noqa: E402  (capability_limits reports its constants)
 from builder import Press, PressStore  # noqa: E402
@@ -665,6 +666,10 @@ PRESS.spawn = lambda pid, resume=False: threading.Thread(
 # How often to collect finished music that nobody has polled for. Short enough
 # that an idle unload or an eviction cannot get there first.
 DRAIN_INTERVAL = float(os.environ.get("ANNEAL_DRAIN_INTERVAL", "45"))
+# Trailing digital silence is padding to the requested duration, not music:
+# measured at two to eleven seconds on every take. Set ANNEAL_TRIM_SILENCE=0
+# to keep the raw output.
+TRIM_SILENCE = os.environ.get("ANNEAL_TRIM_SILENCE", "1") not in ("0", "false", "no")
 
 
 def _ask_music_backend(ids):
@@ -1760,6 +1765,11 @@ class Handler(BaseHTTPRequestHandler):
                 "request": payload,
             })
             if path:
+                if TRIM_SILENCE:
+                    removed = trim.trim_trailing_silence(path)
+                    if removed:
+                        log("trimmed %.1fs of trailing silence from %s"
+                            % (removed, os.path.basename(path)))
                 # Point the caller at the durable copy rather than the temp file
                 # the backend is free to prune.
                 take["file"] = "/v1/audio?path=" + urllib.parse.quote(path, safe="")

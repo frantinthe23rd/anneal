@@ -273,11 +273,12 @@ class TestEndings(QueueCase):
     def prompt(self, plan, track, req):
         return builder.Press.track_prompt(plan, track, req)
 
-    def test_every_track_prompt_asks_for_an_ending(self):
+    def test_a_press_asks_for_an_ending_by_default(self):
+        """A record should finish. It is the default for Press specifically."""
         for style in ("melancholy folk", "driving melodic techno", "indie rock"):
             out = self.prompt({"voice": "a tenor"}, {"style": style},
                               {"prompt": "a brief"}).lower()
-            self.assertTrue("outro" in out or "ending" in out or "resolve" in out,
+            self.assertTrue("outro" in out or "resolve" in out,
                             "nothing asks %r to finish" % style)
 
     def test_an_instrumental_track_still_asks_for_an_ending(self):
@@ -285,7 +286,30 @@ class TestEndings(QueueCase):
         instrumental club tracks were the worst offenders in the measurement."""
         out = self.prompt({}, {"style": "ambient techno"},
                           {"prompt": "x", "instrumental": True}).lower()
-        self.assertTrue("outro" in out or "ending" in out or "resolve" in out)
+        self.assertTrue("outro" in out or "resolve" in out)
+
+    def test_it_can_be_turned_off(self):
+        """Not every record wants a resolved ending — and nobody should have to
+        type the clause by hand to get one, or delete it to avoid one."""
+        out = self.prompt({}, {"style": "ambient techno"},
+                          {"prompt": "x", "outro": False}).lower()
+        self.assertNotIn("outro", out)
+        self.assertNotIn("resolve", out)
+
+    def test_turning_it_off_keeps_everything_else(self):
+        out = self.prompt({"voice": "a British woman, warm alto"},
+                          {"style": "folk"}, {"prompt": "x", "outro": False})
+        self.assertIn("a British woman, warm alto", out)
+        self.assertIn("folk", out)
+
+    def test_the_raw_music_endpoint_is_not_given_an_outro(self):
+        """A builder asking /release_task for a two-bar loop wants it to loop.
+        An outro clause welded onto every music request would ruin exactly the
+        use this API exists for, so the default lives in Press and nowhere else.
+        """
+        src = open(os.path.join(REPO_ROOT, "supervisor.py"), encoding="utf-8").read()
+        self.assertNotIn("ENDING_CLAUSE", src,
+                         "the outro belongs to Press, not to the music endpoint")
 
     def test_the_ending_clause_does_not_displace_the_voice(self):
         """Both are appended to the same line. The vocal fix came first and must
@@ -301,8 +325,9 @@ class TestEndings(QueueCase):
         out = self.prompt({}, {"style": "driving melodic techno"}, {"prompt": "x"})
         self.assertTrue(out.lower().startswith("driving melodic techno"), out[:60])
 
-    def test_the_lyric_prompt_asks_for_a_closing_section(self):
-        self.assertIn("[outro]", builder.LYRIC_PROMPT)
+    def test_the_lyric_prompt_asks_for_a_closing_section_when_wanted(self):
+        self.assertIn("[outro]", builder.LYRIC_ENDING)
+        self.assertIn("{ending}", builder.LYRIC_PROMPT)
 
 
 class TestLyricInstruction(QueueCase):
@@ -332,7 +357,7 @@ class TestLyricInstruction(QueueCase):
     def test_the_density_reaches_the_prompt(self):
         filled = builder.LYRIC_PROMPT.format(
             album="A", concept="B", title="C", theme="D", style="deep house",
-            density=builder.LYRIC_DENSITY["sparse"])
+            density=builder.LYRIC_DENSITY["sparse"], ending=builder.LYRIC_ENDING)
         self.assertIn(builder.LYRIC_DENSITY["sparse"], filled)
 
 

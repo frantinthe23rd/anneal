@@ -122,9 +122,13 @@ Musical style: {style}
 
 {density}
 
-Use [verse], [chorus] and [bridge] tags on their own lines. Finish with a short
-[outro] — a closing line or a repeated tag — so the song ends rather than simply
-stopping. Output ONLY the lyrics — no title, no commentary, no notes."""
+Use [verse], [chorus] and [bridge] tags on their own lines.{ending} Output ONLY
+the lyrics — no title, no commentary, no notes."""
+
+# Appended to the lyric prompt only when the record is meant to finish. Kept
+# next to the template so the two cannot drift apart.
+LYRIC_ENDING = (" Finish with a short [outro] — a closing line or a repeated"
+                " tag — so the song ends rather than simply stopping.")
 
 
 def slug(text, limit=48):
@@ -474,6 +478,19 @@ class Press:
                      "tonic and let it decay, rather than stopping mid-phrase")
 
     @staticmethod
+    def wants_outro(request):
+        """Whether tracks should be asked to finish. On by default, for Press.
+
+        Deliberately *not* applied to /release_task. A builder asking that
+        endpoint for a two-bar loop wants it to loop, and welding an outro onto
+        every music request would ruin the use the API exists for. A record is
+        the case where an ending is nearly always right, so the default lives
+        here and nowhere else — and it is a flag rather than something anybody
+        has to type into a brief.
+        """
+        return (request or {}).get("outro", True) is not False
+
+    @staticmethod
     def track_prompt(plan, track, request):
         """The style for one track, with the record's voice pinned to it.
 
@@ -500,9 +517,10 @@ class Press:
         # anybody is singing — instrumental club tracks were the worst of the
         # measured offenders. Style stays at the front: ACE-Step weights the
         # start of the prompt most heavily, and genre must lead.
+        ending = ". " + Press.ENDING_CLAUSE if Press.wants_outro(request) else ""
         if not voice or voice.lower().startswith("instrumental") or request.get("instrumental"):
-            return "%s. %s" % (style.rstrip(". "), Press.ENDING_CLAUSE)
-        return "%s. Lead vocal: %s. %s" % (style.rstrip(". "), voice, Press.ENDING_CLAUSE)
+            return "%s%s" % (style.rstrip(". "), ending)
+        return "%s. Lead vocal: %s%s" % (style.rstrip(". "), voice, ending)
 
     def run(self, pid, resume=False):
         try:
@@ -592,7 +610,8 @@ class Press:
                 t["lyrics"] = (self.call_text(LYRIC_PROMPT.format(
                     album=plan["title"], concept=plan["concept"],
                     title=t["title"], theme=t["theme"], style=t["style"],
-                    density=LYRIC_DENSITY[self.lyric_density(t, req)]), 900) or "").strip()
+                    density=LYRIC_DENSITY[self.lyric_density(t, req)],
+                    ending=LYRIC_ENDING if self.wants_outro(req) else ""), 900) or "").strip()
                 t["state"] = "lyrics-done"
                 self.store.update(pid, tracks=json.dumps(tracks))
 
@@ -670,7 +689,8 @@ class Press:
                     album=plan["title"], concept=plan.get("concept", ""),
                     title=t["title"], theme=t.get("theme", ""),
                     style=t.get("style", req["prompt"]),
-                    density=LYRIC_DENSITY[self.lyric_density(t, req)]), 900) or "").strip()
+                    density=LYRIC_DENSITY[self.lyric_density(t, req)],
+                    ending=LYRIC_ENDING if self.wants_outro(req) else ""), 900) or "").strip()
                 self.store.update(pid, tracks=json.dumps(tracks))
 
         self.store.update(pid, state="music")

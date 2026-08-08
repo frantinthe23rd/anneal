@@ -512,7 +512,8 @@ class TestPromptTemplates(unittest.TestCase):
                                    dmin=60, dmax=90)
         builder.LYRIC_PROMPT.format(album="a", concept="c", title="t",
                                     theme="th", style="s",
-                                    density=builder.LYRIC_DENSITY["moderate"])
+                                    density=builder.LYRIC_DENSITY["moderate"],
+                                    ending=builder.LYRIC_ENDING)
 
 
 if __name__ == "__main__":
