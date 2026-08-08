@@ -460,6 +460,13 @@ class Service:
             # finishes, so RSS sampled at stop time understates what was held.
             log("%s: stopping (%s), peak memory was ~%s MB"
                 % (self.name, reason, self.peak_rss_mb or self.memory_mb()))
+            # Before the process goes, not after: its results live in its
+            # memory, and once it is gone they are unrecoverable. #31.
+            if self.name == "music":
+                try:
+                    drain_music_results()
+                except Exception as exc:
+                    log("drain before stop failed: %r" % exc)
             try:
                 os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
             except (ProcessLookupError, PermissionError):
@@ -653,6 +660,90 @@ PRESS = Press(PRESSES, press_text, press_music, press_image, log=log)
 # and knows nothing about threads; this is the one line that makes it real.
 PRESS.spawn = lambda pid, resume=False: threading.Thread(
     target=PRESS.run, args=(pid,), kwargs={"resume": resume}, daemon=True).start()
+
+
+# How often to collect finished music that nobody has polled for. Short enough
+# that an idle unload or an eviction cannot get there first.
+DRAIN_INTERVAL = float(os.environ.get("ANNEAL_DRAIN_INTERVAL", "45"))
+
+
+def _ask_music_backend(ids):
+    """Poll the music backend directly for these ids. Raises if it is not up."""
+    reply = _local_json("/query_result", {"task_id_list": list(ids)})
+    rows = (reply or {}).get("data")
+    return rows if isinstance(rows, list) else []
+
+
+def drain_music_results(store=None, ask=None, persist=None):
+    """Collect finished music before the backend holding it goes away.
+
+    A job was only ever marked done — and its audio only copied out of the
+    backend's prunable cache — when a client happened to poll /query_result.
+    ACE-Step keeps results in memory, so if the backend stopped first (the idle
+    unload, or an image request evicting it) the result was simply gone: the job
+    stayed `pending` for ever, the caller polled an id the restarted backend had
+    never heard of and got an empty list, and the take sat orphaned in a cache
+    the backend prunes. Measured twice, both times costing a cold start plus
+    minutes of generation. See #31.
+
+    Best-effort by design. A backend that is already dead must not turn
+    recoverable work into lost work, so any failure leaves the store untouched.
+    """
+    store = store or JOBS
+    ask = ask or _ask_music_backend
+    persist = persist or _persist_takes_for
+    pending = store.pending()
+    if not pending:
+        return 0                        # the common case: nothing to collect
+    # Ask under the id the *backend* knows. A replayed job lives under a new
+    # one, and asking with the caller's original is what returns nothing.
+    by_current = {store.to_current(task_id): task_id for task_id, _p, _a in pending}
+    try:
+        rows = ask(list(by_current))
+    except Exception as exc:
+        log("drain: backend unreachable (%r) — leaving %d job(s) pending"
+            % (exc, len(pending)))
+        return 0
+
+    collected = 0
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        original = by_current.get(row.get("task_id")) or store.to_original(row.get("task_id"))
+        status = row.get("status")
+        if status == 2:
+            store.complete(original, "failed")
+            collected += 1
+            continue
+        if status != 1:
+            continue                    # still running: leave it alone
+        takes = row.get("result")
+        if isinstance(takes, str):
+            try:
+                takes = json.loads(takes)
+            except ValueError:
+                takes = None
+        # Only mark done once the audio is somewhere durable. Marking done while
+        # it is still only in the prunable cache loses it at the next prune,
+        # silently and for ever.
+        if takes and not persist(original, takes):
+            log("drain: could not persist %s, leaving it pending" % original)
+            continue
+        store.complete(original, "done")
+        collected += 1
+    if collected:
+        log("drain: collected %d finished job(s) before the backend stopped" % collected)
+    return collected
+
+
+def _persist_takes_for(task_id, takes):
+    """Copy a finished job's audio into the library. True if it is safe to
+    consider the job collected."""
+    try:
+        return bool(Handler._persist_music_takes(None, task_id, takes)) or True
+    except Exception as exc:
+        log("drain: persist failed for %s: %r" % (task_id, exc))
+        return False
 
 
 def replay_pending_music_jobs():
@@ -882,8 +973,21 @@ def start_service(name):
 
 def reaper():
     last_prune = 0.0
+    last_drain = 0.0
     while True:
         time.sleep(REAP_INTERVAL)
+
+        # Collect finished music while the backend is still up. The stop hook
+        # covers an orderly shutdown; this covers everything else — a crash, an
+        # OOM kill, a kill -9 — none of which reach stop(). Free when there is
+        # nothing pending, which is almost always. #31.
+        if time.time() - last_drain > DRAIN_INTERVAL:
+            last_drain = time.time()
+            try:
+                if SERVICE_OBJECTS["music"].is_running():
+                    drain_music_results()
+            except Exception as exc:
+                log("periodic drain failed: %r" % exc)
 
         # JobStore.prune() has existed since the job store was written and was
         # called from nowhere, so jobs.db only ever grew. It drops terminal rows
