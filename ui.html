@@ -320,8 +320,6 @@ button:disabled { cursor: not-allowed; opacity: .45; }
   flex-wrap: wrap; align-items: baseline; }
 .hero .foot a { color: var(--muted); }
 .hero .foot a:hover { color: var(--text); }
-.hero .foot .by { margin-left: auto; }
-@media (max-width: 700px) { .hero .foot .by { margin-left: 0; } }
 @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
 
 .wrap { animation: fade var(--t-med) var(--ease) both; }
@@ -914,7 +912,6 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
     <a href="/docs" target="_blank">OpenAPI</a>
     <a href="#" id="heroSet">Settings</a>
     <span id="heroWho"></span>
-    <span class="by">Built by Jon Moseley</span>
   </div>
  </div>
 </div>
@@ -1684,7 +1681,7 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
   </div>
 
   <footer class="sitefoot">
-    <span>Anneal — local generation, built by <b>Jon Moseley</b>. MIT licensed.</span>
+    <span>Anneal — local generation. MIT licensed, © 2026 Jon Moseley.</span>
   </footer>
 </div>
 
