@@ -366,8 +366,8 @@ Four pages behind a subnav, deep-linkable as `#guide`, `#api`, `#about`:
 | **API** | Why it is a service first, auth, the job protocol, the endpoint table, and the MCP setup. Code samples quote the address you are actually on. |
 | **About** | What it is, why it exists, why it is called Anneal — and full attribution for every model and library. |
 
-The page still makes **no external requests**. `marked` and `DOMPurify` (chat
-Markdown, and sanitising it) are vendored into `assets/vendor/` with their
+The page still makes **no external requests**. `marked`, `DOMPurify` and KaTeX
+(chat Markdown, sanitising, and maths) are vendored into `assets/vendor/` with their
 versions and hashes recorded in `assets/vendor/README.md`, rather than pulled
 from a CDN. The favicon is an SVG of the same anvil the empty state uses.
 
@@ -860,7 +860,8 @@ else requires one of the two methods above.
   *sparse* weight files to this external APFS volume — correct logical size,
   zero-filled interiors — which fail deep inside model loading with a confusing
   "invalid JSON in header" error. `verify-models.py` detects exactly this.
-- One job at a time: single worker, in-memory queue, lost on restart.
+- One job at a time: single worker. The backend's queue is in memory, but the
+  gateway records every job and replays anything outstanding after a restart.
 
 ## Gradio UI
 
@@ -901,7 +902,7 @@ anyone's context.
 ## Credits
 
 Concept, product direction and design: **Jon Moseley**. Built with **Claude
-Code** — the tools that made it are the tools it feeds. The hard parts are other
+Code**. The hard parts are other
 people's work, running locally and unmodified apart from two documented patches
 to ACE-Step's non-turbo paths (`patches/apply_patches.py`).
 
@@ -909,6 +910,7 @@ to ACE-Step's non-turbo paths (`patches/apply_patches.py`).
 | --- | --- | --- |
 | [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) — DiT, 5 Hz planning LM, audio VAE, bundling Qwen3-Embedding-0.6B (Apache-2.0) | Music | MIT |
 | [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) by hexgrad, MLX conversion by Prince Canuma | Speech | Apache-2.0 |
+| [Qwen3-TTS CustomVoice](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice) by Alibaba, 4-bit MLX conversion by mlx-community | Directed speech — nine named voices that take a written performance direction | Apache-2.0 |
 | [FLUX.1-schnell](https://huggingface.co/black-forest-labs/FLUX.1-schnell) by Black Forest Labs, run as a 4-bit mflux quantisation | Images | Apache-2.0 |
 | [Gemma 4 E4B](https://huggingface.co/google/gemma-4-E4B-it) by Google DeepMind, 4-bit MLX conversion by mlx-community | Text, lyrics | Gemma Terms of Use |
 
@@ -920,7 +922,8 @@ to ACE-Step's non-turbo paths (`patches/apply_patches.py`).
 | [PyTorch](https://pytorch.org) | ACE-Step's own runtime, including the non-turbo DiT path | BSD-3-Clause |
 | [FFmpeg](https://ffmpeg.org) | Transcoding for downloads and speech formats | LGPL / GPL |
 | [Tailscale](https://tailscale.com) | Reach, TLS and caller identity without exposing a port | BSD-3-Clause |
-| [marked](https://github.com/markedjs/marked) · [DOMPurify](https://github.com/cure53/DOMPurify) | Chat Markdown, rendered and sanitised — vendored, not CDN-loaded | MIT · Apache-2.0/MPL-2.0 |
+| [marked](https://github.com/markedjs/marked) · [DOMPurify](https://github.com/cure53/DOMPurify) · [KaTeX](https://katex.org) | Chat Markdown, sanitising, and maths — vendored, not CDN-loaded | MIT · Apache-2.0/MPL-2.0 · MIT |
+| [rembg](https://github.com/danielgatis/rembg) with u2net | Background removal for sprite frames | MIT · Apache-2.0 |
 | [Swagger UI](https://github.com/swagger-api/swagger-ui) | `/docs` — the one page that loads from a CDN | Apache-2.0 |
 | [uv](https://github.com/astral-sh/uv) · [Hugging Face Hub](https://huggingface.co) | Environments and weights, pinned to exact revisions | Apache-2.0 / MIT |
 

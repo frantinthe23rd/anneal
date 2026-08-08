@@ -23,7 +23,7 @@
       "service": "music",
       "required": true,
       "size_gb": 9.4,
-      "licence": "Apache-2.0",
+      "licence": "MIT",
       "note": "Bundle: vae, Qwen3-Embedding-0.6B, acestep-v15-turbo, acestep-5Hz-lm-1.7B. 3.5 GB of that is the 1.7B planning LM, which this hardware tier never loads — it cannot be dropped without making verify-models.py unhappy about a partial bundle."
     },
     "ACE-Step/acestep-5Hz-lm-0.6B": {
@@ -32,7 +32,7 @@
       "service": "music",
       "required": true,
       "size_gb": 1.3,
-      "licence": "Apache-2.0",
+      "licence": "MIT",
       "note": "The planning LM this hardware tier actually uses; the bundled 1.7B is never loaded here"
     },
     "ACE-Step/acestep-v15-sft": {
@@ -41,7 +41,7 @@
       "service": "music",
       "required": false,
       "size_gb": 4.5,
-      "licence": "Apache-2.0",
+      "licence": "MIT",
       "note": "The 'high' quality tier. Without it, quality=high 503s and draft still works."
     },
     "prince-canuma/Kokoro-82M": {

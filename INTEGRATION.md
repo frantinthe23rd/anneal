@@ -1,6 +1,6 @@
 # Integrating Anneal
 
-**Anneal** is self-hosted **music, speech and image** generation running on an Apple silicon Mac, behind one HTTP gateway.
+**Anneal** is self-hosted **music, speech, image and text** generation running on an Apple silicon Mac, behind one HTTP gateway.
 
 It's named for what it does to its models: heat one up on demand, let it cool
 and release the memory when idle.
@@ -196,7 +196,7 @@ It decodes to a *list*, one entry per take (see `batch_size`). Each entry has:
 | `file` | relative URL, pass to `/v1/audio` |
 | `prompt`, `lyrics` | what was actually used (the model may rewrite the prompt) |
 | `metas` | `{bpm, duration, keyscale, timesignature, genres}` |
-| `seed_value` | comma-separated; reuse to reproduce a take |
+| `seed_value` | comma-separated. Recorded, but it does not make a take reproducible |
 | `dit_model`, `lm_model` | which checkpoints ran |
 
 Poll every **3–5 seconds**. Polling is cheap but there is no push/webhook.
@@ -388,7 +388,7 @@ Only `prompt` is really required. Everything else has a sane default.
 | `key_scale` | string | LM fills | e.g. `"C Major"`, `"Am"`. |
 | `time_signature` | string | LM fills | `"3"`, `"4"`, `"6"`. |
 | `vocal_language` | string | `en` | `en`, `zh`, `ja`, … |
-| `seed` | int | random | Set with `"use_random_seed": false` to reproduce. |
+| `seed` | int | random | Recorded in the result. Two identical seeded requests still differ — see README → Determinism. |
 | `inference_steps` | int | 8 | The turbo model wants 8. Raising it mostly costs time. |
 | `thinking` | bool | **true** | Planning pass — sections, key, arrangement. ~30 s. Anneal defaults this on; the backend does not. |
 | `quality` | string | `draft` | `draft` (turbo, ~90 s) or `high` (sft, ~180 s, better detail). Switching restarts the model once. |
@@ -423,8 +423,10 @@ sequentially — a second caller waits for the first to finish.
 - Use `batch_size` for variations of one idea; it's cheaper than N separate jobs.
 - `GET /v1/stats` returns `{jobs: {queued, running, ...}, queue_size}` if you
   want to show queue depth or apply backpressure.
-- The queue is **in memory**. If the host restarts, queued and running jobs are
-  lost. Your app must own durable job state and be able to resubmit.
+- The backend's queue is **in memory**, but the gateway records every job and
+  replays anything outstanding after a restart — keep polling the id you were
+  given. Only a job that comes back `status: 2` with `orphaned: true` needs
+  resubmitting.
 
 ---
 
@@ -433,7 +435,7 @@ sequentially — a second caller waits for the first to finish.
 Stdlib only, handles cold starts and the double-encoded `result`.
 
 ```python
-import json, time, urllib.parse, urllib.request
+import json, os, time, urllib.parse, urllib.request
 
 BASE = os.environ["ANNEAL_URL"]
 KEY = os.environ["ANNEAL_KEY"]
@@ -532,7 +534,7 @@ curl -X POST "$ANNEAL_URL/v1/audio/speech" \
 | Field | Default | Notes |
 | --- | --- | --- |
 | `input` | — | Required. Text to speak. |
-| `voice` | `af_heart` | `GET /v1/voices` lists all 28. Prefix encodes language and gender: `a`=American, `b`=British, `f`=female, `m`=male. |
+| `voice` | `af_heart` | `GET /v1/voices` lists all 37. Prefix encodes language and gender: `a`=American, `b`=British, `f`=female, `m`=male. |
 | `response_format` | `wav` | `wav`, `mp3`, `flac`, `opus`, `aac`. |
 | `speed` | `1.0` | 0.5–2.0. |
 
