@@ -61,7 +61,7 @@ from builder import Press, PressStore  # noqa: E402
 LISTEN_HOST = os.environ.get("SUPERVISOR_HOST", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("SUPERVISOR_PORT", "8001"))
 API_KEY = os.environ.get("ACESTEP_API_KEY", "")
-AIMUSIC_ROOT = os.environ.get("AIMUSIC_ROOT", "/Volumes/Storage/AIMusic")
+AIMUSIC_ROOT = paths.aimusic_root()
 ACESTEP_DIR = os.environ.get("ACESTEP_DIR", os.path.join(AIMUSIC_ROOT, "ACE-Step-1.5"))
 TAILNET_HOST = os.environ.get("TAILNET_HOST", "")
 
@@ -1162,23 +1162,11 @@ def sprite_method_problem(method, model_path=None):
         from huggingface_hub import snapshot_download  # noqa: F401
     except ImportError:
         pass
-    path = model_path or _kontext_local_path()
+    path = model_path or paths.hf_snapshot(KONTEXT_MODEL)
     if not path or not os.path.isdir(path):
         return ("the kontext model is not installed (~9.6 GB, and a "
                 "non-commercial licence). See the sprites section of "
                 "INTEGRATION.md.")
-    return None
-
-
-def _kontext_local_path():
-    """Where the converted Kontext weights live, without reaching the network."""
-    root = os.environ.get("HF_HOME", os.path.join(AIMUSIC_ROOT, "hf-cache"))
-    base = os.path.join(root, "hub", "models--" + KONTEXT_MODEL.replace("/", "--"),
-                        "snapshots")
-    if not os.path.isdir(base):
-        return None
-    for name in sorted(os.listdir(base)):
-        return os.path.join(base, name)
     return None
 
 

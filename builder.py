@@ -26,6 +26,8 @@ import threading
 import time
 import uuid
 
+import paths
+
 # What ACE-Step is asked to render at most, and the floor below which a
 # track is not worth the model load. Both are enforced on every derived bound.
 MAX_TRACK_SECONDS = 600
@@ -734,7 +736,7 @@ class Press:
         """Write the tracklist beside the audio, so the record is self-describing
         on disk and not only inside the gateway's database."""
         try:
-            root = os.path.join(os.environ.get("AIMUSIC_ROOT", "/Volumes/Storage/AIMusic"),
+            root = os.path.join(paths.aimusic_root(),
                                 "outputs", "albums", "%s_%s" % (time.strftime("%Y-%m-%d"), slug(plan["title"])))
             os.makedirs(root, exist_ok=True)
             total = sum(t["duration"] for t in tracks if t["state"] == "done")

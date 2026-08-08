@@ -7,8 +7,8 @@ Stdlib only, so it can be copied to any machine on the tailnet.
     ./generate.py "driving synthwave" --duration 60 --instrumental
     ./generate.py "indie folk ballad" --lyrics-file verse.txt --out ~/Music
 
-Point it elsewhere with --base-url, e.g. from another tailnet machine:
-    ./generate.py "..." --base-url https://jons-mac-mini.pangolin-darter.ts.net
+Point it elsewhere with --base-url, e.g. at a host on your tailnet:
+    ./generate.py "..." --base-url https://your-machine.your-tailnet.ts.net
 """
 
 from __future__ import annotations
@@ -25,10 +25,17 @@ import urllib.request
 DEFAULT_BASE_URL = os.environ.get("ACESTEP_BASE_URL", "http://127.0.0.1:8001")
 DEFAULT_API_KEY = os.environ.get("ACESTEP_API_KEY", "")
 
-# On the Mac mini the internal disk is nearly full, so default to the SSD.
-# Elsewhere (this script is copyable to any tailnet machine) fall back to ~/Music.
-_SSD_OUT = "/Volumes/Storage/AIMusic/outputs"
-DEFAULT_OUT = _SSD_OUT if os.path.isdir(_SSD_OUT) else os.path.expanduser("~/Music/AIMusic")
+# Deliberately no import of paths: this file is meant to be copied to any
+# machine on the tailnet on its own, so it stays stdlib-with-no-siblings. It
+# does honour the same environment variable, and only then falls back.
+_ROOT_OUT = os.path.join(os.environ["AIMUSIC_ROOT"], "outputs") \
+    if os.environ.get("AIMUSIC_ROOT") else None
+_CANDIDATES = [c for c in (_ROOT_OUT,
+                           os.path.expanduser("~/anneal/outputs"),
+                           "/Volumes/Storage/AIMusic/outputs")  # ANNEAL-LEGACY-ROOT
+               if c]
+DEFAULT_OUT = next((c for c in _CANDIDATES if os.path.isdir(c)),
+                   os.path.expanduser("~/Music/AIMusic"))
 
 
 def _post(base_url: str, path: str, payload: dict, api_key: str) -> dict:

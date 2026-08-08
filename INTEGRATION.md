@@ -1,7 +1,6 @@
 # Integrating Anneal
 
-**Anneal** is self-hosted **music, speech and image** generation running on the
-Mac mini (`jons-mac-mini`), behind one HTTP gateway.
+**Anneal** is self-hosted **music, speech and image** generation running on an Apple silicon Mac, behind one HTTP gateway.
 
 It's named for what it does to its models: heat one up on demand, let it cool
 and release the memory when idle.
@@ -16,7 +15,7 @@ and release the memory when idle.
 | Sprites | FLUX.1-schnell + rembg | synchronous, returns paths | 2–3 min |
 
 **Interactive API docs are hosted at
-<https://jons-mac-mini.pangolin-darter.ts.net/docs>**, with the raw spec at
+<https://your-machine.your-tailnet.ts.net/docs>**, with the raw spec at
 `/openapi.json`. Point your tooling there — it is generated from the same
 contract described below and is the authoritative reference.
 
@@ -29,21 +28,21 @@ double-encoded result field, and how to set timeouts.
 
 | | |
 | --- | --- |
-| **Tailnet** | `https://jons-mac-mini.pangolin-darter.ts.net` |
+| **Tailnet** | `https://your-machine.your-tailnet.ts.net` |
 | **On the host itself** | `http://127.0.0.1:8001` |
 | **Auth** | `Authorization: Bearer <API_KEY>` on every request |
 
-The service is reachable **only over Tailscale** — it is not on the public
-internet and not on the LAN. Your machine must be on the tailnet. TLS on the
-tailnet URL is terminated by Tailscale; the certificate is valid, so no
-`--insecure` or cert pinning is needed.
+Anneal binds to loopback only. Reaching it from another machine is opt-in and
+goes through `tailscale serve` — set `ANNEAL_EXPOSE=tailnet` on the host. Then
+it is on the tailnet and nowhere else: not the public internet, not the LAN.
+TLS is terminated by Tailscale with a valid certificate, so no `--insecure` or
+cert pinning is needed.
 
-Get the API key from the host owner — it lives in `env.local.sh` in the checkout
-and is deliberately not in the repo. **Do not commit it.** Read it from an
-environment variable in your project:
+Your API key is generated on first run into `env.local.sh`, which is gitignored.
+**Do not commit it.** Read it from an environment variable:
 
 ```bash
-export ANNEAL_URL=https://jons-mac-mini.pangolin-darter.ts.net
+export ANNEAL_URL=https://your-machine.your-tailnet.ts.net
 export ANNEAL_KEY=sk-aimusic-...
 ```
 
@@ -479,8 +478,9 @@ def _download(file_url):
         return r.read()          # bytes — persist these yourself
 ```
 
-A ready-to-use CLI version lives on the host at `~/dev/AIMusic/generate.py` and
-is copyable to any tailnet machine (`--base-url` to point it here).
+`generate.py` at the repo root is a ready-made stdlib version of this. It has
+no imports from the rest of the repo, so it copies to any machine that can reach
+the gateway — point it with `--base-url`.
 
 ### TypeScript
 
@@ -840,7 +840,7 @@ minutes, not seconds — speech is the only one that feels instant.
 | Connection refused / DNS fails | Not on the tailnet, or host asleep | Check `tailscale status` |
 | `401` | Missing or wrong `Authorization` header | — |
 | Client timeout on first request | Cold start | Raise timeout to 900s+, or pre-warm |
-| `503 backend start failed` | Model couldn't load — usually the SSD is unmounted | Check `/Volumes/Storage` on the host |
+| `503 backend start failed` | Model couldn't load — often the install root is missing, e.g. an unmounted external disk | Run `./anneal doctor` on the host |
 | `503` with `reason: host_memory_exhausted` | The machine is out of RAM; Anneal refused to start a model rather than thrash | Close other apps, or `POST /supervisor/stop`. The body carries the memory figures |
 | `409` on an image or music request | The other heavy model is mid-job | Wait and retry, or stop it explicitly |
 | `502` while polling | Backend restarting | Retry the poll. **Never resubmit** |
@@ -852,8 +852,8 @@ minutes, not seconds — speech is the only one that feels instant.
 | `status: 2` otherwise | Generation failed | `result` has the traceback; surface it and let the user retry |
 | Polls forever at `status: 0` | Should no longer happen — report it | Cross-check `GET /v1/stats` for `queued`/`running` |
 
-Ask the host owner to run `./verify-models.py` if generation fails repeatedly —
-incomplete weight files produce confusing load errors.
+Run `./anneal verify` if generation fails repeatedly — incomplete weight files
+produce confusing load errors.
 
 ---
 

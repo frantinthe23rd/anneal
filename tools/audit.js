@@ -1,5 +1,7 @@
 const { chromium } = require("playwright");
-const URL = "https://jons-mac-mini.pangolin-darter.ts.net/";
+// Point at another host with ANNEAL_URL; loopback is the sensible default
+// for a tool that renders this machine's own UI.
+const URL = process.env.ANNEAL_URL || "http://127.0.0.1:8001/";
 const OUT = process.env.HOME + "/anneal-shots/";
 
 (async () => {

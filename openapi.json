@@ -7,12 +7,8 @@
   },
   "servers": [
     {
-      "url": "https://jons-mac-mini.pangolin-darter.ts.net",
-      "description": "Tailnet (TLS)"
-    },
-    {
       "url": "http://127.0.0.1:8001",
-      "description": "On the host itself"
+      "description": "This host. The gateway rewrites this block per request, so tooling pointed at a remote Anneal sees that address instead."
     }
   ],
   "security": [
@@ -375,7 +371,7 @@
                 "steps": 4,
                 "n": 1,
                 "response_format": "b64_json",
-                "init_image": "/Volumes/Storage/AIMusic/outputs/images/a_puffin-42.png",
+                "init_image": "/path/to/anneal-root/outputs/images/a_puffin-42.png",
                 "retention": 0.7
               }
             }
@@ -390,7 +386,7 @@
                   "created": 1785881567,
                   "data": [
                     {
-                      "path": "/Volumes/Storage/AIMusic/outputs/images/a_puffin-42.png",
+                      "path": "/path/to/anneal-root/outputs/images/a_puffin-42.png",
                       "url": "/v1/images/file?path=...",
                       "seed": 42,
                       "seconds": 34.2,
@@ -633,7 +629,7 @@
                     "total": 7,
                     "items": [
                       {
-                        "path": "/Volumes/Storage/AIMusic/outputs/music/2026-08-06T11-39-53_bright-acoustic-folk_28db5d.mp3",
+                        "path": "/path/to/anneal-root/outputs/music/2026-08-06T11-39-53_bright-acoustic-folk_28db5d.mp3",
                         "name": "2026-08-06T11-39-53_bright-acoustic-folk_28db5d.mp3",
                         "kind": "music",
                         "bytes": 321069,
@@ -1325,7 +1321,7 @@
                   "data": {
                     "subject": "a small round green slime with big eyes",
                     "style": "flat pixel art",
-                    "source": "/Volumes/Storage/AIMusic/outputs/images/sprite-sheet-…png",
+                    "source": "/path/to/anneal-root/outputs/images/sprite-sheet-…png",
                     "source_size": [
                       1344,
                       768
@@ -1335,7 +1331,7 @@
                       251,
                       249
                     ],
-                    "frame_dir": "/Volumes/Storage/AIMusic/outputs/sprites/20260807-152300-a-small-round-green-slime",
+                    "frame_dir": "/path/to/anneal-root/outputs/sprites/20260807-152300-a-small-round-green-slime",
                     "frames": [
                       {
                         "index": 0,
@@ -1343,7 +1339,7 @@
                         "y": 204,
                         "width": 246,
                         "height": 301,
-                        "file": "/Volumes/Storage/AIMusic/outputs/sprites/…/frame-000.png",
+                        "file": "/path/to/anneal-root/outputs/sprites/…/frame-000.png",
                         "url": "/v1/outputs/file?path=…"
                       },
                       {
@@ -1356,7 +1352,7 @@
                         "url": "/v1/outputs/file?path=…"
                       }
                     ],
-                    "sheet": "/Volumes/Storage/AIMusic/outputs/images/sprite-sheet-…png",
+                    "sheet": "/path/to/anneal-root/outputs/images/sprite-sheet-…png",
                     "sheet_url": "/v1/images/file?path=…",
                     "requested_frames": 4,
                     "preview": ".../outputs/sprites/20260807-212253-a-small-orange-robot/preview.gif",
