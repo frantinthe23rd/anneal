@@ -23,7 +23,7 @@
 #
 # Steps 1-3 did not exist. Step 5's dependency on step 4 was undocumented and
 # failed obscurely when reversed.
-set -euo pipefail
+set -Eeuo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON="${PYTHON:-/usr/bin/python3}"
@@ -40,12 +40,28 @@ DRY_RUN=0
 # printing shell code as help.
 usage() { awk 'NR > 1 { if ($0 !~ /^#/) exit; sub(/^# ?/, ""); print }' "${BASH_SOURCE[0]}"; }
 
+# `./setup.sh --root` with the path forgotten used to print nothing and exit 1:
+# the branch consumed a value that was not there, and the loop's trailing
+# `shift` then failed with nothing left to shift, which under `set -e` ends the
+# script silently. An unknown option was already handled well — it is named,
+# the usage follows, exit 2 — so a missing value is handled the same way.
+need_value() {
+    [[ -n "$2" ]] && return 0
+    echo "$1 needs a value: $3" >&2
+    usage >&2
+    exit 2
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --root)      ROOT_ARG="${2:-}"; shift ;;
-        --root=*)    ROOT_ARG="${1#*=}" ;;
-        --models)    MODELS="${2:-required}"; shift ;;
-        --models=*)  MODELS="${1#*=}" ;;
+        --root)      ROOT_ARG="${2:-}"
+                     need_value "$1" "$ROOT_ARG" "a directory, as in --root ~/anneal"; shift ;;
+        --root=*)    ROOT_ARG="${1#*=}"
+                     need_value "--root" "$ROOT_ARG" "a directory, as in --root=~/anneal" ;;
+        --models)    MODELS="${2:-}"
+                     need_value "$1" "$MODELS" "what to fetch, as in --models music,speech (or all)"; shift ;;
+        --models=*)  MODELS="${1#*=}"
+                     need_value "--models" "$MODELS" "what to fetch, as in --models=music,speech (or all)" ;;
         --no-models) WANT_MODELS=0 ;;
         --tools)     WANT_TOOLS=1 ;;
         -y|--yes)    ASSUME_YES=1 ;;
@@ -56,9 +72,43 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-say()  { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
+STEP=""
+STEPS_DONE=()
+
+# A dry run also leaves the interpreter's bytecode cache behind — every Python
+# it runs imports paths.py or tools/doctor.py, and on any interpreter that is
+# not Apple's (which redirects the cache into ~/Library/Caches) that is a
+# __pycache__ written into the checkout. Set before the first of them runs.
+if (( DRY_RUN )); then export PYTHONDONTWRITEBYTECODE=1; fi
+
+say()  {
+    if [[ -n "$STEP" ]]; then STEPS_DONE+=("$STEP"); fi
+    STEP="$*"
+    printf '\n\033[1m==> %s\033[0m\n' "$*"
+}
 note() { printf '    %s\n' "$*"; }
 run()  { if (( DRY_RUN )); then note "would run: $*"; else "$@"; fi; }
+
+# What a non-zero exit leaves behind. The header promises that re-running picks
+# up where it stopped, and every step checks whether it is already done — but a
+# run killed by `set -e` said none of that, so a failure four steps in showed
+# only the failing command's own message and looked like starting over. The
+# steps reported are the `say` calls themselves, not a list written out here,
+# so a step added later reports itself.
+on_error() {
+    local code=$? step
+    printf '\n\033[1m==> Stopped during: %s\033[0m\n' "${STEP:-startup}" >&2
+    if (( ${#STEPS_DONE[@]} )); then
+        echo "    These are done, and are kept:" >&2
+        for step in ${STEPS_DONE[@]+"${STEPS_DONE[@]}"}; do
+            echo "      - $step" >&2
+        done
+    fi
+    echo "    Fix what it reported above and run ./setup.sh again: every step" >&2
+    echo "    checks whether it has already been done, so it resumes from here." >&2
+    exit "$code"
+}
+trap on_error ERR
 
 confirm() {
     (( ASSUME_YES )) && return 0
@@ -96,7 +146,32 @@ else
     ROOT="${ROOT:-$CURRENT}"
     ROOT="${ROOT/#\~/$HOME}"
 fi
-ROOT="$(cd "$(dirname "$ROOT")" 2>/dev/null && pwd)/$(basename "$ROOT")" || ROOT="$ROOT"
+# Made absolute through its parent, which is the only way to canonicalise a
+# path that does not exist yet. The previous form appended the basename to an
+# empty string whenever that `cd` failed, so `--root /no/such/parent/anneal`
+# installed into `/anneal` — and its `|| ROOT="$ROOT"` guard could never fire,
+# because an assignment takes its status from the last substitution and
+# `basename` always succeeds (ShellCheck SC2269).
+#
+# A missing parent is now a refusal rather than a substitution. The way to
+# produce one is `--root /Volumes/Something/anneal` with the volume not
+# mounted, which README documents as the way onto an external disk; installing
+# 45 GB somewhere else because a disk is unplugged is the worst answer
+# available, and "mount it, or create the parent" is the useful one.
+ROOT="${ROOT%/}"
+if [[ -z "$ROOT" ]]; then
+    echo "An install root is needed, and / is not one." >&2
+    exit 2
+fi
+if ROOT_PARENT="$(cd "$(dirname "$ROOT")" 2>/dev/null && pwd)"; then
+    ROOT="${ROOT_PARENT%/}/$(basename "$ROOT")"
+else
+    echo "Cannot install into $ROOT: $(dirname "$ROOT") does not exist." >&2
+    echo "  Mount it if it is an external volume, or create it first:" >&2
+    echo "      mkdir -p $(dirname "$ROOT")" >&2
+    echo "Nothing has been changed." >&2
+    exit 1
+fi
 note "Root: $ROOT"
 
 run mkdir -p "$ROOT"
@@ -115,8 +190,17 @@ unset ACESTEP_DIR
 # directory, the offline flags and the API key, and generates env.local.sh on
 # first use. Sourcing it after AIMUSIC_ROOT is exported means the choice above
 # wins over every fallback in it.
+#
+# That generation is a written file, mode 600, holding a new API key — so a dry
+# run, which says it changes nothing, wrote one. ANNEAL_DRY_RUN is how this
+# script tells env.sh (and update.sh, which sources it too) which kind of run
+# this is; env.sh describes the file instead of writing it.
+export ANNEAL_DRY_RUN="$DRY_RUN"
 # shellcheck source=/dev/null
 source "$HERE/env.sh"
+if (( DRY_RUN )) && [[ ! -f "$HERE/env.local.sh" ]]; then
+    note "would generate an API key in $HERE/env.local.sh"
+fi
 
 # The free-disk check is worth repeating now that the root is known: the first
 # one ran against whatever the default resolved to, which may be a different
@@ -196,10 +280,18 @@ fi
 # --------------------------------------------------------------- 5. weights
 if (( WANT_MODELS )); then
     say "Model weights"
+    # The same listing on both paths. It used to be a separate `|| true` call
+    # under --dry-run, where it could only fail: it ran from gen-venv, which a
+    # dry run has not built, so every preview of a first install ended in
+    # "gen-venv/bin/python does not exist" — an error the reader cannot avoid
+    # and did not cause. Listing needs nothing from gen-venv (it reads
+    # models.lock.json and stats the checkpoints directory), and update.sh now
+    # says so, which is also what makes `./anneal models list` work before the
+    # install README tells the reader to price with it.
+    "$HERE/update.sh" --models list "$MODELS"
     if (( DRY_RUN )); then
-        "$HERE/update.sh" --models list "$MODELS" || true
+        note "A real run offers to download these; declining leaves them for later."
     else
-        "$HERE/update.sh" --models list "$MODELS"
         note "Downloads resume if interrupted — re-run ./setup.sh and it picks up."
         if confirm "Download these now?"; then
             "$HERE/update.sh" --models "$MODELS"
@@ -232,6 +324,14 @@ fi
 
 # --------------------------------------------------------------- done
 say "Where that leaves things"
+if (( DRY_RUN )); then
+    note "Nothing was changed: no root, no checkout, no venv, no weights."
+    note "Run the same command without --dry-run to do it."
+    exit 0
+fi
+# Only on a real run. A dry run installs nothing, so this reported every model
+# missing and closed on "N required check(s) failed" — accurate, unavoidable,
+# and reading as though the run had failed.
 "$PYTHON" "$HERE/tools/doctor.py" || true
 
 cat <<DONE

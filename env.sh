@@ -87,14 +87,31 @@ export ACESTEP_API_HOST="127.0.0.1"
 export ACESTEP_API_PORT="8001"
 
 # The API key lives in env.local.sh, which is gitignored. Generated on first run.
+#
+# ANNEAL_DRY_RUN=1 says the caller promised to change nothing — setup.sh
+# --dry-run sets it — so the file is described rather than written, and
+# ACESTEP_API_KEY stays unset for that run. The alternative considered was
+# deferring generation until something asks for the key: that is a larger
+# change than it sounds, because the key is read from the environment by the
+# gateway, the `anneal` CLI, the MCP server, update.sh --smoke, tools/shot.py
+# and the acceptance tests, so "asks for the key" is every one of them, and it
+# would move key generation into the serving path.
 _ENV_LOCAL="$_ANNEAL_REPO/env.local.sh"
 if [[ ! -f "$_ENV_LOCAL" ]]; then
-    printf '#!/usr/bin/env bash\n# Local secrets — not tracked in git.\nexport ACESTEP_API_KEY="sk-aimusic-%s"\n' \
-        "$(LC_ALL=C tr -dc 'A-Za-z0-9_-' </dev/urandom | head -c 32)" >"$_ENV_LOCAL"
-    chmod 600 "$_ENV_LOCAL"
-    echo "Generated a new API key in $_ENV_LOCAL" >&2
+    if [[ "${ANNEAL_DRY_RUN:-0}" == 1 ]]; then
+        :   # setup.sh says so once, in its own voice; env.sh is sourced twice
+            # in one dry run (setup.sh, then update.sh) and would say it twice.
+    else
+        printf '#!/usr/bin/env bash\n# Local secrets — not tracked in git.\nexport ACESTEP_API_KEY="sk-aimusic-%s"\n' \
+            "$(LC_ALL=C tr -dc 'A-Za-z0-9_-' </dev/urandom | head -c 32)" >"$_ENV_LOCAL"
+        chmod 600 "$_ENV_LOCAL"
+        echo "Generated a new API key in $_ENV_LOCAL" >&2
+    fi
 fi
-source "$_ENV_LOCAL"
+if [[ -f "$_ENV_LOCAL" ]]; then
+    # shellcheck source=/dev/null
+    source "$_ENV_LOCAL"
+fi
 
 # --- on-demand model lifecycle ---
 # supervisor.py owns port 8001 and runs ACE-Step on 8011, starting it when a

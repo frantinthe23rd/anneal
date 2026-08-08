@@ -53,6 +53,19 @@ py() {
     "$GEN_PYTHON" "$@"
 }
 
+# Listing is the exception: it reads models.lock.json and stats the checkpoints
+# directory, and exits before huggingface_hub is imported. Requiring gen-venv
+# for it made the sizes unobtainable on the one machine that has not decided
+# whether to install yet -- `./anneal models list`, which README offers as the
+# way to price an install "before anything is downloaded", ended in the message
+# above, and so did every ./setup.sh --dry-run of a first install. Prefer
+# gen-venv when it is there, so a listing and a download read the same
+# interpreter, and fall back to the system Python when it is not.
+SYSTEM_PYTHON="${PYTHON:-/usr/bin/python3}"
+py_readonly() {
+    if [[ -x "$GEN_PYTHON" ]]; then "$GEN_PYTHON" "$@"; else "$SYSTEM_PYTHON" "$@"; fi
+}
+
 # --------------------------------------------------------------- check
 check() {
     echo "Pinned vs current upstream:"
@@ -115,8 +128,10 @@ models() {
     # applied: `--models list` shows everything, `--models list music` shows
     # what asking for music would fetch.
     if [[ "$selection" == "list" ]]; then dry=1; selection="${2:-all}"; fi
+    local interpreter=py
+    if (( dry )); then interpreter=py_readonly; fi
 
-    py - "$LOCK" "$ACESTEP_CHECKPOINTS_DIR" "$selection" "$dry" <<'PYFETCH'
+    "$interpreter" - "$LOCK" "$ACESTEP_CHECKPOINTS_DIR" "$selection" "$dry" <<'PYFETCH'
 import json, os, sys
 
 lock_path, ckpt, selection = sys.argv[1], sys.argv[2], sys.argv[3]

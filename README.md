@@ -93,6 +93,10 @@ run it again and it picks up from where it stopped.
 names anything missing, and prints the command that installs it — run it first if
 you would rather find out before starting.
 
+**`./setup.sh --dry-run`** prints every step, the install root it would use and
+the weights it would fetch with their sizes, and writes nothing — not the root,
+not the checkout, not the API key in `env.local.sh`.
+
 **How much disk.** `./anneal models list` prints every model, its size, and
 whether it is optional, before anything is downloaded:
 
@@ -137,6 +141,10 @@ variable. Put it on an external volume if the internal disk is tight:
 ```bash
 ./setup.sh --root /Volumes/Something/anneal
 ```
+
+The parent directory has to exist, so mount the volume first. A root whose
+parent is missing stops the run and names it, rather than installing into
+whatever the path collapses to.
 
 **The first music request takes about 3-4 minutes** and looks like a hang if you
 do not know why. It is not: only one heavy model fits in 16 GB, so each is loaded
