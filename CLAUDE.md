@@ -73,6 +73,36 @@ loaded; if behaviour doesn't match the code, check the process start time first.
   without naming the path, the payload and the response — and once they are
   named, the difference between that and `openapi.json` is something you can
   see. `tools/test.sh` runs the suite in `tests/`.
+- **Don't tell the reader you are being honest; be accurate and let them
+  conclude it.** <!-- lint-prose: off -->
+  This is about *where*, not about banning a word. "Honestly, this is slower than
+  I expected" is fine in a commit message or a review comment, where you are
+  reasoning with someone. In copy, guides, instructions, API descriptions and
+  form hints it has no place: the reader wants the fact, and a sentence that
+  characterises the writing instead of informing them is friction. "Experimental,
+  and honestly so" was asking for credit for the word "experimental".
+
+  In user-facing text, drop: *honest*, *honestly*, *frankly*, *to be fair*,
+  *worth knowing*, *worth noting*, *needless to say*. Where the word meant
+  something technical, use that word — *accurate*, *real*, *right*, *ordinary*.
+
+  Weigh, don't purge: *deliberately*, *genuinely*, *actually*, *of course*. In a
+  code comment "this is deliberate" earns its place by stopping the next person
+  fixing what is not broken. In a guide it usually introduces a defence of a
+  decision nobody challenged.
+
+  Three habits from the same root, all found in this repo's own docs: narrating
+  how a conclusion was reached rather than stating it; confessing past mistakes
+  in documentation a stranger reads to decide whether to trust you; and arguing
+  with an objection the reader has not made. A form hint here read "measured on
+  five of eight" — the user needs the warning, not the denominator. Keep the
+  limitation, cut the provenance.
+
+  `tools/lint-prose.py` counts these in what a visitor reads. It reports rather
+  than fails, because every word has a legitimate use; `--strict` fails only on
+  the first list. `lint-prose: off` / `on` brackets a block that has to quote
+  them. <!-- lint-prose: on -->
+
 - **Docs change with code.** `README.md`, `INTEGRATION.md` and `openapi.json`
   are part of the change, not follow-up. An endpoint that gains a parameter,
   a status code or a whole path updates `openapi.json` and `INTEGRATION.md` in

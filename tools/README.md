@@ -86,6 +86,34 @@ head. Use it for high-contrast subjects only.
 
 The first run downloads the u2net weights (~176 MB) into `~/.u2net`.
 
+<!-- lint-prose: off -->
+## Linting the prose
+
+```bash
+tools/lint-prose.py            # what a visitor reads
+tools/lint-prose.py --all      # including code and tests
+tools/lint-prose.py --strict   # exit 1 if anything in DROP survives
+```
+
+Counts words that characterise the writing instead of informing the reader.
+It reports rather than fails, because every word on the list has a legitimate
+use and the judgement is the point — a build that blocked on "deliberately"
+would only teach people to write around it.
+
+Two lists. **DROP** is near-always self-characterisation: *honest*, *frankly*,
+*worth knowing*. "Experimental, and honestly so" was asking the reader for
+credit for the word "experimental". **SUSPECT** depends on where it sits —
+*deliberately* in a code comment stops the next person fixing what is not
+broken, and in user-facing copy usually introduces a defence of a decision
+nobody challenged.
+
+It reads the way a visitor does: script blocks and HTML comments stripped from
+`ui.html`, only `summary` and `description` taken from `openapi.json`. Three
+review passes were needed to find this pattern by hand, and by then it was in
+the README, the spec, the UI and the issue tracker.
+
+<!-- lint-prose: on -->
+
 # Visual verification
 
 `ui.html` is the one part of Anneal that cannot be verified by reading. Three

@@ -406,7 +406,7 @@ that.
   than just failing.
 - Results stack newest-first with inline playback or preview and a download link.
 - **Vary this** on any generated image feeds it back as an init latent, keeping
-  the composition and re-rendering the detail. Worth knowing what it is not: it
+  the composition and re-rendering the detail. It is not an edit: it
   does **not** apply prompt changes to an existing image. Measured — asking a
   brass watch to become silver returns the same brass watch. Distillation is
   why: keeping the image spends the steps that would redraw it. Use it for
@@ -424,8 +424,8 @@ that.
 
   The transcript **survives a reload**, kept in `localStorage` alongside the
   preferences and the key. The server still holds no conversation state — that
-  property is unchanged — but the browser now does, which on a shared machine
-  is worth knowing. It is bounded (roughly 500 KB, oldest turns dropped first,
+  property is unchanged — but the browser now does, which matters on a shared
+  machine. It is bounded (roughly 500 KB, oldest turns dropped first,
   reasoning shed before whole messages) because the quota is ~5 MB and
   exceeding it throws. "New conversation" asks before discarding, and Settings'
   **Forget key, preferences and chat history** clears it. One conversation, not
@@ -439,7 +439,7 @@ that.
   Reuse loads those settings straight back into the form. Served off disk, so
   browsing wakes no model.
 
-  Worth knowing when comparing takes: **generation is not deterministic**, even
+  When comparing takes: **generation is not deterministic**, even
   with `use_random_seed: false`. Two identical requests produce different audio.
   Details tells you what was asked for; it cannot tell you why two takes of the
   same request differ. See [Determinism](#determinism) — the cause is not the

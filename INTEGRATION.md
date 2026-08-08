@@ -402,7 +402,7 @@ prompt, so a bare `{"prompt": "..."}` produces a complete, coherent track.
 
 ---
 
-### Defaults worth knowing
+### Defaults
 
 Anneal overrides two upstream defaults because they materially change output,
 and leaving them would make every integrator rediscover the same two things:
