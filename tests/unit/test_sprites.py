@@ -178,8 +178,16 @@ class TestEmptyFramesAreDropped(SpriteCase):
         path = self.sheet([(10, 40, 50, 80), (120, 40, 50, 80)])
         out = tempfile.mkdtemp()
         data = sprites.pipeline(path, out, use_model=False)
-        self.assertEqual(len(data["frames"]), len(os.listdir(out)) - 
-                         len([f for f in os.listdir(out) if f == "atlas.json"]))
+        # Compared against the frame files themselves, not against the
+        # directory less a list of things that are not frames. The subtracting
+        # form went stale the moment `pipeline` learned to write preview.gif —
+        # and it had never subtracted anything, because atlas.json is written
+        # by main() and not by pipeline(). Naming what belongs survives the
+        # next sibling artefact; naming what does not, does not.
+        on_disk = {os.path.realpath(os.path.join(out, f))
+                   for f in os.listdir(out) if f.endswith(".png")}
+        self.assertEqual({os.path.realpath(f["file"]) for f in data["frames"]}, on_disk)
+        self.assertEqual(len(data["frames"]), len(on_disk))
         for i, frame in enumerate(data["frames"]):
             self.assertEqual(frame["index"], i, "indices must be contiguous")
             self.assertTrue(os.path.isfile(frame["file"]))

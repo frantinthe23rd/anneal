@@ -44,6 +44,26 @@ def duration(path):
     return float(out.stdout.strip())
 
 
+# Trimming is ffmpeg's silencedetect plus a stream copy — there is no part of
+# it to test without the binary, unlike the resolver next door, whose rules are
+# about *where* it looks. So the whole file skips rather than erroring ten
+# times over, which is what left CI permanently red and reporting nothing.
+def have_ffmpeg():
+    """Asked of the resolver, not of PATH. Under a launchd-shaped PATH ffmpeg
+    is absent from PATH and present on disk, and that is the environment the
+    gateway actually runs in — skipping there would skip on the machine these
+    tests exist for."""
+    try:
+        paths.ffmpeg_bin()
+        return True
+    except RuntimeError:
+        return False
+
+
+HAVE_FFMPEG = have_ffmpeg()
+
+
+@unittest.skipUnless(HAVE_FFMPEG, "no ffmpeg on this machine")
 class TrimCase(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
