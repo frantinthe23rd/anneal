@@ -2429,14 +2429,20 @@ async function runSprites() {
     filename: slug(prompt) + ".gif",
     meta: frames.length + " frame(s)" + (d.fps ? " · " + d.fps + " fps" : "")
           + " · " + body.style,
-    // The cutter drops frames that came out blank, so a sheet can yield fewer
-    // than were asked for. Saying so beats a count that quietly disagrees with
-    // the number still sitting in the form.
-    shortfall: (d.requested_frames && frames.length < d.requested_frames)
-      ? "Asked for " + d.requested_frames + ", kept " + frames.length
-        + " — the rest came out blank on the sheet and were dropped rather than "
-        + "shipped as empty frames. Generating again usually fills them."
-      : null,
+    // The count can miss in both directions, and both were measured on four
+    // -pose briefs: one run returned three frames, another seven. The cutter
+    // finds sprite-shaped regions on the sheet and drops blank ones — it does
+    // not know how many were asked for. Either way the number in the form is
+    // now disagreeing with the result, so say which happened.
+    shortfall: (!d.requested_frames || frames.length === d.requested_frames) ? null
+      : frames.length < d.requested_frames
+        ? "Asked for " + d.requested_frames + ", kept " + frames.length
+          + " — the rest came out blank on the sheet and were dropped rather than "
+          + "shipped as empty frames. Generating again usually fills them."
+        : "Asked for " + d.requested_frames + ", found " + frames.length
+          + " — the model drew more separable figures than there were poses, and "
+          + "each is cut as its own frame. Check the strip: the extras are usually "
+          + "a split pose rather than a new one.",
     sheetUrl: d.sheet_url, sheetPath: d.sheet,
   });
   hideStatus();

@@ -144,6 +144,17 @@ class TestTheMeasuredClaims(unittest.TestCase):
         self.assertIn("r.frames", self.src)
         self.assertIn(".frames .fr", self.src)
 
+    def test_a_frame_count_that_disagrees_with_the_request_is_stated(self):
+        """Measured on identical four-pose briefs: one run returned three
+        frames, another seven. The cutter finds sprite-shaped regions and drops
+        blank ones — it never sees the number that was asked for — so the form
+        can be left showing 4 next to a result that is neither."""
+        run = self.src[self.src.index("async function runSprites"):]
+        run = run[:run.index("\nasync function ")]
+        self.assertIn("requested_frames", run)
+        self.assertIn("< d.requested_frames", run)
+        self.assertIn("found ", run, "the overshoot case has to be reported too")
+
     def test_the_method_list_is_not_written_into_the_page(self):
         """It carries a licence — Kontext is non-commercial — and a licence in
         two places is the worst thing on the list of things that drift. The
