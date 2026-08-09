@@ -1,0 +1,10 @@
+# Actions only. There are no Python dependencies to watch: the gateway and its
+# test suite are stdlib, and the model environment is pinned deliberately in
+# models.lock.json and updated through ./update.sh, not by a bot.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
