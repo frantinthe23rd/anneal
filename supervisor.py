@@ -56,6 +56,7 @@ import paths  # noqa: E402
 import trim  # noqa: E402
 import vector  # noqa: E402
 import builder  # noqa: E402  (capability_limits reports its constants)
+import sfx      # noqa: E402  (a subprocess one-shot, not a registered service)
 from builder import Press, PressStore  # noqa: E402
 
 LISTEN_HOST = os.environ.get("SUPERVISOR_HOST", "127.0.0.1")
@@ -1142,6 +1143,11 @@ SPRITE_METHODS = {
         "label": "One base sprite, then a directed edit per pose",
     },
 }
+# Stated once. The condition is the part a reader has to act on, so it travels
+# with every refusal and is served through /health rather than retyped in the UI.
+SFX_LICENCE = ("Stability AI Community License — free for research, "
+               "non-commercial use, and commercial use below US $1M annual "
+               "revenue. Outputs are your own.")
 DEFAULT_SPRITE_METHOD = os.environ.get("ANNEAL_SPRITE_METHOD", "sheet")
 KONTEXT_MODEL = os.environ.get(
     "ANNEAL_KONTEXT_MODEL", "akx/FLUX.1-Kontext-dev-mflux-4bit")
@@ -1251,6 +1257,17 @@ def capability_limits():
             "default_method": DEFAULT_SPRITE_METHOD,
             "default_frames": DEFAULT_SPRITE_FRAMES,
             "max_frames": MAX_SPRITE_FRAMES,
+        },
+        # Not a service: no port, no idle timer, nothing to evict. The page
+        # needs to know it exists, what it can be asked for and whether this
+        # host can do it at all.
+        "sfx": {
+            "max_seconds": sfx.MAX_SECONDS,
+            "default_seconds": sfx.DEFAULT_SECONDS,
+            "available": sfx.why_unavailable() is None,
+            "why": sfx.why_unavailable(),
+            "licence": SFX_LICENCE,
+            "evicts_nothing": True,
         },
         # Idle timeouts are deliberately absent: they are already reported
         # per-service, and a second copy is exactly the bug this closes.
@@ -2310,6 +2327,41 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         route = urllib.parse.urlparse(self.path).path
+
+        if route == "/v1/sfx":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            payload, _ = self._body()
+            if payload is None:
+                return              # 413 already sent
+            problem = sfx.problem(payload)
+            if problem:
+                self._send_json({"code": 400, "error": problem}, 400)
+                return
+            missing = sfx.why_unavailable()
+            if missing:
+                self._send_json({"code": 503, "error": missing,
+                                 "licence": SFX_LICENCE}, 503)
+                return
+            # No admission control and no eviction on purpose: 1.49 GB peak
+            # against 7 for music, so a sound effect does not cost a reload of
+            # whatever is warm. Measured, not assumed — see sfx.py.
+            try:
+                made = sfx.generate(payload, os.path.join(outputs.root(), "sfx"))
+            except subprocess.TimeoutExpired:
+                self._send_json({"code": 504, "error": "the effect timed out"}, 504)
+                return
+            except RuntimeError as exc:
+                self._send_json({"code": 502, "error": str(exc)}, 502)
+                return
+            outputs.adopt("sfx", made["path"], {
+                "prompt": made["prompt"], "seconds": made["seconds"],
+                "service": "sfx", "took": made["took"], "request": dict(payload),
+            })
+            made["url"] = "/v1/outputs/file?path=" + urllib.parse.quote(made["path"], safe="")
+            self._send_json({"data": made, "code": 200, "error": None})
+            return
 
         if route == "/v1/sprites":
             if not self._authorized():

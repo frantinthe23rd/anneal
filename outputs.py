@@ -31,7 +31,7 @@ import uuid
 
 import paths
 
-KINDS = ("music", "speech", "images", "vectors", "sprites")
+KINDS = ("music", "speech", "images", "vectors", "sprites", "sfx")
 SIDECAR_SUFFIX = ".json"
 
 # A directory carrying this file is one asset, not the files inside it.

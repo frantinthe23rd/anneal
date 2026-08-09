@@ -52,6 +52,10 @@
     {
       "name": "sprites",
       "description": "Sprite sheets for game work: one FLUX generation containing every frame, cut into separate matted PNGs with transparency."
+    },
+    {
+      "name": "sfx",
+      "description": "Sound effects. The one model here that competes with nothing else."
     }
   ],
   "paths": {
@@ -1507,6 +1511,80 @@
           },
           "501": {
             "description": "method 'kontext' is declared but not implemented yet. Use 'sheet'."
+          }
+        }
+      }
+    },
+    "/v1/sfx": {
+      "post": {
+        "tags": [
+          "sfx"
+        ],
+        "summary": "Generate a sound effect",
+        "description": "A one-shot from a description: a door slam, footsteps on gravel, a UI blip. Returns a 44.1 kHz stereo WAV and files it in the library under `sfx`.\n\n**It does not evict anything.** Every other model here holds 7 GB or more and starting one stops the others. This peaks at 1.49 GB and the runner loads and exits per request, so a sound effect never costs a three-minute music reload — and there is nothing to keep warm, so there is no cold start to wait out either.\n\nGeneration is roughly realtime, measured at 5.2 s wall for 5.0 s of audio on an M4 mini including every load. `seconds` is therefore a time budget as much as a length, and is capped.\n\nThe weights are Stability AI Community licensed: free for research, non-commercial use, and commercial use below US $1M annual revenue. They are optional and not fetched by default — `./anneal models sfx`, about 1.8 GB. Until they are, this returns 503 with the reason and the licence.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "prompt"
+                ],
+                "properties": {
+                  "prompt": {
+                    "type": "string",
+                    "description": "The sound, described. Concrete and physical works better than abstract — 'a heavy wooden door slamming in a stone hallway' rather than 'a door'. Naming the space gives you the tail."
+                  },
+                  "seconds": {
+                    "type": "number",
+                    "default": 5,
+                    "minimum": 1,
+                    "maximum": 30,
+                    "description": "Length of the clip. Refused rather than clamped if out of range."
+                  },
+                  "seed": {
+                    "type": "integer",
+                    "description": "Fixed seed. Unlike the music model, this one is a plain diffusion sample with no planning stage, so a seed is worth more here."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The effect.",
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "path": "…/outputs/sfx/2026-08-09T14-20-01_heavy-wooden-door-slamming.wav",
+                    "url": "/v1/outputs/file?path=…",
+                    "seconds": 5,
+                    "took": 5.2,
+                    "prompt": "heavy wooden door slamming in a stone hallway"
+                  },
+                  "code": 200,
+                  "error": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing prompt, or a length outside 1–30 s."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "502": {
+            "description": "The runner failed; its last line is in `error`."
+          },
+          "503": {
+            "description": "The weights or the runner are not installed here. `error` names what is missing and the command that fixes it."
+          },
+          "504": {
+            "description": "Generation timed out."
           }
         }
       }
