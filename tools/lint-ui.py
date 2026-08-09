@@ -168,6 +168,123 @@ class Doc(HTMLParser):
         del self.stack[depth:]
 
 
+# Anything that is legitimately not defined in the page: language built-ins,
+# browser globals, and the handful of DOM constructors used here. A name absent
+# from this list and from the file is a call that will throw the moment the
+# branch containing it runs.
+JS_GLOBALS = {
+    "if", "for", "while", "switch", "catch", "return", "typeof", "function",
+    "new", "await", "delete", "void", "in", "of", "do", "else", "throw",
+    "Array", "Boolean", "Date", "Error", "JSON", "Map", "Math", "Number",
+    "Object", "Promise", "RegExp", "Set", "String", "Symbol", "WeakMap",
+    "parseInt", "parseFloat", "isNaN", "isFinite", "encodeURIComponent",
+    "decodeURIComponent", "encodeURI", "decodeURI", "escape", "unescape",
+    "setTimeout", "setInterval", "clearTimeout", "clearInterval", "fetch",
+    "alert", "confirm", "prompt", "requestAnimationFrame", "cancelAnimationFrame",
+    "matchMedia", "getComputedStyle", "structuredClone", "queueMicrotask",
+    "Blob", "File", "FileReader", "FormData", "Headers", "Request", "Response",
+    "URL", "URLSearchParams", "AbortController", "Image", "Audio", "Event",
+    "CustomEvent", "IntersectionObserver", "MutationObserver", "ResizeObserver",
+    "TextEncoder", "TextDecoder", "Intl", "BigInt", "Proxy", "Reflect",
+    "console", "document", "window", "navigator", "location", "localStorage",
+    "sessionStorage", "history", "screen", "performance", "crypto",
+    # Not a call — `async (a, b) => …` puts an identifier before a paren.
+    "async",
+}
+
+# `foo(` where foo is a bare identifier — not `.foo(`, not `new foo(`.
+CALL_RE = re.compile(r"(?<![\w.$])([A-Za-z_$][\w$]*)\s*\(")
+# Everything that introduces a name into scope somewhere in the file. Broad on
+# purpose: a false "defined" is a missed bug, but a false "undefined" is a
+# linter that cries wolf and gets ignored, which is worse.
+DEF_RES = [
+    re.compile(r"\bfunction\s*\*?\s*([A-Za-z_$][\w$]*)\s*\("),
+    re.compile(r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)"),
+    re.compile(r"\bclass\s+([A-Za-z_$][\w$]*)"),
+    # Destructuring, parameters and catch bindings: any identifier inside the
+    # parentheses of a definition, and anything bound by => or catch.
+    re.compile(r"\bcatch\s*\(\s*([A-Za-z_$][\w$]*)"),
+    re.compile(r"([A-Za-z_$][\w$]*)\s*=>"),
+    re.compile(r"\bfor\s*\(\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)"),
+]
+PARAM_RE = re.compile(r"(?:function\s*\*?\s*[A-Za-z_$][\w$]*\s*|=>\s*|\bfunction\s*)?\(([^()]*)\)\s*(?:=>|\{)")
+IDENT_RE = re.compile(r"[A-Za-z_$][\w$]*")
+
+
+def blank_js_literals(src):
+    """Replace comments, strings and template literals with spaces.
+
+    Positions are preserved so line numbers still map, and nothing inside a
+    string can be mistaken for code — which is most of what a naive scan finds:
+    "a track (see below)" is prose, not a call to `track`.
+    """
+    out = list(src)
+    i, n = 0, len(src)
+    while i < n:
+        c = src[i]
+        nxt = src[i + 1] if i + 1 < n else ""
+        if c == "/" and nxt == "/":
+            j = src.find("\n", i)
+            j = n if j < 0 else j
+            for k in range(i, j):
+                out[k] = " "
+            i = j
+        elif c == "/" and nxt == "*":
+            j = src.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            for k in range(i, j):
+                if out[k] != "\n":
+                    out[k] = " "
+            i = j
+        elif c in "\"'`":
+            quote, j = c, i + 1
+            while j < n:
+                if src[j] == "\\":
+                    j += 2
+                    continue
+                if src[j] == quote:
+                    j += 1
+                    break
+                j += 1
+            for k in range(i, min(j, n)):
+                if out[k] != "\n":
+                    out[k] = " "
+            i = j
+        else:
+            i += 1
+    return "".join(out)
+
+
+def undefined_calls(src):
+    """Every `name(` whose `name` is defined nowhere in the file.
+
+    The gap this closes cost a shipped bug: removing a tab took the sound-effect
+    handlers out with it, because they sat inside the span being deleted. The
+    page parsed, every id resolved, both linters passed, and `runSfx` threw the
+    moment the tab was opened. A dangling id was already caught; a dangling
+    function was not.
+    """
+    src = blank_js_literals(src)
+    defined = set(JS_GLOBALS)
+    for pattern in DEF_RES:
+        defined.update(pattern.findall(src))
+    for params in PARAM_RE.findall(src):
+        defined.update(IDENT_RE.findall(params))
+    # Object literal keys — `foo: function` and shorthand methods — are reached
+    # through a property, but a bare call to one is still worth not flagging.
+    defined.update(re.findall(r"([A-Za-z_$][\w$]*)\s*:\s*(?:async\s*)?function", src))
+
+    seen = []
+    for m in CALL_RE.finditer(src):
+        name = m.group(1)
+        if name in defined:
+            continue
+        # `new Foo(` and `.foo(` are already excluded by the pattern; keywords
+        # that take a parenthesis are in the globals list.
+        seen.append((m.start(1), name))
+    return seen
+
+
 def line_index(text):
     """Offset -> 1-based line number, for the CSS walker."""
     starts = [0]
@@ -376,6 +493,13 @@ def lint(path, verbose=False):
                 findings.append((start + offset(m.start()) - 1, "dangling-ref",
                                  '%s refers to id "%s", which no markup defines'
                                  % (m.group(0), name)))
+
+    # --------------------------------------------------- calls to nothing
+    for start, src in doc.scripts:
+        offset = line_index(src)
+        for pos, name in undefined_calls(src):
+            findings.append((start + offset(pos) - 1, "undefined-call",
+                             "%s() is called and defined nowhere" % name))
 
     # ------------------------------------------------------------ CSS
     css = "\n".join(strip_comments(s) for _, s in doc.styles)

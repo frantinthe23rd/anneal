@@ -54,10 +54,11 @@ loaded; if behaviour doesn't match the code, check the process start time first.
 - **`tools/lint-ui.py` before committing `ui.html`.** Stdlib plus the system
   JavaScriptCore, no Node — deliberately, and it must not become the reason to
   install one. It catches the classes that raise nothing in a browser: a
-  `$("id")` left bound to markup that was deleted, `var(--x)` with no
-  definition, a colour token declared in the dark `:root` and not the light one,
-  a duplicate id, a syntax error in the inline script, an `http(s)` subresource
-  breaking the "fetches nothing externally" promise. It does not replace the
+  `$("id")` left bound to markup that was deleted, a call to a function nothing
+  defines any more, `var(--x)` with no definition, a colour token declared in
+  the dark `:root` and not the light one, a duplicate id, a syntax error in the
+  inline script, an `http(s)` subresource breaking the "fetches nothing
+  externally" promise. It does not replace the
   screenshot; the two see different halves of the file.
 - **API endpoints are written test-first.** Before the handler exists: the
   request shape, the `{data, code, error}` envelope it returns, what an
@@ -102,6 +103,13 @@ loaded; if behaviour doesn't match the code, check the process start time first.
   than fails, because every word has a legitimate use; `--strict` fails only on
   the first list. `lint-prose: off` / `on` brackets a block that has to quote
   them. <!-- lint-prose: on -->
+
+- **Deleting a span of `ui.html` deletes whatever was inserted into it.**
+  Removing the Animation tab took the two sound-effect handlers with it, because
+  they had been added between the sprite code and `runImage`. Nothing caught it:
+  the page parsed, every id resolved, both linters passed, 809 tests were green
+  and so was CI. It threw on the first click. `lint-ui.py` now reports a call to
+  a function nothing defines, which is the check that would have.
 
 - **Docs change with code.** `README.md`, `INTEGRATION.md` and `openapi.json`
   are part of the change, not follow-up. An endpoint that gains a parameter,

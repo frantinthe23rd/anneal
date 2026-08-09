@@ -2365,6 +2365,43 @@ async function runSpeech() {
    every later image from an old one would be baffling. */
 let varyFrom = null;
 
+/* Sound effects. The only generator here that competes with nothing else — it
+   peaks at 1.49 GB and exits, so there is no cold start to warn about and no
+   model to evict. The hint says so, and says what is missing when the weights
+   are not installed; both come from /health rather than from here. */
+function renderSfxHint() {
+  const spec = limits.sfx || {};
+  const hint = $("fxHint");
+  if (spec.max_seconds) $("fxSeconds").max = spec.max_seconds;
+  hint.textContent = spec.available === false
+    ? (spec.why || "Sound effects are not installed on this host.")
+    : "Roughly realtime — a five-second effect takes about five seconds. "
+      + "It loads and exits per request, so it never unloads the music model. "
+      + (spec.licence || "");
+}
+
+async function runSfx() {
+  const prompt = $("fxPrompt").value.trim();
+  if (!prompt) { setStatus("Describe the sound first.", "warn"); return; }
+  const body = { prompt, seconds: Number($("fxSeconds").value) || 5 };
+  const seed = $("fxSeed").value.trim();
+  if (seed) body.seed = Number(seed);
+
+  // No cold-start warning: there is nothing to warm.
+  setStatus("Generating…", "", { bar: true });
+  const d = (await api("/v1/sfx", { method: "POST", body })).data || {};
+  const blob = await api(d.url, { raw: true });
+  const url = URL.createObjectURL(blob); blobUrls.push(url);
+  addResult({
+    kind: "sfx", prompt, audio: url,
+    filename: slug(prompt) + ".wav",
+    meta: d.seconds + "s · WAV 44.1 kHz",
+    took: d.took ? d.took + "s" : null,
+    path: d.path,
+  });
+  hideStatus();
+}
+
 async function runImage() {
   const prompt = $("iPrompt").value.trim();
   if (!prompt) { setStatus("Describe the image first.", "warn"); return; }
