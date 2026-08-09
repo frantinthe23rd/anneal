@@ -52,10 +52,18 @@ many were spared.
 tools/lint-ui.py       # silent and exit 0 when clean
 ```
 
-Seven checks, no JavaScript toolchain: HTML well-formedness, duplicate ids, that
-the inline script parses, dangling `$("id")` references, unresolved CSS custom
-properties, external subresources, and light/dark token parity. Each one encodes
-a fault this project has actually shipped.
+Eight checks, no JavaScript toolchain: HTML well-formedness, duplicate ids, that
+the inline script parses, dangling `$("id")` references, calls to a function
+nothing defines, unresolved CSS custom properties, external subresources, and
+light/dark token parity. Each one encodes a fault this project has actually
+shipped.
+
+The last one added is the newest scar. Removing a tab deleted a span of
+`ui.html` that also held two handlers for a different tab, because they had been
+inserted inside it. The page parsed, every id resolved, both linters were clean
+and the whole suite was green — and the Effects tab threw "Can't find variable:
+runSfx" the first time anyone opened it. A dangling id was caught; a dangling
+function was not.
 
 ## Cutting sprite sheets
 
