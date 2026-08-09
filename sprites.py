@@ -392,6 +392,10 @@ def main(argv=None):
     ap.add_argument("--out", help="directory for the cut frames; omit to only report")
     ap.add_argument("--opaque", action="store_true",
                     help="keep the background instead of cutting alpha")
+    ap.add_argument("--cutout", metavar="DEST",
+                    help="matte the whole image onto transparency and write it to DEST, "
+                         "without cutting it into frames. One subject, not a sheet — "
+                         "this is the half of the pipeline that holds up on its own")
     ap.add_argument("--json", action="store_true",
                     help="print the atlas as JSON on stdout and nothing else")
     ap.add_argument("--no-model", action="store_true",
@@ -403,6 +407,17 @@ def main(argv=None):
     ap.add_argument("--distance", type=int, default=CONTENT_DISTANCE,
                     help="how far from the background a pixel must be to be content")
     args = ap.parse_args(argv)
+
+    if args.cutout:
+        # No frame finding, no atlas, no preview: the caller already has the one
+        # image it wants and only needs the background gone.
+        img = cut_alpha(_load(args.sheet))
+        img.save(args.cutout)
+        if args.json:
+            print(json.dumps({"path": args.cutout}))
+        else:
+            print("wrote %s" % args.cutout)
+        return 0
 
     if args.json:
         if not args.out:

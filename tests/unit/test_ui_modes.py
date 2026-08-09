@@ -145,34 +145,24 @@ class TestTheMeasuredClaims(unittest.TestCase):
         game-dev agent finds the endpoint."""
         self.assertIn("/v1/sprites", self.src)
 
-    def test_the_animation_tab_shows_the_loop_and_the_frames(self):
-        """It came back because the GIF is the only way to answer "does this
-        read as one character moving", and the strip is the only way to answer
-        "which frame is wrong". A tab that showed one without the other would
-        be missing half the reason it exists."""
-        self.assertIn("runSprites", self.src)
-        self.assertIn("preview_url", self.src)
-        self.assertIn("r.frames", self.src)
-        self.assertIn(".frames .fr", self.src)
+    def test_no_dead_animation_code_survives_the_tab_going(self):
+        """The tab came back and went again — on the evidence of using it, not
+        on a change of mind. The character drifts between frames and the pose
+        instructions are not followed, so the loop reads as several characters
+        rather than one moving. That is a model problem; presenting it nicely
+        does not fix it. What is left behind is a run handler, a render branch
+        and CSS nothing can reach, and lint-ui.py sees unresolved ids rather
+        than unreachable branches."""
+        for dead in ("runSprites", "renderSpriteMethods", "r.frames",
+                     ".frames .fr", "item.anim", "spPrompt"):
+            self.assertNotIn(dead, self.src, dead)
 
-    def test_a_frame_count_that_disagrees_with_the_request_is_stated(self):
-        """Measured on identical four-pose briefs: one run returned three
-        frames, another seven. The cutter finds sprite-shaped regions and drops
-        blank ones — it never sees the number that was asked for — so the form
-        can be left showing 4 next to a result that is neither."""
-        run = self.src[self.src.index("async function runSprites"):]
-        run = run[:run.index("\nasync function ")]
-        self.assertIn("requested_frames", run)
-        self.assertIn("< d.requested_frames", run)
-        self.assertIn("found ", run, "the overshoot case has to be reported too")
-
-    def test_the_method_list_is_not_written_into_the_page(self):
-        """It carries a licence — Kontext is non-commercial — and a licence in
-        two places is the worst thing on the list of things that drift. The
-        select is built from /health's limits block."""
-        self.assertIn("renderSpriteMethods", self.src)
-        self.assertNotIn("Non-Commercial", self.src)
-        self.assertNotIn('value="kontext"', self.src)
+    def test_the_endpoint_survives_the_tab(self):
+        """It is still worth calling — a game-dev agent wants frames, not a
+        page — and the API list is the only place it can now be found."""
+        self.assertIn("/v1/sprites", self.src)
+        import services
+        self.assertIn("/v1/sprites", services.GATEWAY_ROUTES)
 
     def test_no_dead_video_code_survives_its_removal(self):
         """Video was removed after measuring it: 9 frames in 3 min 9 s at a

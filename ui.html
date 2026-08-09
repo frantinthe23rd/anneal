@@ -351,6 +351,12 @@ header {
 .svc .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cold); flex: none; }
 .svc .nm { color: var(--text); font-size: 12.5px; }
 .svc .st { color: var(--faint); font-family: var(--mono); font-size: 11px; }
+/* Neither cold nor hot: it loads and exits inside the request. Marked as
+   present and ready rather than as a temperature it never has. */
+.svc.ondemand .dot { background: var(--quench); }
+.svc.ondemand .st { color: var(--quench); }
+.svc.absent { opacity: .55; }
+.svc.absent .st { color: var(--faint); }
 .svc.hot { background: var(--heat-wash); }
 .svc.hot .dot { background: var(--heat-1); box-shadow: 0 0 0 3px rgba(255,95,31,.18); }
 .svc.hot .st { color: var(--heat-2); }
@@ -686,26 +692,14 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 /* The frames a set was cut into. Transparent PNGs, so they need a surface
    behind them or they are invisible on a dark page — a chequerboard, because
    the transparency is the point of the output. */
-/* The loop is capped rather than given the whole column. Full width pushed the
-   frame strip below the fold, and being able to see the loop and the frames it
-   is made of at the same time is the reason this tab exists. */
-.item.anim > img { max-height: 260px; width: auto; max-width: 100%;
-  background-color: var(--surface-2);
+/* A cut-out is transparent, and on a dark page that means invisible. The
+   chequerboard is the convention for "this has an alpha channel" and doubles as
+   proof the background actually went. */
+.item img.cut { background-color: var(--surface-2);
   background-image:
     linear-gradient(45deg, var(--line) 25%, transparent 25%, transparent 75%, var(--line) 75%),
     linear-gradient(45deg, var(--line) 25%, transparent 25%, transparent 75%, var(--line) 75%);
-  background-size: 16px 16px; background-position: 0 0, 8px 8px; border-radius: 8px; }
-.frames { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-.frames .fr { position: relative; border: 1px solid var(--line); border-radius: 7px;
-  padding: 4px; background-color: var(--surface-2);
-  background-image:
-    linear-gradient(45deg, var(--line) 25%, transparent 25%, transparent 75%, var(--line) 75%),
-    linear-gradient(45deg, var(--line) 25%, transparent 25%, transparent 75%, var(--line) 75%);
-  background-size: 12px 12px; background-position: 0 0, 6px 6px; }
-.frames .fr img { display: block; width: 92px; height: auto; }
-.frames .fr .n { position: absolute; right: 5px; bottom: 4px; font-size: 10px;
-  font-family: var(--mono); color: var(--text); background: var(--bg);
-  border-radius: 4px; padding: 0 4px; }
+  background-size: 18px 18px; background-position: 0 0, 9px 9px; }
 .det { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); display: none; }
 .det.open { display: block; }
 .det dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; }
@@ -1018,18 +1012,18 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
       <!-- Music and Press sit together: Press is the album-length version of
            the same thing, and they share the one heavy model. Speech, Image and
            Video are the other modalities, and Chat is the side channel.
-           Animation (/v1/sprites) has a tab now. It was API-only on the
-           reasoning that a frame sequence is not something anyone sits and
-           makes by hand — which was true of *making* one and wrong about
-           looking at it. The set comes back as a preview GIF, and judging
-           whether the frames hold together as a character is exactly the thing
-           that needs an eye rather than a JSON response. Video was built,
-           measured and removed — see the README. -->
+           Animation had a tab and lost it again, on the evidence of using it:
+           the character changes between frames and the pose instructions are
+           not followed, so the loop reads as several characters rather than
+           one moving. That is a model problem, not a surface problem, and a
+           tab that presents a bad result nicely is worse than no tab. The
+           endpoint stays for game-dev agents. What *did* hold up is a single
+           cut-out sprite, so that is now an option under Image. Video was
+           built, measured and removed the same way — see the README. -->
       <button class="tab" role="tab" data-mode="music"  aria-selected="true">Music</button>
       <button class="tab" role="tab" data-mode="press"  aria-selected="false">Press</button>
       <button class="tab" role="tab" data-mode="speech" aria-selected="false">Speech</button>
       <button class="tab" role="tab" data-mode="image"  aria-selected="false">Image</button>
-      <button class="tab" role="tab" data-mode="sprites" aria-selected="false">Animation</button>
       <button class="tab" role="tab" data-mode="sfx"     aria-selected="false">Effects</button>
       <button class="tab" role="tab" data-mode="chat"   aria-selected="false">Chat</button>
     </div>
@@ -1156,6 +1150,14 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
           </div>
           <div class="hint">Schnell is distilled for 4 steps — more mostly costs time. Smaller sizes are proportionally faster.</div>
 
+          <div class="field">
+            <label class="check"><input type="checkbox" id="iCutout"> Cut out the background</label>
+            <div class="hint">Returns the subject on transparency — a game sprite, an icon, a
+              cut-out for compositing. Ask for one character or object against a simple
+              background; a landscape has no subject to separate. It mattes the image after
+              generating it, so it costs a few seconds rather than a different model.</div>
+          </div>
+
           <div class="field hidden" id="varyBox">
             <label class="f">Varying an existing image</label>
             <div class="varyrow">
@@ -1175,49 +1177,6 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
                 you get the same brass watch. For a different subject, generate afresh.</div>
             </div>
           </div>
-        </section>
-
-        <!-- ANIMATION -->
-        <section data-panel="sprites" class="hidden">
-          <label class="f" for="spPrompt">Describe the character</label>
-          <textarea id="spPrompt" placeholder="a small green knight with a round shield"></textarea>
-          <div class="hint">One image is generated and cut into frames. That is the design, not a
-            shortcut: separate generations of “the same character” produce different characters,
-            so every frame has to come out of a single sample.</div>
-
-          <div class="field grid2">
-            <div>
-              <label class="f" for="spFrames">Frames</label>
-              <input type="number" id="spFrames" value="4" min="2" max="8">
-            </div>
-            <div>
-              <label class="f" for="spStyle">Style</label>
-              <input type="text" id="spStyle" value="flat pixel art">
-            </div>
-          </div>
-
-          <div class="field">
-            <label class="f" for="spPoses">Poses <span style="text-transform:none;letter-spacing:0">(optional, one per line)</span></label>
-            <textarea id="spPoses" placeholder="standing idle&#10;mid stride, left leg forward&#10;mid stride, right leg forward&#10;shield raised"></textarea>
-            <div class="hint">Naming poses replaces the frame count — four poses is four frames.
-              Leave it blank for an evenly spaced walk cycle.</div>
-          </div>
-
-          <div class="field grid2">
-            <div>
-              <label class="f" for="spMethod">Method</label>
-              <select id="spMethod"></select>
-            </div>
-            <div>
-              <label class="f" for="spSize">Sheet size</label>
-              <select id="spSize">
-                <option value="1344x768">1344 × 768 — a row of frames</option>
-                <option value="1024x1024">1024 × 1024 — square</option>
-                <option value="1536x640">1536 × 640 — wide, more frames</option>
-              </select>
-            </div>
-          </div>
-          <div class="hint" id="spMethodHint"></div>
         </section>
 
         <!-- SOUND EFFECTS -->
@@ -1449,6 +1408,18 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
     </section>
 
     <section>
+      <h3>Cut-outs</h3>
+      <p><b>Cut out the background</b> on the Image tab returns the subject on transparency —
+         a game sprite, an icon, something to composite. The image is generated as normal and
+         then matted, so it costs a few seconds rather than a different model. Ask for one
+         character or object against a simple background; a landscape has no subject to
+         separate.</p>
+      <p>There was an Animation tab that cut a generated sheet into a walk cycle. It was
+         removed after using it: the character changes between frames and the pose
+         instructions are not followed, so a set reads as several characters rather than one
+         moving. A single cut-out was the half of that pipeline that held up, and this is it.
+         <code>/v1/sprites</code> still exists for callers who want the frames.</p>
+
       <h3>Effects — a sound, not a song</h3>
       <p>Describe a sound and get a WAV: a door slam, footsteps on gravel, a UI blip.
          <em>“A heavy wooden door slamming in a stone hallway”</em> gives you the reverb tail;
@@ -1674,7 +1645,7 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
         <tr><td><code>GET</code></td><td><code>/v1/voices</code></td><td>Voice list — starts the speech process, loads no weights</td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/images/generations</code></td><td>Image, as a path or base64</td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/sfx</code></td><td>A sound effect as a WAV. Loads and exits, so it evicts nothing</td></tr>
-        <tr><td><code>POST</code></td><td><code>/v1/sprites</code></td><td>An animation set as separate transparent PNGs, plus a preview GIF. Also the <b>Animation</b> tab</td></tr>
+        <tr><td><code>POST</code></td><td><code>/v1/sprites</code></td><td>An animation set as separate transparent PNGs, plus a preview GIF. <b>API only</b> — see the note under Image</td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/vector</code></td><td>An SVG icon. <b>Experimental</b> — see the README</td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/chat/completions</code></td><td>OpenAI-shaped chat, streaming</td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/text</code></td><td>One-shot completion</td></tr>
@@ -1956,10 +1927,10 @@ async function httpError(res) {
    omitted `video` the day it was added, which is the same frozen-literal bug
    this project has now fixed three times over in its tests.
 
-   Note there is no Animation chip and there should not be: animation is the
-   image model wearing a different hat, so the `image` chip is already telling
-   the truth about what is loaded. A chip per *tab* rather than per *model*
-   would claim two models where there is one. */
+   Effects is appended separately rather than added here, because it is not a
+   service and has no state this list could report — see renderForge. A chip per
+   *model* rather than per *tab* is the rule: cutting out an image is the image
+   model wearing a different hat, so it gets no chip of its own. */
 const SERVICE_ORDER = ["music", "speech", "text", "image"];
 function forgeServices() {
   // `health` also carries host stats under __system, which is not a model and
@@ -1970,12 +1941,12 @@ function forgeServices() {
     .concat(known.filter((n) => !SERVICE_ORDER.includes(n)));
 }
 const SERVICE_FOR_MODE = { music: "music", speech: "speech", image: "image",
-                           chat: "text", sprites: "image" };
+                           chat: "text" };
 // Effects deliberately map to no service: nothing stays warm, so a chip saying
 // "cold" would be reporting a state that never changes.
 let health = {};
 // The `limits` block from /health, kept rather than only poured into the
-// markup: the Animation form builds its method list out of it, licence and
+// markup: the Effects chip and the capability hints are built out of it, so
 // all, so nothing about the methods is written down twice.
 let limits = {};
 
@@ -2003,7 +1974,11 @@ function fmtMem(mb) {
   return mb >= 1024 ? (mb / 1024).toFixed(1) + " GB" : Math.round(mb) + " MB";
 }
 
-const STATE_LABEL = { cold: "cold", heating: "heating", hot: "hot" };
+const STATE_LABEL = { cold: "cold", heating: "heating", hot: "hot",
+                      // Sound effects load and exit inside one request, so they
+                      // are never cold and never hot. A chip reading "cold"
+                      // would show a state that can never change.
+                      ondemand: "on demand" };
 
 function renderForge() {
   const box = $("forge");
@@ -2034,6 +2009,25 @@ function renderForge() {
     }[state];
     box.appendChild(chip);
   });
+
+  // Sound effects are not in `health.services` and should not be: no process,
+  // no port, no idle timer. But the strip is where someone looks to find out
+  // what this machine can do, and leaving it off made the one generator that
+  // costs nothing the only one you could not see.
+  const fx = limits.sfx;
+  if (fx) {
+    const usable = fx.available !== false;
+    const chip = el("div", "svc " + (usable ? "ondemand" : "absent")
+                    + (busy && mode === "sfx" ? " working" : ""));
+    chip.appendChild(el("span", "dot"));
+    chip.appendChild(el("span", "nm", "effects"));
+    chip.appendChild(el("span", "st", usable ? STATE_LABEL.ondemand : "not installed"));
+    chip.title = usable
+      ? "Sound effects load and exit per request — about 1.5 GB for a few "
+        + "seconds, so nothing is kept warm and nothing else is unloaded."
+      : (fx.why || "Sound effects are not installed on this host.");
+    box.appendChild(chip);
+  }
 
   // The page heats while anything is generating, and cools when the last job
   // lands. renderForge already runs on every state change and is the only place
@@ -2131,7 +2125,7 @@ function addResult(r) { results.unshift(r); renderResults(); return r; }
    does. Everything landed in one pile before, so generating a track and then
    switching to Image left the track sitting under the Image tab. */
 const RESULT_KIND_FOR_MODE = { music: "music", speech: "speech", image: "image",
-                               sprites: "animation", sfx: "sfx" };
+                               sfx: "sfx" };
 
 function shownResults() {
   const kind = RESULT_KIND_FOR_MODE[mode];
@@ -2147,8 +2141,7 @@ function renderResults() {
   box.textContent = "";
 
   shown.forEach((r) => {
-    const item = el("div", "item" + (r.failed ? " failed" : "") + (r.pending ? " pending" : "")
-                    + (r.kind === "animation" ? " anim" : ""));
+    const item = el("div", "item" + (r.failed ? " failed" : "") + (r.pending ? " pending" : ""));
     const top = el("div", "top");
     top.appendChild(el("span", "kind", r.kind));
     top.appendChild(el("div", "pr", r.prompt));
@@ -2166,27 +2159,11 @@ function renderResults() {
     } else if (r.image) {
       const i = document.createElement("img");
       i.src = r.image; i.alt = r.prompt; i.loading = "lazy";
+      if (r.cutout) i.className = "cut";
       item.appendChild(i);
       // A set is the loop *and* the frames it is made of. The loop answers
       // "does this read as one character moving"; the strip answers "which
       // frame is wrong", and neither question is answerable from the other.
-      if (r.shortfall) {
-        const w = el("div", "prog", r.shortfall);
-        w.style.color = "var(--heat-2)";
-        item.appendChild(w);
-      }
-      if (r.frames && r.frames.length) {
-        const strip = el("div", "frames");
-        r.frames.forEach((f, n) => {
-          const cell = el("div", "fr");
-          const fi = document.createElement("img");
-          fi.src = f.url; fi.alt = "frame " + (n + 1); fi.loading = "lazy";
-          cell.appendChild(fi);
-          cell.appendChild(el("span", "n", String(n + 1)));
-          strip.appendChild(cell);
-        });
-        item.appendChild(strip);
-      }
     }
 
     if (!r.pending && !r.failed) {
@@ -2195,12 +2172,6 @@ function renderResults() {
       dl.href = r.audio || r.image; dl.download = r.filename || "anneal-output";
       dl.textContent = "Download";
       foot.appendChild(dl);
-      if (r.sheetUrl) {
-        const sh = el("button", null, "Sheet");
-        sh.title = "The single generation every frame was cut from";
-        sh.onclick = () => showArtwork(r.sheetPath, r.prompt + " — the sheet it was cut from");
-        foot.appendChild(sh);
-      }
       if (r.kind === "image" && r.path) {
         const v = el("button", null, "Vary this");
         v.title = "Generate a variation that keeps this composition";
@@ -2223,7 +2194,6 @@ const EMPTY_LINE = {
   speech: "Nothing spoken yet. Write a line and press Forge.",
   image:  "No images yet. Describe one and press Forge.",
   press:  "No records yet. Write a brief and press Press.",
-  sprites: "No animations yet. Describe a character and press Forge.",
   sfx:     "No effects yet. Describe a sound and press Forge.",
 };
 function setEmptyLine(m) {
@@ -2254,7 +2224,6 @@ async function run() {
   try {
     if (mode === "music") await runMusic();
     else if (mode === "speech") await runSpeech();
-    else if (mode === "sprites") await runSprites();
     else if (mode === "sfx") await runSfx();
     else await runImage();
   } catch (e) {
@@ -2396,136 +2365,6 @@ async function runSpeech() {
    every later image from an old one would be baffling. */
 let varyFrom = null;
 
-/* The method list comes from /health, never from here. It carries a licence —
-   Kontext is non-commercial — and a licence written down in two places is the
-   worst thing on the list of things that drift. `available` is the server's own
-   answer, asked of the same check the request path uses, so the form cannot
-   offer something that would come back 501 or 503. */
-function renderSpriteMethods() {
-  const sel = $("spMethod"), hint = $("spMethodHint");
-  const spec = (limits.sprites || {});
-  const methods = spec.methods || {};
-  const names = Object.keys(methods);
-  if (!names.length) { hint.textContent = ""; return; }
-  if (sel.options.length !== names.length) {
-    sel.textContent = "";
-    names.forEach((name) => {
-      const m = methods[name];
-      const o = el("option", null, m.label + (m.available ? "" : " — unavailable"));
-      o.value = name;
-      o.disabled = !m.available;
-      sel.appendChild(o);
-    });
-    sel.value = methods[spec.default_method] && methods[spec.default_method].available
-      ? spec.default_method
-      : (names.find((n) => methods[n].available) || names[0]);
-  }
-  if (spec.max_frames) $("spFrames").max = spec.max_frames;
-  const chosen = methods[sel.value] || {};
-  hint.textContent = (chosen.available ? "" : (chosen.why || "Not available here") + ". ")
-    + (chosen.licence || "");
-}
-
-/* Sound effects. The only generator here that competes with nothing else — it
-   peaks at 1.49 GB and exits, so there is no cold start to warn about and no
-   model to evict. The hint says so, and says what is missing when the weights
-   are not installed; both come from /health rather than from here. */
-function renderSfxHint() {
-  const spec = limits.sfx || {};
-  const hint = $("fxHint");
-  if (spec.max_seconds) $("fxSeconds").max = spec.max_seconds;
-  hint.textContent = spec.available === false
-    ? (spec.why || "Sound effects are not installed on this host.")
-    : "Roughly realtime — a five-second effect takes about five seconds. "
-      + "It loads and exits per request, so it never unloads the music model. "
-      + (spec.licence || "");
-}
-
-async function runSfx() {
-  const prompt = $("fxPrompt").value.trim();
-  if (!prompt) { setStatus("Describe the sound first.", "warn"); return; }
-  const body = { prompt, seconds: Number($("fxSeconds").value) || 5 };
-  const seed = $("fxSeed").value.trim();
-  if (seed) body.seed = Number(seed);
-
-  // No cold-start warning: there is nothing to warm.
-  setStatus("Generating…", "", { bar: true });
-  const d = (await api("/v1/sfx", { method: "POST", body })).data || {};
-  const blob = await api(d.url, { raw: true });
-  const url = URL.createObjectURL(blob); blobUrls.push(url);
-  addResult({
-    kind: "sfx", prompt, audio: url,
-    filename: slug(prompt) + ".wav",
-    meta: d.seconds + "s · WAV 44.1 kHz",
-    took: d.took ? d.took + "s" : null,
-    path: d.path,
-  });
-  hideStatus();
-}
-
-async function runSprites() {
-  const prompt = $("spPrompt").value.trim();
-  if (!prompt) { setStatus("Describe the character first.", "warn"); return; }
-  const poses = $("spPoses").value.split("\n").map((p) => p.trim()).filter(Boolean);
-
-  const cold = coldWarning("image");
-  setStatus(cold || "Generating the sheet, then cutting it…", cold ? "warn" : "", { bar: true });
-
-  const body = {
-    prompt,
-    style: $("spStyle").value.trim() || "flat pixel art",
-    size: $("spSize").value,
-    method: $("spMethod").value,
-  };
-  // The pose list *is* the frame count when there is one — asking for four
-  // frames and naming six poses is a contradiction the server resolves by
-  // ignoring one of them, so do not send both.
-  if (poses.length) body.poses = poses;
-  else body.frames = Number($("spFrames").value) || 4;
-
-  const d = (await api("/v1/sprites", { method: "POST", body })).data || {};
-
-  // Fetched through the API so the auth header is applied; <img src> cannot
-  // send one. The preview is the thing being judged, so it is fetched first.
-  let previewUrl = null;
-  if (d.preview_url) {
-    const blob = await api(d.preview_url, { raw: true });
-    previewUrl = URL.createObjectURL(blob); blobUrls.push(previewUrl);
-  }
-  const frames = [];
-  for (const f of d.frames || []) {
-    if (!f.url) continue;
-    const blob = await api(f.url, { raw: true });
-    const u = URL.createObjectURL(blob); blobUrls.push(u);
-    frames.push({ url: u, path: f.file });
-  }
-
-  addResult({
-    kind: "animation", prompt,
-    image: previewUrl || (frames[0] || {}).url,
-    frames,
-    filename: slug(prompt) + ".gif",
-    meta: frames.length + " frame(s)" + (d.fps ? " · " + d.fps + " fps" : "")
-          + " · " + body.style,
-    // The count can miss in both directions, and both were measured on four
-    // -pose briefs: one run returned three frames, another seven. The cutter
-    // finds sprite-shaped regions on the sheet and drops blank ones — it does
-    // not know how many were asked for. Either way the number in the form is
-    // now disagreeing with the result, so say which happened.
-    shortfall: (!d.requested_frames || frames.length === d.requested_frames) ? null
-      : frames.length < d.requested_frames
-        ? "Asked for " + d.requested_frames + ", kept " + frames.length
-          + " — the rest came out blank on the sheet and were dropped rather than "
-          + "shipped as empty frames. Generating again usually fills them."
-        : "Asked for " + d.requested_frames + ", found " + frames.length
-          + " — the model drew more separable figures than there were poses, and "
-          + "each is cut as its own frame. Check the strip: the extras are usually "
-          + "a split pose rather than a new one.",
-    sheetUrl: d.sheet_url, sheetPath: d.sheet,
-  });
-  hideStatus();
-}
-
 async function runImage() {
   const prompt = $("iPrompt").value.trim();
   if (!prompt) { setStatus("Describe the image first.", "warn"); return; }
@@ -2538,6 +2377,7 @@ async function runImage() {
     prompt, size: $("iSize").value, steps: Number($("iSteps").value) || 4,
     n: 1, response_format: "path",
   };
+  if ($("iCutout").checked) body.cutout = true;
   if (init) {
     body.init_image = init.path;
     body.retention = Number($("iRetain").value) || 0.7;
@@ -2545,6 +2385,11 @@ async function runImage() {
   }
 
   const res = await api("/v1/images/generations", { method: "POST", body });
+  // The image is worth having even when the matting failed, so the server sends
+  // it back opaque with a reason rather than failing the request.
+  if (res.cutout_error) {
+    setStatus("Generated, but not cut out: " + res.cutout_error, "warn");
+  }
 
   for (const img of res.data || []) {
     // Fetch through the API so the auth header is applied; <img src> can't send one.
@@ -2552,6 +2397,7 @@ async function runImage() {
     const url = URL.createObjectURL(blob); blobUrls.push(url);
     addResult({
       kind: "image", prompt, image: url, filename: slug(prompt) + ".png",
+      cutout: !!img.cutout,
       meta: body.size + (init ? " · variation" : ""), seed: img.seed,
       path: img.path, size: body.size,
     });
@@ -3441,6 +3287,7 @@ function applyRequest(kind, req) {
     $("iPrompt").value = req.prompt || "";
     if (req.size) $("iSize").value = req.size;
     if (req.steps) $("iSteps").value = req.steps;
+    $("iCutout").checked = !!req.cutout;
   }
   setStatus("Settings loaded from that result — adjust and forge again.", "");
 }
@@ -3450,9 +3297,9 @@ function applyRequest(kind, req) {
    down — and never had a Press filter at all, which left finished records
    reachable only by scrolling past everything else. */
 const LIB_KIND_FOR_MODE = { music: "music", speech: "speech", image: "images",
-                            press: "press", sprites: "sprites", sfx: "sfx" };
+                            press: "press", sfx: "sfx" };
 const LIB_TITLE = { music: "Saved tracks", speech: "Saved speech", image: "Saved images",
-                    press: "Records", sprites: "Animations", sfx: "Saved effects" };
+                    press: "Records", sfx: "Saved effects" };
 
 function setLibrary(on) {
   libView = on;
@@ -4476,7 +4323,6 @@ document.querySelectorAll(".tab").forEach((tab) => {
     // Refreshed on arrival rather than once at load: a record finished in this
     // session adds an artist, and a stale list would not offer them.
     if (mode === "press") loadArtists();
-    if (mode === "sprites") renderSpriteMethods();
     if (mode === "sfx") renderSfxHint();
     hideStatus();
     showPage("studio");          // also swaps .cols for the chat view
@@ -4495,7 +4341,6 @@ document.querySelectorAll("#mVocal button").forEach((b) => {
 });
 $("go").onclick = run;
 $("pAdopt").onchange = describeAdoption;
-$("spMethod").onchange = renderSpriteMethods;
 $("btnLibrary").onclick = () => setLibrary(!libView);
 $("varyCancel").onclick = clearVary;
 $("btnWrite").onclick = writeLyrics;

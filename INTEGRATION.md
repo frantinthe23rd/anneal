@@ -370,6 +370,17 @@ endpoint returns 503 naming what is missing. They are Stability AI Community
 licensed: free for research, non-commercial use, and commercial use below
 US $1M annual revenue.
 
+**A single cut-out.** `cutout: true` on `POST /v1/images/generations` returns the
+subject on transparency instead of on its background — matted after generating,
+so it costs seconds rather than a different model. If rembg is not installed the
+image still comes back, opaque, with `cutout_error` saying why: the generation
+cost a model load and is not worth discarding over a post-processing step.
+
+`/v1/sprites` still cuts a sheet into frames, but the Animation tab that drove
+it was removed after use — the character drifts between frames and the pose
+instructions are not followed, so a set reads as several characters rather than
+one moving. The single cut-out is the half that held up.
+
 **Sprite methods are reported, not assumed.** `/health` → `limits.sprites`
 lists every method with its label, its licence, whether this host can run it and
 why not when it cannot. Read it before offering a choice: `kontext` needs an
