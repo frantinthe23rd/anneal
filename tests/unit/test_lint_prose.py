@@ -93,3 +93,38 @@ class TestTheRepoStaysClean(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWhatCountsAsPublic(unittest.TestCase):
+    """The set of files scanned by default used to be seven filenames written
+    out. CONTRIBUTING.md and SECURITY.md were both added to the repo without
+    being added to it, so the two pages a stranger is most likely to read were
+    the two nothing checked. Same shape as the four other copied lists this
+    repo has been bitten by."""
+
+    def paths(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "lint_prose", os.path.join(REPO_ROOT, "tools", "lint-prose.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.public_paths()
+
+    def test_every_top_level_document_is_scanned(self):
+        import subprocess
+        tracked = subprocess.run(["git", "ls-files"], cwd=REPO_ROOT,
+                                 capture_output=True, text=True).stdout.split()
+        expected = {p for p in tracked
+                    if p.endswith(".md") and "/" not in p and p != "CLAUDE.md"}
+        self.assertTrue(expected, "no top-level markdown found — the query is wrong")
+        self.assertLessEqual(expected, set(self.paths()))
+
+    def test_the_working_notes_are_not_a_visitors_page(self):
+        # CLAUDE.md argues with itself about wording on purpose; it is for
+        # contributors, where these words are usually doing real work.
+        self.assertNotIn("CLAUDE.md", self.paths())
+
+    def test_the_non_markdown_surfaces_are_still_there(self):
+        paths = self.paths()
+        for surface in ("ui.html", "openapi.json"):
+            self.assertIn(surface, paths)

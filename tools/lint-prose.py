@@ -49,8 +49,23 @@ SUSPECT = ["deliberately", "deliberate", "genuinely", "actually", "of course",
 
 # What a visitor reads. Everything else is for contributors, where the same
 # words are usually doing real work.
-PUBLIC = ["README.md", "INTEGRATION.md", "ui.html", "openapi.json",
-          "tools/README.md", "design/DESIGN.md", "assets/vendor/README.md"]
+#
+# Derived, not listed. The list used to be seven filenames, and CONTRIBUTING.md
+# and SECURITY.md were both added to the repo without being added to it — so
+# the two documents most likely to be read by a stranger were the two nothing
+# checked. Every markdown file at the top level is public by construction, and
+# the rest are the surfaces that are public without being markdown.
+PUBLIC_EXTRA = ["ui.html", "openapi.json", "tools/README.md",
+                "design/DESIGN.md", "assets/vendor/README.md"]
+
+
+def public_paths():
+    tracked = subprocess.run(["git", "ls-files"], cwd=HERE,
+                             capture_output=True, text=True).stdout.split()
+    top_level_docs = sorted(p for p in tracked
+                            if p.endswith(".md") and "/" not in p
+                            and p != "CLAUDE.md")   # working notes, not a visitor's page
+    return top_level_docs + [p for p in PUBLIC_EXTRA if os.path.exists(os.path.join(HERE, p))]
 
 
 def visible_text(path):
@@ -134,7 +149,7 @@ def main(argv=None):
                  if p.endswith((".md", ".py", ".sh", ".html", ".json"))
                  and "assets/vendor/" not in p or p == "assets/vendor/README.md"]
     else:
-        paths = PUBLIC
+        paths = public_paths()
 
     findings = scan(paths)
     if not findings:
