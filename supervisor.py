@@ -1715,6 +1715,66 @@ class Handler(BaseHTTPRequestHandler):
         return (params.get("path") or [""])[0] or None
 
     # -- persistence ------------------------------------------------------
+    def _maybe_cutout(self, route, request_body, response_body):
+        """Matte a generated image onto transparency, in place, when asked.
+
+        The Animation tab was removed twice on the evidence of using it — the
+        character drifts between frames and the poses are not followed. What
+        held up was the other half of that pipeline: one subject, cut out. It
+        was only reachable by asking for a whole animation, so it is an option
+        on the image request now.
+
+        Runs before the response is sent, and overwrites the file the response
+        already points at, so the caller fetches the transparent version from
+        the URL it was given. rembg lives outside the pinned environment that
+        serves the models, so it crosses the same subprocess boundary the sprite
+        cutter does.
+        """
+        if not route.startswith("/v1/images"):
+            return response_body
+        try:
+            req = json.loads(request_body.decode("utf-8")) if request_body else {}
+        except ValueError:
+            return response_body
+        if not req.get("cutout"):
+            return response_body
+
+        try:
+            payload = json.loads(response_body.decode("utf-8"))
+        except ValueError:
+            return response_body
+
+        interpreter = sprite_python()
+        problem = None
+        if not interpreter:
+            problem = ("no interpreter with rembg — ./setup.sh --tools builds one, "
+                       "or point ANNEAL_SPRITE_PYTHON at it")
+        else:
+            for item in payload.get("data") or []:
+                path = item.get("path")
+                if not path or not os.path.isfile(path):
+                    continue
+                try:
+                    done = subprocess.run(
+                        [interpreter, os.path.join(HERE, "sprites.py"), path,
+                         "--cutout", path, "--json"],
+                        capture_output=True, text=True, timeout=180)
+                    if done.returncode != 0:
+                        problem = (done.stderr or "the matter printed nothing").strip()[:200]
+                except subprocess.TimeoutExpired:
+                    problem = "matting timed out"
+                if problem:
+                    break
+                item["cutout"] = True
+
+        if problem:
+            # The image cost a model load and 30-60 seconds. Losing it because a
+            # post-processing step failed would be the worse answer, so it comes
+            # back opaque and says why.
+            payload["cutout_error"] = problem
+            log("cutout failed: %s" % problem)
+        return json.dumps(payload).encode()
+
     def _persist_output(self, route, request_body, response_body, content_type):
         """Keep a durable, named copy of whatever a service just produced.
 
@@ -2080,6 +2140,7 @@ class Handler(BaseHTTPRequestHandler):
                                               "error": "unexpected text response: %s" % exc}).encode()
                 elif resp.status == 200:
                     payload = self._track_music_jobs(route, body, payload)
+                    payload = self._maybe_cutout(route, body, payload)
                     self._persist_output(route, body, payload,
                                          resp.getheader("Content-Type") or "")
 

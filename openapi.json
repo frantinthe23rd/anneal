@@ -1939,6 +1939,11 @@
             "maximum": 0.95,
             "default": 0.7,
             "description": "How much of `init_image` survives. Ignored unless `init_image` is set.\n\nQuantised by the step count: the server spends `int(steps * retention)` steps reproducing the original, so at schnell's default of 4 there are only three distinct settings. Requests carrying `init_image` therefore default to **8** steps rather than 4, which gives 0.85 / 0.7 / 0.55 genuinely different budgets. An explicit `steps` still wins."
+          },
+          "cutout": {
+            "type": "boolean",
+            "default": false,
+            "description": "Return the subject on transparency instead of on its background. The image is generated as normal and then matted with rembg, so it costs a few seconds on top rather than a different model.\n\nAsk for something that can be cut out — one character or object, plainly lit, against a simple background. A landscape has no subject to separate.\n\nNeeds an interpreter with rembg (`./setup.sh --tools`), which is kept out of the pinned environment that serves the models. If it is missing the image still comes back, opaque, with `cutout_error` saying why — the generation cost a model load and is not worth discarding over a post-processing step."
           }
         },
         "description": ""
