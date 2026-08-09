@@ -341,6 +341,35 @@ curl -X POST "$ANNEAL_URL/v1/press/names" -H "Authorization: Bearer $ANNEAL_KEY"
 # -> {"data": {"names": [{"title": "Winter Roads", "artist": "The Salt Line"}, …]}}
 ```
 
+**Sound effects cost nothing else.** `POST /v1/sfx` returns a 44.1 kHz stereo
+WAV of whatever you describe.
+
+```bash
+curl -X POST "$ANNEAL_URL/v1/sfx" -H "Authorization: Bearer $ANNEAL_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"heavy wooden door slamming in a stone hallway","seconds":5}'
+```
+
+Every other model here holds 7 GB or more, and starting one stops the others.
+This peaks at 1.49 GB and the runner loads and exits per request, so an effect
+never triggers a music reload — and there is nothing kept warm, so there is no
+cold start to wait out either. It is the one generator on the machine that
+competes with nothing.
+
+Generation is roughly realtime: measured at 5.2 s wall for 5.0 s of audio cold
+on an M4 mini, 2.6 s warm. `seconds` is capped at 30 for that reason — it bounds
+how long one request occupies the machine as much as how long the result is.
+
+Describe the sound physically. "A heavy wooden door slamming in a stone hallway"
+gives you the tail; "a door" does not. `seed` is worth more here than on the
+music endpoint, since this is a plain diffusion sample with no planning stage.
+
+The weights are optional and not fetched by default — `./anneal models sfx`,
+about 1.8 GB, and `./setup.sh --sfx` builds the environment. Until then the
+endpoint returns 503 naming what is missing. They are Stability AI Community
+licensed: free for research, non-commercial use, and commercial use below
+US $1M annual revenue.
+
 **Sprite methods are reported, not assumed.** `/health` → `limits.sprites`
 lists every method with its label, its licence, whether this host can run it and
 why not when it cannot. Read it before offering a choice: `kontext` needs an
@@ -825,6 +854,7 @@ back rather than thrown away.
 | POST | `/v1/press/review` | **no** | Amend and/or approve a press paused for review |
 | POST | `/v1/press/names` | text (light) | Suggest titles and artist names for a brief |
 | GET | `/v1/artists` | **no** | Artists you have made records with, and their voices |
+| POST | `/v1/sfx` | **no model is evicted** | A sound effect, as a WAV |
 | POST | `/v1/press/cancel` | **no** | Stop a press deliberately; keeps finished tracks |
 | DELETE | `/v1/press?id=` | **no** | Remove a record; `&files=1` takes its audio too |
 | GET | `/v1/outputs` | **no** | The library, filterable by `kind` |

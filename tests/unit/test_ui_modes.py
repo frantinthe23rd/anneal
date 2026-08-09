@@ -59,8 +59,19 @@ class TestEveryTabIsFullyWired(unittest.TestCase):
     def test_every_generating_tab_maps_to_a_service(self):
         """Without this the cold-start warning and the forge strip both point at
         nothing, so a three-minute wait starts with no warning at all."""
+        import services
+        served = table(self.src, "SERVICE_FOR_MODE")
         for mode in self.modes - {"press"}:
-            self.assertIn(mode, table(self.src, "SERVICE_FOR_MODE"), mode)
+            if mode in served:
+                continue
+            # A tab may legitimately have no service — sound effects run as a
+            # subprocess that loads and exits, so there is nothing to warm and a
+            # chip reading "cold" would report a state that never changes. The
+            # exemption is earned by the gateway owning the route, not by being
+            # named here: anything else is a tab whose cold start is unwarned.
+            self.assertIn("/v1/%s" % mode, services.GATEWAY_ROUTES,
+                          "%s maps to no service and the gateway does not own "
+                          "/v1/%s either — its cold start is unwarned" % (mode, mode))
 
     def test_every_generating_tab_filters_its_own_session_output(self):
         """Missing here, a result files itself under whichever tab you switch to

@@ -97,6 +97,12 @@ you would rather find out before starting.
 the weights it would fetch with their sizes, and writes nothing — not the root,
 not the checkout, not the API key in `env.local.sh`.
 
+**Sound effects** are optional and are the one model that competes with nothing
+else — it peaks at 1.49 GB and exits, so an effect never unloads the music
+model. `./setup.sh --sfx` builds its environment and `./anneal models sfx`
+fetches the weights (1.8 GB, Stability AI Community licensed — free below
+US $1M annual revenue). Apple silicon only; the runner is pure MLX.
+
 **How much disk.** `./anneal models list` prints every model, its size, and
 whether it is optional, before anything is downloaded:
 

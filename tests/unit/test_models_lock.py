@@ -85,11 +85,15 @@ class TestLockfileShape(unittest.TestCase):
         by_service = {}
         for spec in self.lock["models"].values():
             by_service.setdefault(spec["service"], []).append(spec)
+        import services as service_registry
         for service, specs in by_service.items():
-            if service == "sprites":
-                # Sprites work without a model: the default 'sheet' method cuts
-                # one generated image. Kontext is a second, better method with
-                # a non-commercial licence, and is optional on purpose.
+            if service not in service_registry.SERVICES:
+                # Not a backend the supervisor starts. Sprites cut an image the
+                # image service already made; sound effects are a subprocess
+                # one-shot. Both are extras the gateway offers on top of the
+                # services, and an extra that is entirely optional is a choice
+                # rather than an uninstallable service. Derived from the
+                # registry rather than a list of names that grows quietly.
                 continue
             self.assertTrue(any(s.get("required", True) for s in specs),
                             "%s has no required model" % service)
@@ -151,3 +155,40 @@ class TestLockfileCoversWhatTheServersLoad(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPartialRepos(unittest.TestCase):
+    """One lockfile entry can point at a repo holding far more than this
+    machine can run. `stable-audio-3-optimized` ships TensorRT, ONNX, TFLite
+    and MLX builds — about 100 GB — against 1.8 GB for the MLX bundle an Apple
+    silicon Mac uses. Without allow_patterns reaching the downloader, asking
+    for sound effects fetches all of it."""
+
+    def setUp(self):
+        with open(LOCK_PATH, encoding="utf-8") as fh:
+            self.lock = json.load(fh)
+        with open(os.path.join(REPO, "update.sh"), encoding="utf-8") as fh:
+            self.update = fh.read()
+
+    def test_the_downloader_honours_allow_patterns(self):
+        self.assertIn("allow_patterns", self.update,
+                      "a lockfile entry can name allow_patterns and nothing reads it")
+
+    def test_every_entry_that_names_them_is_a_list_of_strings(self):
+        for repo, spec in self.lock["models"].items():
+            pats = spec.get("allow_patterns")
+            if pats is None:
+                continue
+            self.assertIsInstance(pats, list, repo)
+            self.assertTrue(pats, "%s: an empty allow_patterns fetches nothing" % repo)
+            for pat in pats:
+                self.assertIsInstance(pat, str, repo)
+
+    def test_a_partial_repo_declares_the_size_of_the_part(self):
+        # size_gb drives the "about N GB" the installer prints before asking.
+        # Reporting the whole repo for a partial fetch would be a wrong number
+        # in the one place someone decides whether to proceed.
+        for repo, spec in self.lock["models"].items():
+            if spec.get("allow_patterns"):
+                self.assertLess(float(spec["size_gb"]), 20,
+                                "%s: size_gb looks like the whole repo" % repo)

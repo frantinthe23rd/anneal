@@ -1030,6 +1030,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
       <button class="tab" role="tab" data-mode="speech" aria-selected="false">Speech</button>
       <button class="tab" role="tab" data-mode="image"  aria-selected="false">Image</button>
       <button class="tab" role="tab" data-mode="sprites" aria-selected="false">Animation</button>
+      <button class="tab" role="tab" data-mode="sfx"     aria-selected="false">Effects</button>
       <button class="tab" role="tab" data-mode="chat"   aria-selected="false">Chat</button>
     </div>
   </div>
@@ -1217,6 +1218,26 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
             </div>
           </div>
           <div class="hint" id="spMethodHint"></div>
+        </section>
+
+        <!-- SOUND EFFECTS -->
+        <section data-panel="sfx" class="hidden">
+          <label class="f" for="fxPrompt">Describe the sound</label>
+          <textarea id="fxPrompt" placeholder="a heavy wooden door slamming in a stone hallway"></textarea>
+          <div class="hint">Concrete and physical beats abstract. Naming the space gives you the
+            tail — “in a stone hallway” is what produces the reverb.</div>
+
+          <div class="field grid2">
+            <div>
+              <label class="f" for="fxSeconds">Length (s)</label>
+              <input type="number" id="fxSeconds" value="5" min="1" max="30">
+            </div>
+            <div>
+              <label class="f" for="fxSeed">Seed <span style="text-transform:none;letter-spacing:0">(optional)</span></label>
+              <input type="number" id="fxSeed" placeholder="random">
+            </div>
+          </div>
+          <div class="hint" id="fxHint"></div>
         </section>
 
         <!-- CHAT lives in its own full-width layout below, not in this column. -->
@@ -1428,6 +1449,21 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
     </section>
 
     <section>
+      <h3>Effects — a sound, not a song</h3>
+      <p>Describe a sound and get a WAV: a door slam, footsteps on gravel, a UI blip.
+         <em>“A heavy wooden door slamming in a stone hallway”</em> gives you the reverb tail;
+         <em>“a door”</em> does not. Naming the space and the material is most of the prompt.</p>
+      <ul>
+        <li><b>It evicts nothing.</b> Every other model here holds 7 GB or more, and starting one
+            stops the others. This peaks at 1.49 GB and exits when it is done, so an effect never
+            costs you a music reload — and nothing is kept warm, so there is no cold start either.</li>
+        <li><b>Roughly realtime.</b> Five seconds of audio takes about five seconds cold, under
+            three warm. Length is capped at 30 seconds, which bounds how long a request holds the
+            machine as much as how long the result is.</li>
+        <li><b>Seed</b> is worth more here than on Music: this is a plain diffusion sample with no
+            planning stage in front of it.</li>
+      </ul>
+
       <h3>Music</h3>
       <p>Describe the track as you would to a session player: genre, instruments, mood, production.
          <em>“warm lo-fi hip hop with rhodes piano and vinyl crackle”</em> works; <em>“good song”</em>
@@ -1637,6 +1673,7 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
         <tr><td><code>POST</code></td><td><code>/v1/audio/speech</code></td><td>Speech, returns audio</td></tr>
         <tr><td><code>GET</code></td><td><code>/v1/voices</code></td><td>Voice list — starts the speech process, loads no weights</td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/images/generations</code></td><td>Image, as a path or base64</td></tr>
+        <tr><td><code>POST</code></td><td><code>/v1/sfx</code></td><td>A sound effect as a WAV. Loads and exits, so it evicts nothing</td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/sprites</code></td><td>An animation set as separate transparent PNGs, plus a preview GIF. Also the <b>Animation</b> tab</td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/vector</code></td><td>An SVG icon. <b>Experimental</b> — see the README</td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/chat/completions</code></td><td>OpenAI-shaped chat, streaming</td></tr>
@@ -1934,6 +1971,8 @@ function forgeServices() {
 }
 const SERVICE_FOR_MODE = { music: "music", speech: "speech", image: "image",
                            chat: "text", sprites: "image" };
+// Effects deliberately map to no service: nothing stays warm, so a chip saying
+// "cold" would be reporting a state that never changes.
 let health = {};
 // The `limits` block from /health, kept rather than only poured into the
 // markup: the Animation form builds its method list out of it, licence and
@@ -2092,7 +2131,7 @@ function addResult(r) { results.unshift(r); renderResults(); return r; }
    does. Everything landed in one pile before, so generating a track and then
    switching to Image left the track sitting under the Image tab. */
 const RESULT_KIND_FOR_MODE = { music: "music", speech: "speech", image: "image",
-                               sprites: "animation" };
+                               sprites: "animation", sfx: "sfx" };
 
 function shownResults() {
   const kind = RESULT_KIND_FOR_MODE[mode];
@@ -2185,6 +2224,7 @@ const EMPTY_LINE = {
   image:  "No images yet. Describe one and press Forge.",
   press:  "No records yet. Write a brief and press Press.",
   sprites: "No animations yet. Describe a character and press Forge.",
+  sfx:     "No effects yet. Describe a sound and press Forge.",
 };
 function setEmptyLine(m) {
   const n = $("emptyLine");
@@ -2215,6 +2255,7 @@ async function run() {
     if (mode === "music") await runMusic();
     else if (mode === "speech") await runSpeech();
     else if (mode === "sprites") await runSprites();
+    else if (mode === "sfx") await runSfx();
     else await runImage();
   } catch (e) {
     if (e && e.status === 409) {
@@ -2383,6 +2424,43 @@ function renderSpriteMethods() {
   const chosen = methods[sel.value] || {};
   hint.textContent = (chosen.available ? "" : (chosen.why || "Not available here") + ". ")
     + (chosen.licence || "");
+}
+
+/* Sound effects. The only generator here that competes with nothing else — it
+   peaks at 1.49 GB and exits, so there is no cold start to warn about and no
+   model to evict. The hint says so, and says what is missing when the weights
+   are not installed; both come from /health rather than from here. */
+function renderSfxHint() {
+  const spec = limits.sfx || {};
+  const hint = $("fxHint");
+  if (spec.max_seconds) $("fxSeconds").max = spec.max_seconds;
+  hint.textContent = spec.available === false
+    ? (spec.why || "Sound effects are not installed on this host.")
+    : "Roughly realtime — a five-second effect takes about five seconds. "
+      + "It loads and exits per request, so it never unloads the music model. "
+      + (spec.licence || "");
+}
+
+async function runSfx() {
+  const prompt = $("fxPrompt").value.trim();
+  if (!prompt) { setStatus("Describe the sound first.", "warn"); return; }
+  const body = { prompt, seconds: Number($("fxSeconds").value) || 5 };
+  const seed = $("fxSeed").value.trim();
+  if (seed) body.seed = Number(seed);
+
+  // No cold-start warning: there is nothing to warm.
+  setStatus("Generating…", "", { bar: true });
+  const d = (await api("/v1/sfx", { method: "POST", body })).data || {};
+  const blob = await api(d.url, { raw: true });
+  const url = URL.createObjectURL(blob); blobUrls.push(url);
+  addResult({
+    kind: "sfx", prompt, audio: url,
+    filename: slug(prompt) + ".wav",
+    meta: d.seconds + "s · WAV 44.1 kHz",
+    took: d.took ? d.took + "s" : null,
+    path: d.path,
+  });
+  hideStatus();
 }
 
 async function runSprites() {
@@ -3372,9 +3450,9 @@ function applyRequest(kind, req) {
    down — and never had a Press filter at all, which left finished records
    reachable only by scrolling past everything else. */
 const LIB_KIND_FOR_MODE = { music: "music", speech: "speech", image: "images",
-                            press: "press", sprites: "sprites" };
+                            press: "press", sprites: "sprites", sfx: "sfx" };
 const LIB_TITLE = { music: "Saved tracks", speech: "Saved speech", image: "Saved images",
-                    press: "Records", sprites: "Animations" };
+                    press: "Records", sprites: "Animations", sfx: "Saved effects" };
 
 function setLibrary(on) {
   libView = on;
@@ -4399,6 +4477,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
     // session adds an artist, and a stale list would not offer them.
     if (mode === "press") loadArtists();
     if (mode === "sprites") renderSpriteMethods();
+    if (mode === "sfx") renderSfxHint();
     hideStatus();
     showPage("studio");          // also swaps .cols for the chat view
     renderForge();

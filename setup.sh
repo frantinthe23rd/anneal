@@ -5,6 +5,7 @@
 #   ./setup.sh --root ~/anneal --yes --models music,speech
 #   ./setup.sh --no-models          everything except the weights
 #   ./setup.sh --tools              also build tools-venv (sprites, screenshots)
+#   ./setup.sh --sfx                also build sfx-venv (sound effects, Apple silicon)
 #   ./setup.sh --dry-run            say what it would do, change nothing
 #
 # Safe to re-run. Every step checks whether it has already been done and says
@@ -26,6 +27,11 @@
 set -Eeuo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Pinned like the ACE-Step checkout, and for the same reason: an unpinned clone
+# is a different program later. MIT licensed; the weights it loads are not, and
+# their terms are recorded in models.lock.json.
+SFX_REPO="${SFX_REPO:-https://github.com/Stability-AI/stable-audio-3}"
+SFX_PIN="${SFX_PIN:-a0b57f5483c4588f827f3552b7d5c6ca2a9687be}"
 PYTHON="${PYTHON:-/usr/bin/python3}"
 
 ROOT_ARG=""
@@ -33,6 +39,7 @@ ASSUME_YES=0
 MODELS="required"
 WANT_MODELS=1
 WANT_TOOLS=0
+WANT_SFX=0
 DRY_RUN=0
 
 # The header comment, to the first line that is not one — anchored to the shape
@@ -64,6 +71,7 @@ while [[ $# -gt 0 ]]; do
                      need_value "--models" "$MODELS" "what to fetch, as in --models=music,speech (or all)" ;;
         --no-models) WANT_MODELS=0 ;;
         --tools)     WANT_TOOLS=1 ;;
+        --sfx)       WANT_SFX=1 ;;
         -y|--yes)    ASSUME_YES=1 ;;
         -n|--dry-run) DRY_RUN=1 ;;
         -h|--help)   usage; exit 0 ;;
@@ -308,6 +316,47 @@ fi
 # Deliberately separate from gen-venv: rembg pulls onnxruntime, and gen-venv is
 # version-pinned because it serves the models. Coupling them would let a
 # background-removal dependency block an image-model upgrade.
+if (( WANT_SFX )); then
+    say "Sound effects (sfx-venv)"
+    # Its own environment, on the same reasoning as tools-venv: the runner is
+    # pure MLX and the environment that serves the models is version-pinned, so
+    # a sound-effects dependency must not be able to break music generation.
+    # It is small — mlx, numpy, sentencepiece, soundfile — about 240 MB.
+    if [[ -x "$AIMUSIC_ROOT/sfx-venv/bin/python" ]]; then
+        note "Already built at $AIMUSIC_ROOT/sfx-venv"
+    else
+        note "Building (~240 MB)"
+        run "$UV_BIN" venv --python 3.12 "$AIMUSIC_ROOT/sfx-venv"
+    fi
+    SFX_SRC="$AIMUSIC_ROOT/stable-audio-3"
+    if [[ -d "$SFX_SRC/.git" ]]; then
+        note "Runner already cloned at $SFX_SRC"
+    else
+        note "Cloning the runner (MIT) at the pinned commit"
+        run git clone --filter=blob:none "$SFX_REPO" "$SFX_SRC"
+    fi
+    if [[ -d "$SFX_SRC/.git" ]]; then
+        run git -C "$SFX_SRC" fetch --quiet origin "$SFX_PIN"
+        run git -C "$SFX_SRC" checkout --quiet "$SFX_PIN"
+        run "$UV_BIN" pip install --python "$AIMUSIC_ROOT/sfx-venv/bin/python" \
+            -r "$SFX_SRC/optimized/mlx/requirements.txt"
+    fi
+    # The weights live in the shared model directory and are linked into the
+    # checkout, exactly as ACE-Step's checkpoints are. Without this an update
+    # that re-clones the checkout throws away 1.8 GB that is still on disk.
+    if (( ! DRY_RUN )); then
+        mkdir -p "$ACESTEP_CHECKPOINTS_DIR/stable-audio-3-mlx/MLX"
+        rm -rf "$SFX_SRC/optimized/mlx/models/mlx"
+        mkdir -p "$SFX_SRC/optimized/mlx/models"
+        ln -sfn "$ACESTEP_CHECKPOINTS_DIR/stable-audio-3-mlx/MLX" \
+                "$SFX_SRC/optimized/mlx/models/mlx"
+        note "Weights link -> $ACESTEP_CHECKPOINTS_DIR/stable-audio-3-mlx/MLX"
+    else
+        note "would link the weights directory into the checkout"
+    fi
+    note "Fetch the weights with ./anneal models sfx (about 1.8 GB)"
+fi
+
 if (( WANT_TOOLS )); then
     say "Tooling environment (tools-venv)"
     if [[ -x "$AIMUSIC_ROOT/tools-venv/bin/python" ]]; then

@@ -204,6 +204,12 @@ from huggingface_hub import snapshot_download
 
 for repo, spec in chosen:
     kwargs = {"repo_id": repo, "revision": spec["revision"], "max_workers": 4}
+    # Some repos ship the same model many times over — stable-audio-3-optimized
+    # carries TensorRT, ONNX and TFLite builds as well as MLX, about 100 GB in
+    # total against 1.8 GB for the part this machine can run. A lockfile entry
+    # that names allow_patterns gets only those files.
+    if spec.get("allow_patterns"):
+        kwargs["allow_patterns"] = list(spec["allow_patterns"])
     dest = local_dir(spec)
     if dest:
         kwargs["local_dir"] = dest
