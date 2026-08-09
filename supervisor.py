@@ -1075,6 +1075,15 @@ def press_limits(payload):
 SPRITE_PYTHON = os.environ.get(
     "ANNEAL_SPRITE_PYTHON", os.path.join(AIMUSIC_ROOT, "tools-venv", "bin", "python"))
 MAX_SPRITE_FRAMES = 8
+# Four reads as a walk cycle and still leaves each frame big enough to use on a
+# 1344x768 sheet. Both the validator and the generator take it from here — they
+# had a literal each, which is two places for a default to drift.
+DEFAULT_SPRITE_FRAMES = 4
+# The Kontext weights are downloadable and the edit path is not built: the image
+# backend has no edit endpoint yet. Named once, so the 501 the handler returns
+# and the availability the form reads cannot disagree — which is how a form
+# comes to offer something that always fails.
+KONTEXT_WIRED = False
 
 
 def sprite_python():
@@ -1175,7 +1184,7 @@ def sprite_limits(payload):
     if not (payload.get("prompt") or "").strip():
         return "'prompt' is required"
     try:
-        frames = int(payload.get("frames", 4))
+        frames = int(payload.get("frames", DEFAULT_SPRITE_FRAMES))
     except (TypeError, ValueError):
         return "'frames' must be a number"
     if not 2 <= frames <= MAX_SPRITE_FRAMES:
@@ -1218,6 +1227,30 @@ def capability_limits():
             "tiers": {name: {"steps": t["steps"], "label": t["label"]}
                       for name, t in MUSIC_TIERS.items()},
             "default_tier": DEFAULT_MUSIC_TIER,
+        },
+        # Built from SPRITE_METHODS so the Animation form offers what this
+        # host has, with the licence attached to the method that carries one.
+        # `available` is asked of the same check the request path uses, so the
+        # form cannot offer a method that would come back 501 or 503.
+        "sprites": {
+            "methods": {
+                name: {
+                    "label": spec["label"],
+                    "licence": spec["licence"],
+                    "available": sprite_method_problem(name) is None
+                                 and (not spec.get("needs_model")
+                                      or KONTEXT_WIRED)
+                                 and bool(sprite_python()),
+                    "why": sprite_method_problem(name) or (
+                        None if (spec.get("needs_model") is not True or KONTEXT_WIRED)
+                        else "not wired up yet — the image backend needs an edit "
+                             "endpoint first"),
+                }
+                for name, spec in SPRITE_METHODS.items()
+            },
+            "default_method": DEFAULT_SPRITE_METHOD,
+            "default_frames": DEFAULT_SPRITE_FRAMES,
+            "max_frames": MAX_SPRITE_FRAMES,
         },
         # Idle timeouts are deliberately absent: they are already reported
         # per-service, and a second copy is exactly the bug this closes.
@@ -1318,7 +1351,7 @@ class Handler(BaseHTTPRequestHandler):
         crosses that boundary except a path and a line of JSON.
         """
         subject = payload["prompt"].strip()
-        frames = int(payload.get("frames", 4))
+        frames = int(payload.get("frames", DEFAULT_SPRITE_FRAMES))
         style = (payload.get("style") or "flat pixel art").strip()
         poses = payload.get("poses") or None
         if poses:
@@ -2296,7 +2329,7 @@ class Handler(BaseHTTPRequestHandler):
                                  "method": method,
                                  "licence": SPRITE_METHODS[method]["licence"]}, 503)
                 return
-            if method == "kontext":
+            if SPRITE_METHODS[method].get("needs_model") and not KONTEXT_WIRED:
                 # The weights are here but the edit path is not wired yet.
                 # Refusing plainly beats accepting and quietly doing something
                 # else — three endpoints have shipped from this repo doing

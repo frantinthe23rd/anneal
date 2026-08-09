@@ -40,8 +40,15 @@ class TestEveryTabIsFullyWired(unittest.TestCase):
         self.src = source()
         self.modes = set(re.findall(r'data-mode="(\w+)"', self.src))
 
-    def test_the_tabs_are_the_ones_expected(self):
-        self.assertEqual(self.modes, {"music", "press", "speech", "image", "chat"})
+    def test_every_tab_is_wired_everywhere_it_has_to_be(self):
+        """This used to be a frozen set of five tab names, which is the same
+        copied-list mistake the rest of this file exists to catch — it failed
+        the moment Animation was added, and it would have failed identically if
+        a tab had been added and wired correctly. What matters is that whatever
+        tabs exist are wired, and the tests below assert exactly that. Kept
+        here only to insist there are some."""
+        self.assertTrue(self.modes, "no tabs found — the selector is wrong")
+        self.assertIn("music", self.modes)
 
     def test_every_tab_has_a_panel(self):
         panels = set(re.findall(r'data-panel="(\w+)"', self.src))
@@ -58,7 +65,9 @@ class TestEveryTabIsFullyWired(unittest.TestCase):
     def test_every_generating_tab_filters_its_own_session_output(self):
         """Missing here, a result files itself under whichever tab you switch to
         next — which is exactly the bug RESULT_KIND_FOR_MODE was added to fix."""
-        for mode in ("music", "speech", "image"):
+        # Every tab that generates into the session list. Press has its own
+        # card list and Chat is a transcript, so neither files a result here.
+        for mode in self.modes - {"press", "chat"}:
             self.assertIn(mode, table(self.src, "RESULT_KIND_FOR_MODE"), mode)
 
     def test_every_tab_maps_to_a_library_kind(self):
@@ -120,20 +129,28 @@ class TestTheMeasuredClaims(unittest.TestCase):
     def setUp(self):
         self.src = source()
 
-    def test_sprites_are_still_discoverable_on_the_api_page(self):
-        """The Animation tab was removed because a frame sequence is not
-        something anyone sits and makes by hand — it is for game-dev agents
-        calling the API. That makes the API page the *only* place a user can
-        find out the endpoint exists, so it has to be listed there. It was
-        not, before the tab went."""
+    def test_sprites_are_discoverable_on_the_api_page_too(self):
+        """The tab makes the set reviewable; the API page is still where a
+        game-dev agent finds the endpoint."""
         self.assertIn("/v1/sprites", self.src)
 
-    def test_no_dead_animation_code_survives_the_tab(self):
-        """A removed tab leaves a run handler, a render branch and CSS that
-        nothing can reach. lint-ui.py sees unresolved ids, not unreachable
-        branches, so this is the check that notices."""
-        for dead in ("runSprites", "r.frames", ".item .frames"):
-            self.assertNotIn(dead, self.src, dead)
+    def test_the_animation_tab_shows_the_loop_and_the_frames(self):
+        """It came back because the GIF is the only way to answer "does this
+        read as one character moving", and the strip is the only way to answer
+        "which frame is wrong". A tab that showed one without the other would
+        be missing half the reason it exists."""
+        self.assertIn("runSprites", self.src)
+        self.assertIn("preview_url", self.src)
+        self.assertIn("r.frames", self.src)
+        self.assertIn(".frames .fr", self.src)
+
+    def test_the_method_list_is_not_written_into_the_page(self):
+        """It carries a licence — Kontext is non-commercial — and a licence in
+        two places is the worst thing on the list of things that drift. The
+        select is built from /health's limits block."""
+        self.assertIn("renderSpriteMethods", self.src)
+        self.assertNotIn("Non-Commercial", self.src)
+        self.assertNotIn('value="kontext"', self.src)
 
     def test_no_dead_video_code_survives_its_removal(self):
         """Video was removed after measuring it: 9 frames in 3 min 9 s at a
