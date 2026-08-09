@@ -341,6 +341,14 @@ curl -X POST "$ANNEAL_URL/v1/press/names" -H "Authorization: Bearer $ANNEAL_KEY"
 # -> {"data": {"names": [{"title": "Winter Roads", "artist": "The Salt Line"}, …]}}
 ```
 
+**Sprite methods are reported, not assumed.** `/health` → `limits.sprites`
+lists every method with its label, its licence, whether this host can run it and
+why not when it cannot. Read it before offering a choice: `kontext` needs an
+edit endpoint the image backend does not have yet and returns 501, and cutting
+needs an interpreter with rembg or the request returns 503. The licence lives
+there too — the Kontext weights are non-commercial, and that term is stated in
+one place so it cannot drift.
+
 **Another record from the same artist.** Press invents an artist, a singer and a
 register, and they used to die with the record. `GET /v1/artists` lists everyone
 with a finished record — newest first, with the voice and lyric density to reuse

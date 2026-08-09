@@ -97,3 +97,44 @@ class TestTheUiFetchesRatherThanRepeats(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSpriteMethodsAreServed(unittest.TestCase):
+    """The Animation form has to offer the methods this host actually has, and
+    say which are unavailable and why. A list written into ui.html would be the
+    fifth copied list in this repo — and this one carries a licence, which is
+    the worst kind of thing to let drift.
+    """
+
+    def setUp(self):
+        self.node = supervisor.capability_limits().get("sprites")
+
+    def test_it_is_reported_at_all(self):
+        self.assertIsNotNone(self.node, "the page cannot build the form without it")
+
+    def test_every_method_the_server_knows_is_offered(self):
+        self.assertEqual(set(self.node["methods"]), set(supervisor.SPRITE_METHODS),
+                         "derived from SPRITE_METHODS, never a copy of it")
+
+    def test_each_one_carries_its_label_and_licence(self):
+        for name, spec in supervisor.SPRITE_METHODS.items():
+            served = self.node["methods"][name]
+            self.assertEqual(served["label"], spec["label"])
+            self.assertEqual(served["licence"], spec["licence"])
+
+    def test_it_says_which_are_usable_here(self):
+        # Kontext needs weights that may not be downloaded, and 'sheet' needs an
+        # interpreter with rembg. A form that offers a method this host cannot
+        # run produces a 501 or a 503 the user could have been spared.
+        for name in supervisor.SPRITE_METHODS:
+            self.assertIn("available", self.node["methods"][name])
+            self.assertIsInstance(self.node["methods"][name]["available"], bool)
+
+    def test_the_default_is_one_of_them(self):
+        self.assertIn(self.node["default_method"], self.node["methods"])
+
+    def test_the_licence_is_not_written_down_anywhere_else(self):
+        # The non-commercial term on Kontext is the one claim here with legal
+        # weight. If ui.html states it too, the two can disagree.
+        ui = open(os.path.join(REPO_ROOT, "ui.html"), encoding="utf-8").read()
+        self.assertNotIn("Non-Commercial License", ui)
