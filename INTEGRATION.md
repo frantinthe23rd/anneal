@@ -394,6 +394,35 @@ workable for an agent whose waits are dominated by its tools. One trap:
 `finish_reason: length`. Send `chat_template_kwargs {"enable_thinking": false}`
 for tool turns, or use `qwen-coder`, which has no preamble.
 
+**Agent mode: a folder and the tools already here.** `POST /v1/agent` gives the
+text model a working folder plus `write_file`, `read_file`, `list_files`,
+`generate_image`, `generate_speech` and `generate_sfx`, and runs the loop until
+it stops calling them.
+
+```bash
+curl -N -X POST "$ANNEAL_URL/v1/agent" -H "Authorization: Bearer $ANNEAL_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"a static page that says hello, with a stylesheet",
+       "job":"demo","model":"qwen-coder"}'
+```
+
+**It cannot run anything.** There is no shell tool and no network tool, and
+every path is resolved and checked against the working folder — `..`, absolute
+paths, symlinks pointing out and a sibling directory whose name merely starts
+the same are all refused. A refusal is fed back to the model as a result rather
+than raised, so it can try something else; that is the point of a loop. The
+worst outcome is a folder full of bad files.
+
+The folder is `$AIMUSIC_ROOT/agent/<job>/`. Pass `job` to continue in one.
+Generation goes back through Anneal's own endpoints, so an agent asking for an
+image pays the same admission control and eviction as any other caller and the
+result lands in the library too.
+
+The response is an SSE stream — `start`, one `step` per tool call, then `done` —
+because a run is minutes and a body that arrives at the end tells you nothing
+while you wait. Measured on this machine: a three-step page took 27 s with
+`gemma`. Steps are capped, and so is wall-clock.
+
 **Sound effects cost nothing else.** `POST /v1/sfx` returns a 44.1 kHz stereo
 WAV of whatever you describe.
 
@@ -967,6 +996,7 @@ back rather than thrown away.
 | POST | `/v1/press/names` | text (light) | Suggest titles and artist names for a brief |
 | GET | `/v1/artists` | **no** | Artists you have made records with, and their voices |
 | POST | `/v1/sfx` | **no model is evicted** | A sound effect, as a WAV |
+| POST | `/v1/agent` | text | The model with a working folder and the other tools |
 | POST | `/v1/press/cancel` | **no** | Stop a press deliberately; keeps finished tracks |
 | DELETE | `/v1/press?id=` | **no** | Remove a record; `&files=1` takes its audio too |
 | GET | `/v1/outputs` | **no** | The library, filterable by `kind` |

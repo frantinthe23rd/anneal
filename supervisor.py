@@ -58,6 +58,7 @@ import paths  # noqa: E402
 import trim  # noqa: E402
 import vector  # noqa: E402
 import builder  # noqa: E402  (capability_limits reports its constants)
+import agent    # noqa: E402  (a working folder and the tools already here)
 import harmony  # noqa: E402  (GPT-OSS speaks channels; clients read OpenAI)
 import sfx      # noqa: E402  (a subprocess one-shot, not a registered service)
 # Imported under another name: `poses` is a local variable in three functions
@@ -616,6 +617,117 @@ def press_text(prompt, max_tokens=900, temperature=0.9):
     d = _local_json("/v1/text", {"prompt": prompt, "max_tokens": max_tokens,
                                  "temperature": temperature, "thinking": False})
     return ((d or {}).get("data") or {}).get("text", "")
+
+
+class AgentHungUp(Exception):
+    """The client closed the stream. Not an error — stop writing to it."""
+
+
+def agent_files(root):
+    """What is in the working folder now, for the closing event."""
+    out = []
+    for folder, _dirs, names in os.walk(root):
+        for n in sorted(names):
+            full = os.path.join(folder, n)
+            try:
+                out.append({"path": os.path.relpath(full, root),
+                            "bytes": os.path.getsize(full)})
+            except OSError:
+                continue
+            if len(out) >= agent.MAX_LISTING:
+                return out
+    return out
+
+
+def agent_root(job):
+    """The working folder for one job, created on demand."""
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", str(job or "")).strip("-")[:60]
+    if not safe:
+        safe = time.strftime("%Y%m%d-%H%M%S")
+    root = os.path.join(AIMUSIC_ROOT, "agent", safe)
+    os.makedirs(root, exist_ok=True)
+    return safe, os.path.realpath(root)
+
+
+def agent_chat(model):
+    """A `chat(messages, tools)` for agent.run, going back through the gateway.
+
+    The front door rather than the text service directly, so it inherits model
+    selection, the reload when the model changes, and the harmony translation
+    that turns GPT-OSS's channels into tool_calls. Reaching past it would
+    reimplement all three.
+    """
+    def chat(messages, tools):
+        reply = _local_json("/v1/chat/completions", {
+            "model": model, "messages": messages, "tools": tools,
+            "max_tokens": 1200, "temperature": 0.3,
+            # Both offered models reason first, and a tool turn spent thinking
+            # comes back empty. Where the template supports it, turn it off.
+            "chat_template_kwargs": {"enable_thinking": False},
+        })
+        return ((reply.get("choices") or [{}])[0].get("message") or {})
+    return chat
+
+
+def agent_media(root):
+    """The generators, saving into the working folder.
+
+    Each goes through the gateway's own endpoint, so an agent asking for an
+    image pays the same admission control and eviction as anyone else — and
+    lands in the library as well as the folder.
+    """
+    def media(name, args, dest):
+        if name == "generate_image":
+            body = {"prompt": args.get("prompt", ""), "n": 1,
+                    "size": args.get("size") or "1024x1024",
+                    "steps": 4, "response_format": "path"}
+            if args.get("cutout"):
+                body["cutout"] = True
+            data = (_local_json("/v1/images/generations", body).get("data") or [])
+            if not data or not data[0].get("path"):
+                return False, "the image service returned nothing"
+            shutil.copyfile(data[0]["path"], dest)
+            return True, "saved %s" % os.path.relpath(dest, root)
+
+        if name == "generate_speech":
+            payload = {"input": args.get("text", ""), "response_format": "wav"}
+            if args.get("voice"):
+                payload["voice"] = args["voice"]
+            raw = _local_bytes("/v1/audio/speech", payload)
+            with open(dest, "wb") as fh:
+                fh.write(raw)
+            return True, "saved %s (%d bytes)" % (os.path.relpath(dest, root), len(raw))
+
+        if name == "generate_sfx":
+            body = {"prompt": args.get("prompt", "")}
+            if args.get("seconds"):
+                body["seconds"] = args["seconds"]
+            made = (_local_json("/v1/sfx", body).get("data") or {})
+            if not made.get("path"):
+                return False, "the effect was not produced"
+            shutil.copyfile(made["path"], dest)
+            return True, "saved %s" % os.path.relpath(dest, root)
+
+        return False, "unknown generator %r" % name
+    return media
+
+
+def _local_bytes(path, payload, timeout=1800):
+    """Like _local_json, for an endpoint that answers with a file."""
+    body = json.dumps(payload).encode()
+    conn = http.client.HTTPConnection("127.0.0.1", LISTEN_PORT, timeout=timeout)
+    try:
+        headers = {"Content-Type": "application/json"}
+        if API_KEY:
+            headers["Authorization"] = "Bearer %s" % API_KEY
+        conn.request("POST", path, body=body, headers=headers)
+        resp = conn.getresponse()
+        raw = resp.read()
+        if resp.status >= 400:
+            raise RuntimeError("%s -> %d" % (path, resp.status))
+        return raw
+    finally:
+        conn.close()
 
 
 def press_music(payload):
@@ -2743,6 +2855,69 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         route = urllib.parse.urlparse(self.path).path
+
+        if route == "/v1/agent":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            payload, _ = self._body()
+            if payload is None:
+                return              # 413 already sent
+            prompt = (payload.get("prompt") or "").strip()
+            if not prompt:
+                self._send_json({"code": 400, "error": "'prompt' is required"}, 400)
+                return
+            chosen = resolve_text_model(payload.get("model"))
+            if not chosen:
+                self._send_json({"code": 400, "error": "unknown model %r" % payload.get("model")}, 400)
+                return
+            problem = text_model_problem(chosen)
+            if problem:
+                self._send_json({"code": 503, "error": problem}, 503)
+                return
+            try:
+                steps = int(payload.get("max_steps") or agent.MAX_STEPS)
+            except (TypeError, ValueError):
+                self._send_json({"code": 400, "error": "'max_steps' must be a number"}, 400)
+                return
+            steps = max(1, min(steps, agent.MAX_STEPS))
+            job, root = agent_root(payload.get("job"))
+
+            # Streamed, because a run is minutes of tool calls and a JSON body
+            # that arrives at the end tells you nothing while you wait. Same
+            # framing the chat stream uses: close-delimited SSE, since
+            # Transfer-Encoding is hop-by-hop and the relay strips it.
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "close")
+            self.end_headers()
+
+            def emit(kind, data):
+                try:
+                    self.wfile.write(("data: %s\n\n" % json.dumps(
+                        dict(data, type=kind))).encode())
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    raise AgentHungUp()
+
+            try:
+                emit("start", {"job": job, "model": chosen, "max_steps": steps})
+                out = agent.run(prompt, root, agent_chat(chosen),
+                                max_steps=steps, media=agent_media(root),
+                                on_step=lambda entry: emit("step", entry))
+                emit("done", {"job": job, "reply": out["reply"], "steps": out["steps"],
+                              "stopped": out["stopped"], "seconds": out["seconds"],
+                              "files": agent_files(root)})
+            except AgentHungUp:
+                log("agent: client disconnected during %s" % job)
+            except Exception as exc:                     # noqa: BLE001
+                log("agent failed: %r" % exc)
+                try:
+                    emit("error", {"error": str(exc)[:300]})
+                except AgentHungUp:
+                    pass
+            return
 
         if route == "/v1/sfx":
             if not self._authorized():
