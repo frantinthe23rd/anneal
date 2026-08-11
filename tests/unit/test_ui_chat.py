@@ -330,3 +330,19 @@ class TabsAreGroupedTest(unittest.TestCase):
         order = self.order()
         self.assertLess(order.index("sfx"), order.index("image"))
         self.assertEqual(order[-1], "chat")
+
+
+class AgentComposerTest(unittest.TestCase):
+    """The agent branch returned early and never reached the reset, so the
+    prompt stayed in the box while its own reply streamed underneath — and the
+    next message had to be typed around it."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(UI, encoding="utf-8") as fh:
+            cls.src = fh.read()
+
+    def test_the_box_is_cleared_before_the_handoff(self):
+        fn = self.src[self.src.index("async function runChat()"):]
+        branch = fn[:fn.index("return runAgent(text);")]
+        self.assertIn('$("cInput").value = ""', branch)
