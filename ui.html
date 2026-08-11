@@ -854,6 +854,15 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .hlist .row:hover .x { opacity: 1; }
 .hlist .row .x:hover { color: var(--text); }
 .hlist .empty { color: var(--faint); font-size: 12px; padding: 10px; }
+.made { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 8px; }
+.made .t { font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--faint); margin-bottom: 6px; }
+.made .f { display: flex; align-items: center; gap: 10px; padding: 3px 0; font-size: 12.5px; }
+.made .f .n { flex: 1; min-width: 0; font-family: var(--mono); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.made .f .b { color: var(--faint); font-family: var(--mono); font-size: 11px; }
+.made .f button { background: none; border: 0; color: var(--muted); font-size: 12px; padding: 0; }
+.made .f button:hover { color: var(--text); }
 .chatview .side { display: flex; flex-direction: column; min-height: 0; gap: 12px; }
 .aside-toggle { min-height: 30px; padding: 3px 9px; font-size: 13px; line-height: 1; }
 /* Folded: one column, not a zero-width one. `0 minmax(0, 1fr)` looked
@@ -4325,9 +4334,11 @@ function buildMsg(m) {
 function paintMsg(node, m) {
   // Nothing changed since the last frame: leave the DOM alone entirely.
   if (node._src === m.content && node._pending === m.pending
-      && node._reason === m.reasoning && node._note === m.note) return;
+      && node._reason === m.reasoning && node._note === m.note
+      && node._files === (m.agentFiles || []).length) return;
   node._src = m.content; node._pending = m.pending; node._reason = m.reasoning;
   node._note = m.note;
+  node._files = (m.agentFiles || []).length;
 
   const body = node.querySelector(".body");
   if (m.role === "user") body.textContent = m.content;          // never parsed
@@ -4337,6 +4348,24 @@ function paintMsg(node, m) {
     if (!m.pending) m.html = body.innerHTML;                    // settled: cache it
   } else body.textContent = "";
   if (m.pending) body.appendChild(el("span", "caret"));
+  // What the run actually produced. The list arrived in the `done` event and
+  // was captured and never shown, so a finished job could only be inspected on
+  // the filesystem — which is not finished.
+  if (m.agentFiles && m.agentFiles.length && !m.pending) {
+    const box = el("div", "made");
+    box.appendChild(el("div", "t", m.agentFiles.length + " file(s) in " + m.agentJob));
+    m.agentFiles.forEach((f) => {
+      const row = el("div", "f");
+      row.appendChild(el("span", "n", f.path));
+      row.appendChild(el("span", "b", fmtBytes(f.bytes)));
+      const isPage = /\.html?$/i.test(f.path);
+      const open = el("button", null, isPage ? "View" : "Open");
+      open.onclick = () => openAgentFile(m.agentJob, f.path, isPage);
+      row.appendChild(open);
+      box.appendChild(row);
+    });
+    body.appendChild(box);
+  }
   // Said while it is loading, and dropped once the reply arrives — by then the
   // wait it was explaining is over.
   if (m.note && m.pending && !m.content) {
@@ -4541,6 +4570,26 @@ function noteModelSwitch() {
   const label = ((spec.models || {})[chosen] || {}).label || chosen;
   return "Loading " + label + " — it replaces the model in memory, so the first "
        + "reply waits for the weights.";
+}
+
+/* Open a file the agent made. Fetched with the key and shown from a blob, the
+   same way every other generated artefact is — a plain link cannot carry the
+   Authorization header.
+
+   A page is asked for with `inline=1`, so the gateway folds its same-folder CSS
+   and JS in first: a relative `href` does not resolve inside a blob, and the
+   site would otherwise render unstyled, which looks like the agent having done
+   a bad job. */
+async function openAgentFile(job, path, asPage) {
+  const url = "/v1/agent/file?job=" + encodeURIComponent(job)
+            + "&path=" + encodeURIComponent(path) + (asPage ? "&inline=1" : "");
+  try {
+    const blob = await api(url, { raw: true });
+    const href = URL.createObjectURL(blob); blobUrls.push(href);
+    window.open(href, "_blank", "noopener");
+  } catch (e) {
+    alert("Could not open " + path + ": " + e.message);
+  }
 }
 
 async function runChat() {

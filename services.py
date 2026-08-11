@@ -265,7 +265,7 @@ SERVICES = {
 # the proxy would try to forward them and 404.
 GATEWAY_ROUTES = ("/v1/press", "/v1/press/download", "/v1/press/resume",
                   "/v1/press/review", "/v1/press/names", "/v1/artists", "/v1/outputs",
-                  "/v1/music/tiers", "/v1/sprites", "/v1/sfx", "/v1/agent", "/v1/vector",
+                  "/v1/music/tiers", "/v1/sprites", "/v1/sfx", "/v1/agent", "/v1/agent/file", "/v1/vector",
                   "/supervisor", "/health")
 
 

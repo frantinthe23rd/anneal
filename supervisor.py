@@ -2754,6 +2754,68 @@ class Handler(BaseHTTPRequestHandler):
             self._send_press_zip()
             return
 
+        if route == "/v1/agent/file":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            job = (q.get("job") or [""])[0]
+            rel = (q.get("path") or [""])[0]
+            _, root = agent_root(job)
+            try:
+                # The same containment the tools use, because reading is as
+                # good a way out of the folder as writing.
+                full = agent.safe_path(root, rel)
+            except ValueError as exc:
+                self._send_json({"code": 400, "error": str(exc)}, 400)
+                return
+            if not os.path.isfile(full):
+                self._send_json({"code": 404, "error": "no such file"}, 404)
+                return
+            # A page asked for whole: same-folder CSS and JS folded in, because
+            # a blob URL cannot resolve a relative href and the site would
+            # render unstyled.
+            if (q.get("inline") or [""])[0] and full.lower().endswith((".html", ".htm")):
+                with open(full, encoding="utf-8", errors="replace") as fh:
+                    page = fh.read()
+                assets = {}
+                base = os.path.dirname(full)
+                for name in os.listdir(base):
+                    if name.lower().endswith((".css", ".js")):
+                        try:
+                            with open(os.path.join(base, name), encoding="utf-8",
+                                      errors="replace") as fh:
+                                assets[name] = fh.read()
+                        except OSError:
+                            continue
+                body = agent.inline_site(page, assets).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            # An agent writes source, which the generated-output map does not
+            # cover — index.html came back as text/plain, so "Open" showed the
+            # markup rather than the page.
+            ext = os.path.splitext(full)[1].lower()
+            ctype = ({".html": "text/html; charset=utf-8",
+                      ".htm": "text/html; charset=utf-8",
+                      ".css": "text/css; charset=utf-8",
+                      ".js": "text/javascript; charset=utf-8",
+                      ".json": "application/json",
+                      ".md": "text/markdown; charset=utf-8",
+                      ".txt": "text/plain; charset=utf-8"}.get(ext)
+                     or CONTENT_TYPES.get(ext)
+                     or "text/plain; charset=utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(os.path.getsize(full)))
+            self.end_headers()
+            with open(full, "rb") as fh:
+                shutil.copyfileobj(fh, self.wfile)
+            return
+
         if route == "/v1/artists":
             if not self._authorized():
                 self._send_json({"code": 401, "error": "unauthorized"}, 401)

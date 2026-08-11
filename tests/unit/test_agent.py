@@ -174,3 +174,55 @@ class TestTheLoop(SandboxCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSeeingWhatItMade(unittest.TestCase):
+    """The run reported files and there was no way to look at them: the working
+    folder is outside `outputs/`, so the library cannot show it, and the tab
+    captured the list and rendered nothing. A finished job you can only inspect
+    over ssh is not finished."""
+
+    def setUp(self):
+        import supervisor
+        self.supervisor = supervisor
+
+    def test_the_route_is_owned_by_the_gateway(self):
+        import services
+        self.assertIn("/v1/agent/file", services.GATEWAY_ROUTES)
+        self.assertIsNone(services.resolve("/v1/agent/file"))
+
+    def test_it_is_containment_checked_like_everything_else(self):
+        src = open(os.path.join(os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__)))), "supervisor.py"),
+            encoding="utf-8").read()
+        block = src[src.index('if route == "/v1/agent/file"'):]
+        block = block[:block.index("\n        if route ==", 10)]
+        self.assertIn("safe_path", block)
+        self.assertIn("_authorized", block)
+
+
+class TestInliningASite(SandboxCase):
+    """A static site is the obvious thing to ask an agent for, and it is the
+    one output a blob URL cannot show: `<link href="style.css">` does not
+    resolve inside a blob. Same-folder CSS and JS are inlined so the page can
+    be looked at without inventing a way to serve it unauthenticated."""
+
+    def test_a_stylesheet_is_inlined(self):
+        html = '<link rel="stylesheet" href="style.css"><h1>x</h1>'
+        out = agent.inline_site(html, {"style.css": "body{color:red}"})
+        self.assertIn("<style>body{color:red}</style>", out)
+        self.assertNotIn("<link", out)
+
+    def test_a_script_is_inlined(self):
+        out = agent.inline_site('<script src="app.js"></script>', {"app.js": "var x=1"})
+        self.assertIn("var x=1", out)
+        self.assertNotIn('src="app.js"', out)
+
+    def test_a_missing_asset_is_left_alone_rather_than_blanked(self):
+        html = '<link rel="stylesheet" href="missing.css">'
+        self.assertEqual(agent.inline_site(html, {}), html)
+
+    def test_a_remote_asset_is_untouched(self):
+        """Nothing here fetches from the network, and the page must not either."""
+        html = '<link rel="stylesheet" href="https://cdn.example/x.css">'
+        self.assertEqual(agent.inline_site(html, {}), html)
