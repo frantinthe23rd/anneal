@@ -1663,6 +1663,56 @@
         }
       }
     },
+    "/v1/agent/file": {
+      "get": {
+        "tags": [
+          "agent"
+        ],
+        "summary": "Read a file the agent made",
+        "description": "Serves one file from a job's working folder. The same containment the tools use — reading is as good a way out of a folder as writing — so `..`, absolute paths and symlinks out are refused.\n\n`inline=1` on an `.html` file folds its same-folder CSS and JS into the page first. A generated site is the obvious thing to ask an agent for and the one output a blob URL cannot show: a relative `href` does not resolve inside a blob, so the page would render unstyled and look like the agent had done a bad job. Only local, extension-matched paths are replaced; anything with a scheme is left alone, because nothing here fetches from the network and the preview must not either.",
+        "parameters": [
+          {
+            "name": "job",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Relative to the working folder."
+          },
+          {
+            "name": "inline",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "For HTML: fold in same-folder CSS and JS."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file."
+          },
+          "400": {
+            "description": "A path outside the working folder."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "No such file."
+          }
+        }
+      }
+    },
     "/supervisor/auth": {
       "get": {
         "tags": [

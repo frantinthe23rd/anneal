@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 
 MAX_STEPS = 12
@@ -247,3 +248,32 @@ network, or touch anything outside it — do not claim you have.
 
 When the task is finished, reply with a short plain-English summary of what you
 made. No tool call in that reply is how the work ends."""
+
+
+# ---------------------------------------------------------------- previewing
+LOCAL_LINK = re.compile(
+    r"""<link\b[^>]*?href=["']([^"':?#]+\.css)["'][^>]*>""", re.I)
+LOCAL_SCRIPT = re.compile(
+    r"""<script\b[^>]*?src=["']([^"':?#]+\.js)["'][^>]*>\s*</script>""", re.I)
+
+
+def inline_site(html, assets):
+    """Fold same-folder CSS and JS into one page.
+
+    A static site is the obvious thing to ask for, and it is the one output a
+    blob URL cannot show — `<link href="style.css">` does not resolve inside a
+    blob, so the page renders unstyled. Only local, extension-matched paths are
+    replaced: anything with a scheme is left exactly as it is, because nothing
+    here fetches from the network and the preview must not either. A file that
+    is missing is left as its original tag rather than blanked, so the page
+    still says what it was reaching for.
+    """
+    def css(m):
+        body = assets.get(m.group(1))
+        return "<style>%s</style>" % body if body is not None else m.group(0)
+
+    def js(m):
+        body = assets.get(m.group(1))
+        return "<script>%s</script>" % body if body is not None else m.group(0)
+
+    return LOCAL_SCRIPT.sub(js, LOCAL_LINK.sub(css, html or ""))

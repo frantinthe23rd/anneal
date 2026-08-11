@@ -418,6 +418,12 @@ Generation goes back through Anneal's own endpoints, so an agent asking for an
 image pays the same admission control and eviction as any other caller and the
 result lands in the library too.
 
+`GET /v1/agent/file?job=&path=` reads one file back out, containment-checked the
+same way — reading is as good a way out of a folder as writing. Add `inline=1`
+to an `.html` file and its same-folder CSS and JS are folded in, because a
+relative `href` does not resolve inside a blob and the page would otherwise
+render unstyled.
+
 The response is an SSE stream — `start`, one `step` per tool call, then `done` —
 because a run is minutes and a body that arrives at the end tells you nothing
 while you wait. Measured on this machine: a three-step page took 27 s with
