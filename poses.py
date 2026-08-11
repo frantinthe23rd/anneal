@@ -67,17 +67,85 @@ def base_prompt(subject, style="flat pixel art"):
 
 
 def edit_prompt(pose):
-    """Change the pose and nothing else.
+    """Move the character into one pose, keeping who they are.
 
-    Everything that must not move is named, because the model edits what you
-    mention and drifts on what you do not. Physical instructions work and
-    abstract ones do not: "shield raised in front" returned the original pose,
-    while "shield lifted high above the head with both arms" was obeyed exactly.
+    What must not change is named, because the model edits what you mention and
+    drifts on what you do not. Physical instructions work and abstract ones do
+    not: "shield raised in front" returned the original pose, while "shield
+    lifted high above the head with both arms" was obeyed exactly.
+
+    Cloth is deliberately *not* pinned. This said "identical ... outfit", which
+    argues with a request for a flowing cape. Measured on a caped knight, same
+    base and seed: pinning the outfit still let the cape move, but freeing it
+    explicitly turned a sweep to one side into a billow on both. Secondary
+    motion — cloth, hair, a tail — is most of what makes a sprite look animated
+    rather than posed.
     """
-    return ("change only the pose: the same character, now %s. Identical "
-            "character design, colours, proportions, outfit and art style. "
-            "Keep the plain flat white background, and keep the character fully "
-            "in frame." % pose.strip())
+    return ("the same character, now %s. Identical character design, colours, "
+            "proportions and art style. Cloth, hair, cape and anything loose "
+            "may move with the motion. Keep the plain flat white background, "
+            "and keep the character fully in frame." % pose.strip())
+
+
+BREAKDOWN_PROMPT = """Break one movement into {count} sprite frames.
+
+Movement: {action}
+
+Return one instruction per frame, each describing a single moment of the
+movement as a physical body position. Say what the limbs are doing, and say what
+any cloth, hair, cape or tail is doing in that moment — secondary motion is what
+makes it read as movement rather than a series of poses.
+
+The frames must loop: frame {count} should lead back into frame 1 without a
+jump.
+
+Write instructions, not sentences about the character. "Mid stride, left leg
+forward, cape swept back" — not "the knight walks confidently".
+
+Reply with JSON and nothing else:
+{{"poses": ["...", "..."]}}"""
+
+
+def breakdown_prompt(action, count):
+    """Ask the text model to turn one movement into one instruction per frame."""
+    return BREAKDOWN_PROMPT.format(action=(action or "").strip(), count=int(count))
+
+
+def parse_breakdown(raw, count):
+    """The poses in a reply, or [] if there are none worth using.
+
+    Junk yields nothing rather than raising: this runs before any frame exists,
+    and a formatting lapse from a 4B model is not something a caller should have
+    to handle. The caller falls back to asking for poses by hand.
+    """
+    import json as _json
+    import re as _re
+    text = (raw or "").strip()
+    if not text:
+        return []
+    fenced = _re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, _re.S)
+    candidate = fenced.group(1) if fenced else None
+    if candidate is None:
+        start = text.find("{")
+        if start < 0:
+            return []
+        depth = 0
+        for i, ch in enumerate(text[start:], start):
+            depth += (ch == "{") - (ch == "}")
+            if depth == 0:
+                candidate = text[start:i + 1]
+                break
+    if not candidate:
+        return []
+    try:
+        data = _json.loads(candidate)
+    except ValueError:
+        return []
+    out = []
+    for entry in (data.get("poses") or []):
+        if isinstance(entry, str) and entry.strip():
+            out.append(entry.strip())
+    return out[:int(count)]
 
 
 def why_unavailable():

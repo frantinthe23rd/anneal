@@ -207,3 +207,70 @@ class TestHowManyFrames(unittest.TestCase):
         a person discovering it by waiting."""
         node = supervisor.capability_limits()["sprites"]
         self.assertGreater(node["methods"]["edit"]["seconds_per_frame"], 0)
+
+
+class TestDescribingTheMotionInsteadOfEachFrame(unittest.TestCase):
+    """Naming every pose is the precise way and a chore, and it makes secondary
+    motion — a cape, a tail, hair — something you have to remember in every
+    line. `action` describes the movement once and the text model breaks it into
+    one instruction per frame.
+
+    The text model is already loaded for lyrics and titles and answers in
+    seconds, so this costs nothing against the minutes the frames take. It runs
+    before any of them, so a bad breakdown is visible before the time is spent —
+    the poses it produced come back in the response.
+    """
+
+    def test_a_breakdown_prompt_exists(self):
+        self.assertTrue(hasattr(pose_edit, "breakdown_prompt"))
+
+    def test_it_asks_for_the_frames_that_were_requested(self):
+        p = pose_edit.breakdown_prompt("a knight walking, cape flowing", 6)
+        self.assertIn("6", p)
+        self.assertIn("a knight walking, cape flowing", p)
+
+    def test_it_asks_for_a_loop(self):
+        # A walk cycle that does not return to its start reads as a stutter
+        # every time it repeats.
+        self.assertIn("loop", pose_edit.breakdown_prompt("walking", 4).lower())
+
+    def test_a_reply_becomes_one_pose_per_frame(self):
+        raw = '{"poses": ["standing still", "mid stride, left leg forward", "mid stride, right leg forward"]}'
+        self.assertEqual(pose_edit.parse_breakdown(raw, 3),
+                         ["standing still", "mid stride, left leg forward",
+                          "mid stride, right leg forward"])
+
+    def test_it_is_trimmed_to_the_count_asked_for(self):
+        raw = '{"poses": ["a", "b", "c", "d", "e"]}'
+        self.assertEqual(len(pose_edit.parse_breakdown(raw, 3)), 3)
+
+    def test_junk_yields_nothing_rather_than_raising(self):
+        """This runs before the frames exist, and a formatting lapse from a 4B
+        model is not something a caller should have to handle."""
+        self.assertEqual(pose_edit.parse_breakdown("sorry, I cannot", 4), [])
+        self.assertEqual(pose_edit.parse_breakdown("", 4), [])
+
+    def test_empty_lines_are_dropped(self):
+        raw = '{"poses": ["walking", "  ", "", "turning"]}'
+        self.assertEqual(pose_edit.parse_breakdown(raw, 4), ["walking", "turning"])
+
+
+class TestTheEditInstructionLetsClothMove(unittest.TestCase):
+    """Measured on a caped knight, same base and seed, two instructions. Pinning
+    the "outfit" did not stop the cape moving, but freeing cloth explicitly gave
+    markedly more of it — a sweep on one side became a billow on both. Secondary
+    motion is most of what makes a sprite look animated rather than posed."""
+
+    def test_cloth_is_allowed_to_move(self):
+        p = pose_edit.edit_prompt("mid stride").lower()
+        for loose in ("cloth", "hair"):
+            self.assertIn(loose, p)
+
+    def test_identity_is_still_pinned(self):
+        p = pose_edit.edit_prompt("mid stride").lower()
+        for pinned in ("colours", "proportions", "style"):
+            self.assertIn(pinned, p)
+
+    def test_the_outfit_is_no_longer_frozen(self):
+        # "Identical ... outfit" is the clause that argued with the request.
+        self.assertNotIn("outfit", pose_edit.edit_prompt("mid stride").lower())
