@@ -23,12 +23,13 @@ import unittest
 
 from tests.context import REPO_ROOT  # noqa: F401
 
+import poses as pose_edit
 import supervisor
 
 
 class TestTheMethodsAreDeclared(unittest.TestCase):
     def test_both_methods_exist(self):
-        self.assertEqual(set(supervisor.SPRITE_METHODS), {"sheet", "kontext"})
+        self.assertEqual(set(supervisor.SPRITE_METHODS), {"sheet", "edit"})
 
     def test_the_default_is_the_permissively_licensed_one(self):
         """schnell is Apache-2.0 and already installed. A non-commercial model
@@ -42,11 +43,15 @@ class TestTheMethodsAreDeclared(unittest.TestCase):
         for name, spec in supervisor.SPRITE_METHODS.items():
             self.assertTrue(spec.get("licence"), name)
 
-    def test_kontext_is_marked_non_commercial(self):
-        """This is the fact a downstream user needs and cannot infer. Anneal is
-        otherwise MIT and Apache throughout; one row is not."""
-        licence = supervisor.SPRITE_METHODS["kontext"]["licence"].lower()
-        self.assertIn("non-commercial", licence)
+    def test_no_method_carries_a_non_commercial_term(self):
+        """This method was specified against FLUX.1 Kontext, which is
+        non-commercial and was never wired up. It is implemented with
+        FLUX.2-klein-4B, which is Apache-2.0 — so every row is now permissive
+        and Anneal has no exception to explain. If a non-commercial model is
+        ever added back, this fails and the licence has to be stated in the
+        page and the spec deliberately rather than by accident."""
+        for name, spec in supervisor.SPRITE_METHODS.items():
+            self.assertNotIn("non-commercial", spec["licence"].lower(), name)
 
 
 class TestValidation(unittest.TestCase):
@@ -61,23 +66,23 @@ class TestValidation(unittest.TestCase):
         self.assertIsNotNone(problem)
         self.assertIn("method", problem)
 
-    def test_kontext_requires_named_poses(self):
+    def test_edit_requires_named_poses(self):
         """Without them there is no instruction to edit towards, and the whole
         point of this method is that the pose is specified rather than hoped
         for. Falling back to 'frames' silently would give N copies."""
-        problem = self.bad({"prompt": "a knight", "method": "kontext"})
+        problem = self.bad({"prompt": "a knight", "method": "edit"})
         self.assertIsNotNone(problem)
         self.assertIn("poses", problem)
 
-    def test_kontext_with_poses_passes(self):
-        self.assertIsNone(self.bad({"prompt": "a knight", "method": "kontext",
+    def test_edit_with_poses_passes(self):
+        self.assertIsNone(self.bad({"prompt": "a knight", "method": "edit",
                                     "poses": ["idle", "mid-swing"]}))
 
     def test_the_pose_cap_still_applies(self):
         """Each pose is a full generation here rather than a share of one, so
         the cap matters more, not less."""
         self.assertIsNotNone(self.bad({
-            "prompt": "a knight", "method": "kontext",
+            "prompt": "a knight", "method": "edit",
             "poses": ["p"] * (supervisor.MAX_SPRITE_FRAMES + 1)}))
 
 
@@ -85,18 +90,18 @@ class TestTheEditInstruction(unittest.TestCase):
     """What actually holds the character still."""
 
     def test_the_pose_reaches_the_instruction(self):
-        p = supervisor.kontext_prompt("crouched to jump")
+        p = supervisor.pose_edit.edit_prompt("crouched to jump")
         self.assertIn("crouched to jump", p)
 
     def test_it_asks_for_the_character_to_be_unchanged(self):
-        p = supervisor.kontext_prompt("mid-jump").lower()
+        p = supervisor.pose_edit.edit_prompt("mid-jump").lower()
         self.assertTrue("same character" in p or "identical" in p,
                         "nothing pins the subject, which is the whole method")
 
     def test_it_asks_for_the_background_to_stay_plain(self):
         """The cutter finds frames by content against a flat background. An
         edit that invents scenery makes the sprite uncuttable."""
-        self.assertIn("background", supervisor.kontext_prompt("waving").lower())
+        self.assertIn("background", supervisor.pose_edit.edit_prompt("waving").lower())
 
 
 class TestModelPresence(unittest.TestCase):
@@ -104,9 +109,9 @@ class TestModelPresence(unittest.TestCase):
     not fail somewhere inside mflux."""
 
     def test_a_missing_model_is_reported_as_such(self):
-        problem = supervisor.sprite_method_problem("kontext", "/definitely/not/here")
+        problem = supervisor.sprite_method_problem("edit", "/definitely/not/here")
         self.assertIsNotNone(problem)
-        self.assertIn("kontext", problem.lower())
+        self.assertIn("edit", problem.lower())
 
     def test_the_sheet_method_needs_nothing_extra(self):
         self.assertIsNone(supervisor.sprite_method_problem("sheet", "/nope"))
