@@ -396,6 +396,10 @@ def main(argv=None):
                     help="matte the whole image onto transparency and write it to DEST, "
                          "without cutting it into frames. One subject, not a sheet — "
                          "this is the half of the pipeline that holds up on its own")
+    ap.add_argument("--assemble", metavar="DIR",
+                    help="matte every PNG in DIR onto transparency in place and write "
+                         "preview.gif beside them. For frames that were generated one "
+                         "at a time rather than cut from a sheet")
     ap.add_argument("--json", action="store_true",
                     help="print the atlas as JSON on stdout and nothing else")
     ap.add_argument("--no-model", action="store_true",
@@ -407,6 +411,21 @@ def main(argv=None):
     ap.add_argument("--distance", type=int, default=CONTENT_DISTANCE,
                     help="how far from the background a pixel must be to be content")
     args = ap.parse_args(argv)
+
+    if args.assemble:
+        # Frames already exist, one per file. Nothing to find and nothing to
+        # cut: matte each, then make the loop.
+        import glob
+        files = sorted(f for f in glob.glob(os.path.join(args.assemble, "*.png"))
+                       if os.path.basename(f) != "preview.gif")
+        for f in files:
+            cut_alpha(_load(f)).save(f)
+        preview = os.path.join(args.assemble, "preview.gif")
+        animate(files, preview, fps=args.fps)
+        out = {"frames": [{"index": i, "file": f} for i, f in enumerate(files)],
+               "preview": preview, "fps": args.fps}
+        print(json.dumps(out) if args.json else "assembled %d frame(s)" % len(files))
+        return 0
 
     if args.cutout:
         # No frame finding, no atlas, no preview: the caller already has the one

@@ -103,6 +103,15 @@
    "size_gb": 1.8,
    "licence": "Stability AI Community License",
    "note": "Free for research and non-commercial use, and for commercial use below US $1M annual revenue; above that it needs a licence from Stability AI. Outputs are your own. Only the sm-sfx bundle is fetched — the repo also holds TensorRT, ONNX and TFLite builds running to about 100 GB, which allow_patterns exists to avoid."
+  },
+  "Runpod/FLUX.2-klein-4B-mflux-4bit": {
+   "revision": "7ee1b3aa8178a1240050490072196a57da2bf2a9",
+   "target": "hf_cache",
+   "service": "sprites",
+   "required": false,
+   "size_gb": 4.3,
+   "licence": "Apache-2.0",
+   "note": "Only for sprite method 'edit', which generates one base sprite and then edits it once per pose. Optional: the default 'sheet' method needs no model of its own. Measured at 33 s and 4.90 GB peak per frame at 512x512, four steps."
   }
  },
  "upstream": {

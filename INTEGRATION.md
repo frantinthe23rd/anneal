@@ -381,6 +381,40 @@ it was removed after use — the character drifts between frames and the pose
 instructions are not followed, so a set reads as several characters rather than
 one moving. The single cut-out is the half that held up.
 
+**Two ways to make sprite frames, and they fail differently.** `method: "sheet"`
+is the default: one generation containing every pose, cut up afterwards. It is
+fast because it is one generation, and it is unreliable because it asks the
+model for a *layout* and then recovers frames by finding blobs. Three runs of
+the same four-pose brief returned four frames, three, and seven — sprites drawn
+touching get cut as one, and the character drifts between poses.
+
+`method: "edit"` generates one base sprite and edits it once per pose:
+
+```bash
+curl -X POST "$ANNEAL_URL/v1/sprites" -H "Authorization: Bearer $ANNEAL_KEY" \
+  -H 'Content-Type: application/json' -d '{
+    "prompt": "a small orange fox in a blue scarf",
+    "method": "edit",
+    "poses": ["standing still, facing the viewer",
+              "mid stride, left leg forward, walking",
+              "mid stride, right leg forward, walking",
+              "both arms lifted high above the head"]}'
+```
+
+Identity comes from the reference image instead of from asking nicely, and each
+frame is its own file — so nothing can merge and every frame is the same size.
+Measured end to end: four frames in 3 m 22 s including the base sprite and the
+matting, 33 s and 4.90 GB peak per frame at 512x512.
+
+`poses` is required for `edit`; there is nothing to edit towards without it.
+Write them physically — "shield lifted high above the head with both arms" is
+obeyed, "shield raised in front" came back as the original pose. Up to 8, since
+each one is a separate generation.
+
+It holds about 4.9 GB in a subprocess the supervisor cannot see, so it takes the
+heavy slot: an idle music or image model is evicted first, and a busy one gives
+a **409** rather than having its work killed underneath it.
+
 **Sprite methods are reported, not assumed.** `/health` → `limits.sprites`
 lists every method with its label, its licence, whether this host can run it and
 why not when it cannot. Read it before offering a choice: `kontext` needs an

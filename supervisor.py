@@ -57,6 +57,10 @@ import trim  # noqa: E402
 import vector  # noqa: E402
 import builder  # noqa: E402  (capability_limits reports its constants)
 import sfx      # noqa: E402  (a subprocess one-shot, not a registered service)
+# Imported under another name: `poses` is a local variable in three functions
+# here, and shadowing the module in the one place that needs it is a bug that
+# reads as a typo.
+import poses as pose_edit  # noqa: E402
 from builder import Press, PressStore  # noqa: E402
 
 LISTEN_HOST = os.environ.get("SUPERVISOR_HOST", "127.0.0.1")
@@ -930,6 +934,29 @@ def ensure_music_tier(tier):
     return wanted
 
 
+def free_heavy_slot(reason):
+    """Evict idle heavy services so a subprocess can hold gigabytes safely.
+
+    Sprite editing loads about 4.9 GB outside any service, where the supervisor
+    cannot see it, so nothing in the eviction logic would otherwise know to make
+    room. Beside a loaded image model that is roughly 14 GB on a 16 GB machine.
+
+    Refuses rather than kills, the same way start_service does: evicting a model
+    with work in flight loses somebody's job quietly, and a dead queue still
+    reports status 0, so the client polls forever on work that no longer exists.
+    """
+    with _heavy_lock:
+        for name, svc in SERVICE_OBJECTS.items():
+            if not svc.heavy or not svc.is_running():
+                continue
+            with svc.flight_lock:
+                in_flight = svc.in_flight
+            if in_flight or svc.has_work():
+                raise ServiceBusy(name, reason)
+            log("evicting idle heavy service %r to make room for %s" % (name, reason))
+            svc.stop("evicted by %s" % reason)
+
+
 def start_service(name):
     """Start `name`, first evicting any other *idle* heavy service.
 
@@ -1080,11 +1107,6 @@ MAX_SPRITE_FRAMES = 8
 # 1344x768 sheet. Both the validator and the generator take it from here — they
 # had a literal each, which is two places for a default to drift.
 DEFAULT_SPRITE_FRAMES = 4
-# The Kontext weights are downloadable and the edit path is not built: the image
-# backend has no edit endpoint yet. Named once, so the 501 the handler returns
-# and the availability the form reads cannot disagree — which is how a form
-# comes to offer something that always fails.
-KONTEXT_WIRED = False
 
 
 def sprite_python():
@@ -1125,20 +1147,19 @@ def sheet_prompt(subject, frames=4, style="flat pixel art", poses=None):
 #             Apache-2.0, already installed. Keeps the character identical and
 #             produces very little motion; naming poses moves it at the cost of
 #             design drift. Both measured.
-#   kontext — one base sprite, then one *directed edit* per pose against it.
+#   edit    — one base sprite, then one *directed edit* per pose against it.
 #             Identity comes from the reference image and the pose is an
-#             instruction, so the two stop fighting. Costs a 9 GB download and
-#             a non-commercial licence.
+#             instruction, so the two stop fighting, and each frame is its own
+#             image so there is no layout to recover and nothing to merge.
+#             Measured at 33 s and 4.90 GB per frame; see poses.py.
 SPRITE_METHODS = {
     "sheet": {
         "licence": "Apache-2.0 (FLUX.1-schnell)",
         "needs_model": False,
         "label": "One generation, cut into frames",
     },
-    "kontext": {
-        "licence": "FLUX.1 [dev] Non-Commercial License — the model may not be "
-                   "used commercially without a licence from Black Forest Labs. "
-                   "Outputs are your own.",
+    "edit": {
+        "licence": "Apache-2.0 (FLUX.2-klein-4B)",
         "needs_model": True,
         "label": "One base sprite, then a directed edit per pose",
     },
@@ -1149,23 +1170,6 @@ SFX_LICENCE = ("Stability AI Community License — free for research, "
                "non-commercial use, and commercial use below US $1M annual "
                "revenue. Outputs are your own.")
 DEFAULT_SPRITE_METHOD = os.environ.get("ANNEAL_SPRITE_METHOD", "sheet")
-KONTEXT_MODEL = os.environ.get(
-    "ANNEAL_KONTEXT_MODEL", "akx/FLUX.1-Kontext-dev-mflux-4bit")
-
-
-def kontext_prompt(pose):
-    """Edit one sprite into one pose, changing nothing else.
-
-    Everything except the pose is spelled out as unchanged, because Kontext
-    edits what you mention and drifts on what you do not — and a sprite whose
-    palette shifts between frames is the failure the sheet method already has.
-    """
-    return ("change only the pose: the same character, now %s. "
-            "Identical character design, colours, proportions, outfit and art "
-            "style. Keep the plain flat white background with no scenery, and "
-            "keep the character fully in frame." % pose.strip())
-
-
 def sprite_method_problem(method, model_path=None):
     """Why this host cannot use this method, or None."""
     spec = SPRITE_METHODS.get(method)
@@ -1177,11 +1181,13 @@ def sprite_method_problem(method, model_path=None):
         from huggingface_hub import snapshot_download  # noqa: F401
     except ImportError:
         pass
-    path = model_path or paths.hf_snapshot(KONTEXT_MODEL)
+    missing = pose_edit.why_unavailable()
+    if missing:
+        return missing
+    path = model_path or paths.hf_snapshot(pose_edit.EDIT_MODEL)
     if not path or not os.path.isdir(path):
-        return ("the kontext model is not installed (~9 GB, and a "
-                "non-commercial licence). See the sprites section of "
-                "INTEGRATION.md.")
+        return ("the edit model is not downloaded (about 4.3 GB, Apache-2.0). "
+                "./anneal models sprites fetches it.")
     return None
 
 
@@ -1206,10 +1212,10 @@ def sprite_limits(payload):
     if method not in SPRITE_METHODS:
         return ("unknown 'method' %r — one of: %s"
                 % (method, ", ".join(SPRITE_METHODS)))
-    if method == "kontext" and not [p for p in (poses or []) if p.strip()]:
+    if method == "edit" and not [p for p in (poses or []) if p.strip()]:
         # Without an instruction per frame there is nothing to edit towards,
-        # and falling back to a frame count would produce N identical copies.
-        return ("'poses' is required for method 'kontext' — each pose is the "
+        # and falling back to a frame count would produce N copies of the base.
+        return ("'poses' is required for method 'edit' — each pose is the "
                 "instruction for one frame")
     return None
 
@@ -1244,13 +1250,10 @@ def capability_limits():
                     "label": spec["label"],
                     "licence": spec["licence"],
                     "available": sprite_method_problem(name) is None
-                                 and (not spec.get("needs_model")
-                                      or KONTEXT_WIRED)
                                  and bool(sprite_python()),
                     "why": sprite_method_problem(name) or (
-                        None if (spec.get("needs_model") is not True or KONTEXT_WIRED)
-                        else "not wired up yet — the image backend needs an edit "
-                             "endpoint first"),
+                        None if sprite_python() else
+                        "no interpreter with rembg — ./setup.sh --tools"),
                 }
                 for name, spec in SPRITE_METHODS.items()
             },
@@ -1352,6 +1355,119 @@ class Handler(BaseHTTPRequestHandler):
             return json.loads(raw or b"{}"), raw
         except ValueError:
             return {}, raw
+
+    def _make_pose_frames(self, payload, interpreter):
+        """One base sprite, then one directed edit per pose.
+
+        The sheet method asks a single generation for a layout and recovers
+        frames by finding blobs in it, which drifts the character and merges
+        sprites that touch. Here identity comes from the reference image and
+        each frame is its own file, so neither can happen.
+
+        Costs one generation per frame — measured at 33 s and 4.90 GB — against
+        one for a whole sheet. That is the trade, and it is why this is not the
+        default.
+        """
+        subject = payload["prompt"].strip()
+        style = (payload.get("style") or "flat pixel art").strip()
+        pose_list = [p.strip() for p in (payload.get("poses") or []) if p.strip()]
+        if len(pose_list) > pose_edit.MAX_POSES:
+            self._send_json({"code": 400,
+                             "error": "at most %d poses — each one is a separate "
+                                      "generation" % pose_edit.MAX_POSES}, 400)
+            return
+
+        missing = pose_edit.why_unavailable()
+        if missing:
+            self._send_json({"code": 503, "error": missing,
+                             "licence": SPRITE_METHODS["edit"]["licence"]}, 503)
+            return
+
+        # The base goes through the gateway's own image route, so it inherits
+        # admission control, eviction and library persistence — the same
+        # reasoning as Press.
+        try:
+            reply = press_image(pose_edit.base_prompt(subject, style), "512x512",
+                                wait_for_slot=int(payload.get("wait", 300)),
+                                what="the base sprite")
+        except Exception as exc:
+            self._send_json({"code": 502,
+                             "error": "the base sprite could not be generated: %s" % exc}, 502)
+            return
+        base = (reply or {}).get("path")
+        if not base:
+            self._send_json({"code": 502, "error": "the image service returned no sprite"}, 502)
+            return
+
+        # The editor holds ~4.9 GB in a subprocess the supervisor cannot see, so
+        # the image model that just made the base has to go before it starts.
+        try:
+            free_heavy_slot("sprite pose editing")
+        except ServiceBusy as busy:
+            self._send_json({"code": 409, "error": str(busy)}, 409)
+            return
+
+        out_dir = os.path.join(outputs.root(), "sprites", "%s-%s" % (
+            time.strftime("%Y%m%d-%H%M%S"),
+            re.sub(r"[^a-z0-9]+", "-", subject.lower())[:40].strip("-") or "sprite"))
+        try:
+            made, failures = pose_edit.generate(base, pose_list, out_dir)
+        except RuntimeError as exc:
+            self._send_json({"code": 502, "error": str(exc)}, 502)
+            return
+        if not made:
+            self._send_json({"code": 502,
+                             "error": "no frame could be edited: %s"
+                                      % ("; ".join("%s (%s)" % f for f in failures)
+                                         or "no output"),
+                             "base": base}, 502)
+            return
+
+        # Matting and the preview need rembg, which is outside the pinned
+        # environment — the same subprocess boundary the sheet cutter crosses.
+        data = {"frames": made, "frame_dir": out_dir}
+        if interpreter:
+            try:
+                done = subprocess.run(
+                    [interpreter, os.path.join(HERE, "sprites.py"), out_dir,
+                     "--assemble", out_dir, "--json"],
+                    capture_output=True, text=True, timeout=600)
+                assembled = json.loads((done.stdout or "").strip() or "{}")
+                if assembled.get("preview"):
+                    data["preview"] = assembled["preview"]
+                    data["fps"] = assembled.get("fps")
+            except (subprocess.SubprocessError, ValueError) as exc:
+                # The frames cost half a minute each and are the deliverable;
+                # a missing preview is not worth discarding them for.
+                data["preview_error"] = str(exc)[:200]
+        else:
+            data["preview_error"] = ("no interpreter with rembg, so the frames are "
+                                     "not matted and there is no preview — "
+                                     "./setup.sh --tools builds one")
+
+        for frame in made:
+            frame["url"] = "/v1/outputs/file?path=" + urllib.parse.quote(frame["file"], safe="")
+            outputs.adopt("sprites", frame["file"], {
+                "prompt": subject, "style": style, "service": "sprites",
+                "pose": frame.get("pose"), "frame": frame["index"],
+                "frames": len(made), "method": "edit", "base": base,
+                "request": dict(payload),
+            })
+        outputs.write_set(out_dir, {
+            "prompt": subject, "style": style, "service": "sprites",
+            "frames": len(made), "preview": data.get("preview"),
+            "fps": data.get("fps"), "method": "edit", "base": base,
+            "request": dict(payload),
+        })
+        if data.get("preview"):
+            data["preview_url"] = ("/v1/outputs/file?path="
+                                   + urllib.parse.quote(data["preview"], safe=""))
+        if failures:
+            data["skipped"] = [{"pose": p, "why": w} for p, w in failures]
+        data.update({"subject": subject, "style": style, "method": "edit",
+                     "requested_frames": len(pose_list), "base": base,
+                     "base_url": "/v1/images/file?path=" + urllib.parse.quote(base, safe="")})
+        self._send_json({"data": data, "code": 200, "error": None})
 
     def _make_sprites(self, payload, interpreter):
         """A brief becomes a set of matted frames, in two steps.
@@ -2442,18 +2558,10 @@ class Handler(BaseHTTPRequestHandler):
                                  "method": method,
                                  "licence": SPRITE_METHODS[method]["licence"]}, 503)
                 return
-            if SPRITE_METHODS[method].get("needs_model") and not KONTEXT_WIRED:
-                # The weights are here but the edit path is not wired yet.
-                # Refusing plainly beats accepting and quietly doing something
-                # else — three endpoints have shipped from this repo doing
-                # something other than what they claimed.
-                self._send_json({
-                    "code": 501,
-                    "error": "method 'kontext' is not wired up yet — the image "
-                             "backend needs an edit endpoint first. Use the "
-                             "default 'sheet' method.",
-                }, 501)
+            if method == "edit":
+                self._make_pose_frames(payload, sprite_python())
                 return
+
             interpreter = sprite_python()
             if not interpreter:
                 self._send_json({
