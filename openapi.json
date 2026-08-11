@@ -56,6 +56,10 @@
     {
       "name": "sfx",
       "description": "Sound effects. The one model here that competes with nothing else."
+    },
+    {
+      "name": "agent",
+      "description": "The text model with a folder and the other tools."
     }
   ],
   "paths": {
@@ -1595,6 +1599,66 @@
           },
           "504": {
             "description": "Generation timed out."
+          }
+        }
+      }
+    },
+    "/v1/agent": {
+      "post": {
+        "tags": [
+          "agent"
+        ],
+        "summary": "Run the model as an agent in a working folder",
+        "description": "Gives the text model a folder and the tools already in Anneal, then runs the loop until it stops calling them or a cap is reached.\n\n**It cannot run anything.** There is no shell tool and no network tool. The tools are `write_file`, `read_file`, `list_files`, `generate_image`, `generate_speech` and `generate_sfx`, and every path is resolved and checked against the working folder — `..`, absolute paths and symlinks out are refused and reported back to the model rather than raising. So the worst a confused model can do is fill a folder with bad files.\n\nThe folder is `$AIMUSIC_ROOT/agent/<job>/`. Pass `job` to continue in an existing one; omit it for a new folder named by timestamp.\n\nGeneration goes back through Anneal's own endpoints, so an agent asking for an image pays the same admission control and eviction as any other caller, and the result lands in the library as well as the folder.\n\n**The response is an SSE stream**, because a run is minutes of tool calls and a body that arrives at the end tells you nothing while you wait. Events are `start`, one `step` per tool call, then `done` — or `error`.\n\nSlow: both models answer at roughly 10-13 tokens/sec, and a step that generates an image or a sound adds that on top. `max_steps` is capped.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "prompt"
+                ],
+                "properties": {
+                  "prompt": {
+                    "type": "string",
+                    "description": "What to make."
+                  },
+                  "job": {
+                    "type": "string",
+                    "description": "Continue in an existing working folder. Omit for a new one."
+                  },
+                  "model": {
+                    "type": "string",
+                    "description": "Which text model runs it — see /health limits.text. `qwen-coder` has no reasoning preamble, which suits a tool loop."
+                  },
+                  "max_steps": {
+                    "type": "integer",
+                    "default": 12,
+                    "description": "Tool calls before it stops. Clamped to the server's cap."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "An SSE stream of `start`, `step`… and `done`.",
+            "content": {
+              "text/event-stream": {
+                "example": "data: {\"type\":\"start\",\"job\":\"20260811-140301\",\"model\":\"qwen-coder\"}\n\ndata: {\"type\":\"step\",\"step\":1,\"tool\":\"write_file\",\"ok\":true,\"result\":\"wrote index.html (412 bytes)\"}\n\ndata: {\"type\":\"done\",\"steps\":3,\"seconds\":94.2,\"reply\":\"Made a title screen.\",\"files\":[{\"path\":\"index.html\",\"bytes\":412}]}\n\n"
+              }
+            }
+          },
+          "400": {
+            "description": "No prompt, or an unknown model."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "description": "The chosen model is not downloaded."
           }
         }
       }
