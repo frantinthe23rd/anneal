@@ -1191,6 +1191,28 @@ def sprite_method_problem(method, model_path=None):
     return None
 
 
+# Measured peaks, reported so a chip can show what a run is actually holding.
+# Neither is a service, so nothing polls them for a footprint the way
+# SERVICE_OBJECTS are polled — but "it uses no memory" was never the claim.
+SFX_FOOTPRINT_MB = 1490
+EDIT_FOOTPRINT_MB = 4900
+
+# What the one-shot models are doing right now. Both load inside a request and
+# exit, so nothing in SERVICE_OBJECTS can see them — and reporting them as idle
+# through a run that holds gigabytes is the same lie for both.
+_SFX_STATE = {"active": False}
+
+
+def sfx_state():
+    with _edit_lock:
+        return dict(_SFX_STATE)
+
+
+def set_sfx_state(active):
+    with _edit_lock:
+        _SFX_STATE["active"] = active
+
+
 # What the sprite editor is doing right now. It runs as a subprocess holding
 # about 4.9 GB for minutes at a time, where nothing in SERVICE_OBJECTS can see
 # it — so without this the whole strip reads "cold" through a ten-minute run
@@ -1244,11 +1266,13 @@ def sprite_limits(payload):
                     % (cap, method,
                        "" if method == "edit" else
                        " — method 'edit' takes up to %d" % pose_edit.MAX_POSES))
+    if method == "edit" and (payload.get("action") or "").strip():
+        return None          # the movement is broken into poses server-side
     if method == "edit" and not [p for p in (poses or []) if p.strip()]:
         # Without an instruction per frame there is nothing to edit towards,
         # and falling back to a frame count would produce N copies of the base.
-        return ("'poses' is required for method 'edit' — each pose is the "
-                "instruction for one frame")
+        return ("method 'edit' needs either 'poses' — one instruction per frame "
+                "— or 'action', a movement to break into 'frames' of them")
     return None
 
 
@@ -1292,7 +1316,7 @@ def capability_limits():
                 }
                 for name, spec in SPRITE_METHODS.items()
             },
-            "editing": edit_state(),
+            "editing": dict(edit_state(), footprint_mb=EDIT_FOOTPRINT_MB),
             "default_method": DEFAULT_SPRITE_METHOD,
             "default_frames": DEFAULT_SPRITE_FRAMES,
             "max_frames": MAX_SPRITE_FRAMES,
@@ -1304,6 +1328,8 @@ def capability_limits():
             "max_seconds": sfx.MAX_SECONDS,
             "default_seconds": sfx.DEFAULT_SECONDS,
             "available": sfx.why_unavailable() is None,
+            "running": sfx_state()["active"],
+            "footprint_mb": SFX_FOOTPRINT_MB,
             "why": sfx.why_unavailable(),
             "licence": SFX_LICENCE,
             "evicts_nothing": True,
@@ -1407,6 +1433,27 @@ class Handler(BaseHTTPRequestHandler):
         subject = payload["prompt"].strip()
         style = (payload.get("style") or "flat pixel art").strip()
         pose_list = [p.strip() for p in (payload.get("poses") or []) if p.strip()]
+        broke_down = None
+        action = (payload.get("action") or "").strip()
+        if action and not pose_list:
+            # One text call, seconds, on a model that is already light — against
+            # minutes per frame. It runs first so a bad breakdown is visible
+            # before the time is spent, and the poses come back in the response.
+            want = int(payload.get("frames") or DEFAULT_SPRITE_FRAMES)
+            want = max(2, min(want, pose_edit.MAX_POSES))
+            try:
+                pose_list = pose_edit.parse_breakdown(
+                    press_text(pose_edit.breakdown_prompt(action, want), 700, 0.4), want)
+            except Exception as exc:
+                log("pose breakdown failed: %r" % exc)
+                pose_list = []
+            if not pose_list:
+                self._send_json({
+                    "code": 502,
+                    "error": "the movement could not be broken into frames. "
+                             "Name the poses instead — one per frame."}, 502)
+                return
+            broke_down = action
         if len(pose_list) > pose_edit.MAX_POSES:
             self._send_json({"code": 400,
                              "error": "at most %d poses — each one is a separate "
@@ -1505,6 +1552,11 @@ class Handler(BaseHTTPRequestHandler):
                                    + urllib.parse.quote(data["preview"], safe=""))
         if failures:
             data["skipped"] = [{"pose": p, "why": w} for p, w in failures]
+        # The poses actually used, always — whether they were given or derived.
+        # A caller that described a movement needs to see what it became.
+        data["poses"] = [f.get("pose") for f in made]
+        if broke_down:
+            data["action"] = broke_down
         data.update({"subject": subject, "style": style, "method": "edit",
                      "requested_frames": len(pose_list), "base": base,
                      "base_url": "/v1/images/file?path=" + urllib.parse.quote(base, safe="")})
@@ -2565,6 +2617,7 @@ class Handler(BaseHTTPRequestHandler):
             # No admission control and no eviction on purpose: 1.49 GB peak
             # against 7 for music, so a sound effect does not cost a reload of
             # whatever is warm. Measured, not assumed — see sfx.py.
+            set_sfx_state(True)
             try:
                 made = sfx.generate(payload, os.path.join(outputs.root(), "sfx"))
             except subprocess.TimeoutExpired:
@@ -2573,6 +2626,8 @@ class Handler(BaseHTTPRequestHandler):
             except RuntimeError as exc:
                 self._send_json({"code": 502, "error": str(exc)}, 502)
                 return
+            finally:
+                set_sfx_state(False)
             outputs.adopt("sfx", made["path"], {
                 "prompt": made["prompt"], "seconds": made["seconds"],
                 "service": "sfx", "took": made["took"], "request": dict(payload),

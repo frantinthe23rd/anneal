@@ -351,10 +351,6 @@ header {
 .svc .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cold); flex: none; }
 .svc .nm { color: var(--text); font-size: 12.5px; }
 .svc .st { color: var(--faint); font-family: var(--mono); font-size: 11px; }
-/* Neither cold nor hot: it loads and exits inside the request. Marked as
-   present and ready rather than as a temperature it never has. */
-.svc.ondemand .dot { background: var(--quench); }
-.svc.ondemand .st { color: var(--quench); }
 .svc.absent { opacity: .55; }
 .svc.absent .st { color: var(--faint); }
 .svc.hot { background: var(--heat-wash); }
@@ -2043,62 +2039,68 @@ function fmtMem(mb) {
   return mb >= 1024 ? (mb / 1024).toFixed(1) + " GB" : Math.round(mb) + " MB";
 }
 
-const STATE_LABEL = { cold: "cold", heating: "heating", hot: "hot",
-                      // Sound effects load and exit inside one request, so they
-                      // are never cold and never hot. A chip reading "cold"
-                      // would show a state that can never change.
-                      ondemand: "on demand" };
+const STATE_LABEL = { cold: "cold", heating: "heating", hot: "hot" };
 
-/* Models that are not services. Both load inside a request and exit, so they
-   have no port, no idle timer and nothing in `health.services` — and the strip
-   is where someone looks to find out what this machine can do. Leaving them off
-   made the two cheapest generators the only ones you could not see.
+/* Models that are not services.
 
-   The sprite editor differs from effects in one way that matters: it holds
-   about 4.9 GB for minutes at a time, so while it runs the strip must say so.
-   Reporting everything cold through a ten-minute run is worse than saying
-   nothing. */
+   They load inside a request and exit, so they have no port, no idle timer and
+   nothing in `health.services`. That once made them "on demand" chips — which
+   was wrong, and reported by someone reading the strip: they hold 1.5 GB and
+   4.9 GB while they run, evict what is warm, and put the same pressure on the
+   machine as anything else. Speech is smaller than both and has always been
+   shown loading in and out.
+
+   So they use the same vocabulary as every other model. The only real
+   difference is what happens at the end of a request: a service goes cold after
+   an idle timeout, these go cold immediately. That belongs in the tooltip, not
+   in a separate word for the same thing. */
 function extraChips() {
   const chips = [];
+
+  const chip = (name, running, detail, title) => {
+    const c = el("div", "svc " + (running ? "hot" : "cold"));
+    c.appendChild(el("span", "dot"));
+    c.appendChild(el("span", "nm", name));
+    c.appendChild(el("span", "st", running ? detail : "cold"));
+    c.title = title;
+    return c;
+  };
+
   const fx = limits.sfx;
-  if (fx) {
-    const usable = fx.available !== false;
-    const chip = el("div", "svc " + (usable ? "ondemand" : "absent")
-                    + (busy && mode === "sfx" ? " working" : ""));
-    chip.appendChild(el("span", "dot"));
-    chip.appendChild(el("span", "nm", "effects"));
-    chip.appendChild(el("span", "st", usable ? STATE_LABEL.ondemand : "not installed"));
-    chip.title = usable
-      ? "Sound effects load and exit per request — about 1.5 GB for a few "
-        + "seconds, so nothing is kept warm and nothing else is unloaded."
-      : (fx.why || "Sound effects are not installed on this host.");
-    chips.push(chip);
+  if (fx && fx.available !== false) {
+    chips.push(chip("effects", fx.running,
+      fx.footprint_mb ? fmtMem(fx.footprint_mb) : "working",
+      "Sound effects hold about " + fmtMem(fx.footprint_mb || 0) + " while they run "
+      + "and release it when the request finishes — there is no idle timeout because "
+      + "nothing is kept warm. Light enough that it does not unload anything else."));
+  } else if (fx) {
+    const c = el("div", "svc absent");
+    c.appendChild(el("span", "dot"));
+    c.appendChild(el("span", "nm", "effects"));
+    c.appendChild(el("span", "st", "not installed"));
+    c.title = fx.why || "Sound effects are not installed on this host.";
+    chips.push(c);
   }
 
   const sp = limits.sprites || {};
   const edit = (sp.methods || {}).edit;
-  if (edit) {
-    const editing = sp.editing || {};
-    const usable = edit.available !== false;
-    const chip = el("div", "svc " + (editing.active ? "heating"
-                                     : usable ? "ondemand" : "absent"));
-    chip.appendChild(el("span", "dot"));
-    chip.appendChild(el("span", "nm", "animation"));
-    chip.appendChild(el("span", "st",
-      editing.active
-        // The count is frames *finished*, so show the one being worked on —
-        // "frame 0/3" at the start reads as nothing happening.
-        ? (editing.of
-           ? "frame " + Math.min(editing.frame + 1, editing.of) + "/" + editing.of
-           : "editing")
-        : usable ? STATE_LABEL.ondemand : "not installed"));
-    chip.title = editing.active
-      ? "Editing sprite poses — about 4.9 GB, one generation per frame."
-      : usable
-        ? "Sprite poses load about 4.9 GB per run and exit. Nothing is kept warm, "
-          + "but a run does unload whatever else is."
-        : (edit.why || "The sprite edit model is not installed on this host.");
-    chips.push(chip);
+  if (edit && edit.available !== false) {
+    const e = sp.editing || {};
+    chips.push(chip("animation", e.active,
+      // The count is frames finished, so name the one being worked on —
+      // "frame 0/3" at the start reads as nothing happening.
+      e.of ? "frame " + Math.min(e.frame + 1, e.of) + "/" + e.of
+           : fmtMem(e.footprint_mb || 0),
+      "Sprite editing holds about " + fmtMem(e.footprint_mb || 0) + " while it runs, "
+      + "one generation per frame, and releases it when the set is finished. It "
+      + "unloads whatever else is warm first."));
+  } else if (edit) {
+    const c = el("div", "svc absent");
+    c.appendChild(el("span", "dot"));
+    c.appendChild(el("span", "nm", "animation"));
+    c.appendChild(el("span", "st", "not installed"));
+    c.title = edit.why || "The sprite edit model is not installed on this host.";
+    chips.push(c);
   }
   return chips;
 }
@@ -3449,7 +3451,14 @@ function renderLibrary() {
     const holder = el("div");
     // By file type, not by kind: sprites are images too, and keying on
     // kind === "images" gave a sprite frame a broken audio player.
-    const isPic = /\.(png|jpe?g|webp|gif|svg)$/i.test(it.name || "");
+    //
+    // The *name* is not always the file. A sprite set is one row standing for a
+    // directory, so its name has no extension at all and the same broken audio
+    // player came back for the whole set. The url ends in the file being
+    // served, so test both.
+    const PICTURE = /\.(png|jpe?g|webp|gif|svg)(\?|$)/i;
+    const served = decodeURIComponent((it.url || "").split("path=").pop() || "");
+    const isPic = PICTURE.test(it.name || "") || PICTURE.test(served);
     const open = el("button", null, isPic ? "Show image" : "Play");
     open.className = "iconbtn";
     open.onclick = async () => {
