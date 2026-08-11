@@ -237,6 +237,25 @@ def cut_alpha(img):
     return remove(img.convert("RGBA"), session=_REMBG_SESSION)
 
 
+def trim_to_content(img):
+    """Crop away fully transparent margin, so the subject fills the frame.
+
+    Frames cut from a sheet are already tight against their content — the cutter
+    found them by their bounding box. An *edited* frame is not: it is a full
+    canvas with the subject wherever the model placed it, and measured across
+    one four-pose set that placement moved by 56 px horizontally and 9 px
+    vertically. animate() aligns canvases, so identical canvas sizes meant it
+    aligned nothing and the character slid about inside a still frame.
+
+    An empty frame is returned as it is; there is no content to trim to, and
+    cropping to a zero box would raise.
+    """
+    box = img.getchannel("A").getbbox() if img.mode == "RGBA" else img.getbbox()
+    if not box:
+        return img
+    return img.crop(box)
+
+
 def atlas(path, **kw):
     """Frames plus what a game engine needs to place them."""
     img = _load(path)
@@ -419,7 +438,9 @@ def main(argv=None):
         files = sorted(f for f in glob.glob(os.path.join(args.assemble, "*.png"))
                        if os.path.basename(f) != "preview.gif")
         for f in files:
-            cut_alpha(_load(f)).save(f)
+            # Trim after matting, not before: matting is what creates the
+            # transparent margin there is anything to trim.
+            trim_to_content(cut_alpha(_load(f))).save(f)
         preview = os.path.join(args.assemble, "preview.gif")
         animate(files, preview, fps=args.fps)
         out = {"frames": [{"index": i, "file": f} for i, f in enumerate(files)],

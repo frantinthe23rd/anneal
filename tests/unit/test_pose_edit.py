@@ -101,3 +101,55 @@ class TestItTakesTheHeavySlot(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFramesAreTrimmedBeforeTheyAreAnimated(unittest.TestCase):
+    """Individually good frames, a loop that reads as random.
+
+    An edited frame is a full 512x512 canvas with the subject wherever the model
+    put it — measured on a four-pose fox, the horizontal extent moved by 56 px
+    and the feet by 9 px between frames. `animate()` centres and bottom-aligns
+    the *canvas*, so with every canvas already the same size it does nothing at
+    all, and the character slides around inside a still frame.
+
+    Frames cut from a sheet are tight against their content, which is why the
+    same alignment worked there. Edited frames have to be trimmed to match.
+    """
+
+    def setUp(self):
+        try:
+            from PIL import Image  # noqa: F401
+        except ImportError:
+            self.skipTest("Pillow is not installed in this interpreter")
+        import sprites
+        self.sprites = sprites
+
+    def frame(self, box, size=(200, 200)):
+        from PIL import Image
+        img = Image.new("RGBA", size, (0, 0, 0, 0))
+        for x in range(box[0], box[2]):
+            for y in range(box[1], box[3]):
+                img.putpixel((x, y), (255, 0, 0, 255))
+        return img
+
+    def test_a_frame_is_trimmed_to_its_content(self):
+        img = self.frame((40, 30, 90, 150))
+        trimmed = self.sprites.trim_to_content(img)
+        self.assertEqual(trimmed.size, (50, 120))
+
+    def test_the_subject_touches_every_edge_afterwards(self):
+        trimmed = self.sprites.trim_to_content(self.frame((10, 60, 120, 90)))
+        self.assertEqual(trimmed.getchannel("A").getbbox(),
+                         (0, 0, trimmed.width, trimmed.height))
+
+    def test_an_empty_frame_is_returned_unchanged_rather_than_crashing(self):
+        from PIL import Image
+        blank = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
+        self.assertEqual(self.sprites.trim_to_content(blank).size, (32, 32))
+
+    def test_frames_that_differ_only_in_placement_come_out_the_same_size(self):
+        """The actual failure: one subject drawn at two positions in the same
+        canvas produced two frames that the loop then jittered between."""
+        a = self.sprites.trim_to_content(self.frame((10, 10, 60, 110)))
+        b = self.sprites.trim_to_content(self.frame((90, 40, 140, 140)))
+        self.assertEqual(a.size, b.size)
