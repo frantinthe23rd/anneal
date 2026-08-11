@@ -768,7 +768,7 @@
           "text"
         ],
         "summary": "Chat completion (OpenAI-compatible, streaming supported)",
-        "description": "Local Gemma 4 e4b. Standard OpenAI chat-completions shape, so most client libraries work by changing the base URL.\n\n**Streaming works** — set `stream: true` and the gateway relays SSE chunks as they arrive rather than buffering the completion.\n\n**This is a reasoning model.** By default it emits a long `delta.reasoning` channel before any `delta.content`, and will exhaust a small `max_tokens` while still thinking. For direct answers send `chat_template_kwargs: {\"enable_thinking\": false}`. Leave it on when you actually want the reasoning.\n\n`model` is ignored — the gateway substitutes whichever model is loaded, so you can send anything or omit it.",
+        "description": "Local Gemma 4 e4b. Standard OpenAI chat-completions shape, so most client libraries work by changing the base URL.\n\n**Streaming works** — set `stream: true` and the gateway relays SSE chunks as they arrive rather than buffering the completion.\n\n**This is a reasoning model.** By default it emits a long `delta.reasoning` channel before any `delta.content`, and will exhaust a small `max_tokens` while still thinking. For direct answers send `chat_template_kwargs: {\"enable_thinking\": false}`. Leave it on when you actually want the reasoning.\n\n`model` is ignored — the gateway substitutes whichever model is loaded, so you can send anything or omit it.\n\n**`model` chooses which text model answers.** Send a registry name — `gemma`, `qwen-coder`, `qwen-fast` — or the repo id it maps to. Omit it and you get the default. An unknown name is a **400** rather than being quietly answered by whatever is loaded, and a name that is known but not downloaded is a **503** naming the command that fetches it.\n\nOnly one text model fits at a time, so switching restarts the backend and pays a cold load of about twenty seconds. `/health` → `limits.text` reports which are installed and which is `loaded`, so a client can avoid the stall or warn about it. A switch requested while the model is mid-generation is a **409**, not a killed job.\n\n`gemma` is a reasoning model: a small `max_tokens` is spent thinking and returns empty content with `finish_reason: length`. Send `chat_template_kwargs: {\"enable_thinking\": false}` for tool-calling turns, or use `qwen-coder`, which has no reasoning preamble.",
         "requestBody": {
           "required": true,
           "content": {
@@ -799,6 +799,9 @@
           },
           "503": {
             "$ref": "#/components/responses/BackendUnavailable"
+          },
+          "409": {
+            "description": "The text model is mid-generation and cannot be switched. Retry when it is idle."
           }
         }
       }

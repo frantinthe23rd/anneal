@@ -341,6 +341,58 @@ curl -X POST "$ANNEAL_URL/v1/press/names" -H "Authorization: Bearer $ANNEAL_KEY"
 # -> {"data": {"names": [{"title": "Winter Roads", "artist": "The Salt Line"}, …]}}
 ```
 
+**Choose which text model answers.** `POST /v1/chat/completions` takes the
+OpenAI `model` field as a real choice:
+
+```bash
+curl -X POST "$ANNEAL_URL/v1/chat/completions" -H "Authorization: Bearer $ANNEAL_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen-coder","messages":[{"role":"user","content":"..."}],
+       "tools":[...]}'
+```
+
+| name | what it is | size |
+| --- | --- | --- |
+| `gemma` | general, reasoning. The default, and what Press plans with | 4.8 GB |
+| `qwen-coder` | Qwen2.5 Coder 7B — code and tool use | 4.3 GB |
+| `qwen-fast` | Qwen3 4B — half the size, for short replies | 2.3 GB |
+
+All three are permissively licensed; only `gemma` is required. The others are
+`./anneal models text`. An unknown name is a 400 rather than being quietly
+answered by whatever is loaded — answering with a different model than the one
+asked for is the failure this exists to remove. A known name that is not
+downloaded is a 503 naming the command.
+
+**Switching costs a reload.** Text is heavy and only one heavy model fits, so
+changing model restarts the backend: about twenty seconds before the first
+reply. `/health` → `limits.text` reports which are installed and which is
+`loaded`, so a client can avoid the stall rather than discover it. Asking to
+switch while the model is mid-generation is a 409, not a killed job.
+
+**GPT-OSS speaks a different format, and the gateway translates it.** It answers
+in harmony channels — an `analysis` channel it thinks in, a `final` channel it
+answers in, and a `commentary` channel it calls tools through. `mlx_lm` passes
+those through verbatim, so before this a tool call arrived as text with
+`tool_calls` null and `finish_reason` "stop": a model that appears to have
+ignored its tools. Responses are rewritten into the OpenAI shape, so a client
+sees a normal `tool_calls` array and the analysis as `reasoning`. Streamed
+replies arrive a token at a time and cannot be rewritten server-side; the page
+splits them instead, and a raw client will see the channel markers.
+
+**Both reasoning models will spend a small budget thinking.** Gemma and GPT-OSS
+both answer in an analysis pass first, and a short `max_tokens` is consumed by
+it — an empty reply with `finish_reason: length`, or a reply that is all
+reasoning. For tool turns send `chat_template_kwargs {"enable_thinking": false}`
+where the model supports it, give a generous budget, or use `qwen-coder`, which
+has no preamble.
+
+**Tool calling works**, and so does streaming; the context is 131k. Measured on
+the reference machine at roughly 10 tokens/sec — slow for interactive chat, and
+workable for an agent whose waits are dominated by its tools. One trap:
+`gemma` reasons before answering, so a small `max_tokens` comes back empty with
+`finish_reason: length`. Send `chat_template_kwargs {"enable_thinking": false}`
+for tool turns, or use `qwen-coder`, which has no preamble.
+
 **Sound effects cost nothing else.** `POST /v1/sfx` returns a 44.1 kHz stereo
 WAV of whatever you describe.
 

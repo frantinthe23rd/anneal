@@ -79,8 +79,56 @@ DEFAULT_MUSIC_TIER = os.environ.get("ANNEAL_MUSIC_TIER", "draft")
 # service failed to start with a path nobody had ever typed. The revision now
 # comes from models.lock.json (the same place the downloader reads it) and the
 # location from HF_HOME, so it is derived on whatever machine is running.
+# One model served two jobs that want different things: planning lyrics, where
+# a smaller model would be quicker and quality matters less, and driving an
+# agent, where a coder-specialised model is better than a general instruct one.
+# Text is heavy and only one heavy model fits, so choosing means restarting —
+# the same trade `MUSIC_TIERS` already makes, and surfaced the same way.
+#
+# All three are Apache-2.0 and ungated. Sizes are the download, and only the
+# default is required: nobody should fetch a coder to write lyrics.
+TEXT_MODELS = {
+    "gemma": {
+        "repo": "mlx-community/gemma-4-e4b-it-4bit",
+        "label": "Gemma 4 E4B — general, reasoning",
+        "licence": "Gemma Terms of Use",
+        "note": "The default, and what Press uses to plan. A reasoning model: "
+                "send chat_template_kwargs {\"enable_thinking\": false} for "
+                "tool-calling turns, or a small max_tokens is spent thinking "
+                "and comes back empty.",
+    },
+    "qwen-coder": {
+        "repo": "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit",
+        "label": "Qwen2.5 Coder 7B — code and tool use",
+        "licence": "Apache-2.0",
+        "note": "Trained for code. Same size as the default, no reasoning "
+                "preamble to disable.",
+    },
+    "gpt-oss": {
+        "repo": "mlx-community/gpt-oss-20b-MXFP4-Q4",
+        "label": "GPT-OSS 20B — agent work, biggest that fits",
+        "licence": "Apache-2.0",
+        "note": "20B mixture-of-experts, so it is faster than its size suggests: "
+                "measured 13 tok/s against 10 for the default, and a 28 s cold "
+                "load. It peaks at 11.2 GB against about 11.8 GB usable on a "
+                "16 GB machine — it fits, with little to spare, and nothing else "
+                "heavy can be resident. Native tool calling.",
+    },
+    "qwen-fast": {
+        "repo": "mlx-community/Qwen3-4B-Instruct-2507-4bit",
+        "label": "Qwen3 4B — small and quick",
+        "licence": "Apache-2.0",
+        "note": "Half the size of the others. For lyric planning and short "
+                "replies where the wait costs more than the polish.",
+    },
+}
+DEFAULT_TEXT_MODEL = os.environ.get("ANNEAL_TEXT_MODEL", "gemma")
+if DEFAULT_TEXT_MODEL not in TEXT_MODELS:
+    DEFAULT_TEXT_MODEL = "gemma"
+# Kept because env.sh and older installs set it, and because a model outside the
+# registry is still a legitimate thing to point this at by hand.
 TEXT_MODEL_REPO = os.environ.get("ANNEAL_TEXT_MODEL_REPO",
-                                 "mlx-community/gemma-4-e4b-it-4bit")
+                                 TEXT_MODELS[DEFAULT_TEXT_MODEL]["repo"])
 
 
 def _locked_revision(repo_id, lock_path=None):
@@ -92,7 +140,7 @@ def _locked_revision(repo_id, lock_path=None):
         return None
 
 
-def text_model_path():
+def text_model_path(repo=None):
     """Where mlx_lm should load the text model from.
 
     When nothing is downloaded this returns the path the pinned revision *will*
@@ -113,12 +161,13 @@ def text_model_path():
     override = os.environ.get("ANNEAL_TEXT_MODEL")
     if override:
         return override
-    revision = _locked_revision(TEXT_MODEL_REPO)
-    snapshot = paths.hf_snapshot(TEXT_MODEL_REPO, revision)
+    repo = repo or TEXT_MODEL_REPO
+    revision = _locked_revision(repo)
+    snapshot = paths.hf_snapshot(repo, revision)
     if snapshot:
         return snapshot
     return os.path.join(paths.hf_home(), "hub",
-                        "models--" + TEXT_MODEL_REPO.replace("/", "--"),
+                        "models--" + repo.replace("/", "--"),
                         "snapshots", revision or "main")
 
 # Roughly how long a cold start takes, measured on the reference machine. Not a

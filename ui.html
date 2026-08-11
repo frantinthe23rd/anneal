@@ -1384,7 +1384,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
         <h2>Conversation</h2>
         <span class="hint" id="cTurns" style="margin:0"></span>
         <span class="sp"></span>
-        <label class="check" title="Gemma reasons before answering. With this on, a short reply can spend its whole budget thinking.">
+        <select id="cModel" style="width:auto;padding:4px 8px;font-size:12px"></select>
+        <label class="check" id="cThinkWrap" title="Some models reason before answering. With this on, a short reply can spend its whole budget thinking.">
           <input type="checkbox" id="cThink"> Show reasoning</label>
         <button class="iconbtn" id="cClear">New conversation</button>
       </div>
@@ -1392,7 +1393,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
     </div>
     <div class="panel composer">
       <textarea id="cInput" rows="2"
-        placeholder="Ask anything — it runs on the local Gemma model, and nothing you type leaves this machine."></textarea>
+        placeholder="Ask anything — it runs on a model on this machine, and nothing you type leaves it."></textarea>
       <div class="row">
         <span class="hint">Enter sends · Shift+Enter for a new line · replies render as Markdown</span>
         <button class="go send" id="cSend">Send</button>
@@ -2051,7 +2052,7 @@ async function refreshHealth() {
     health.__system = d.system || {};
     // Inside the try: `d` is scoped to it, and the limits only change when the
     // server restarts, so filling them on each poll is free and self-healing.
-    if (d.limits) { limits = d.limits; fillCapabilities(d.limits); }
+    if (d.limits) { limits = d.limits; fillCapabilities(d.limits); renderTextModels(); }
   } catch (_) { health = {}; }
   renderForge();
   // The front door says "the strip below is the truth about what is warm right
@@ -4154,6 +4155,58 @@ function renderChat() {
   if (atBottom) box.scrollTop = box.scrollHeight;
 }
 
+/* Which model answers. Built from /health, because the list carries a licence
+   and whether each one is downloaded — and because a model this host does not
+   have should be visibly absent rather than a 503 after you press send.
+
+   Switching restarts the text backend and pays a cold load, the same as
+   changing music tier. The hint says so when the choice is not what is already
+   loaded, so a twenty-second stall is expected rather than discovered. */
+function renderTextModels() {
+  const sel = $("cModel");
+  if (!sel) return;
+  const spec = limits.text || {};
+  const models = spec.models || {};
+  const names = Object.keys(models);
+  if (!names.length) return;
+  if (sel.options.length !== names.length) {
+    const keep = sel.value;
+    sel.textContent = "";
+    names.forEach((name) => {
+      const m = models[name];
+      const o = el("option", null, m.label + (m.available ? "" : " — not installed"));
+      o.value = name; o.disabled = !m.available;
+      sel.appendChild(o);
+    });
+    sel.value = models[keep] && models[keep].available ? keep
+      : (models[spec.loaded] && models[spec.loaded].available ? spec.loaded
+         : (models[spec.default] && models[spec.default].available ? spec.default
+            : names.find((n) => models[n].available) || names[0]));
+  }
+  const chosen = models[sel.value] || {};
+  const willReload = spec.loaded && sel.value !== spec.loaded;
+  sel.title = (chosen.note || chosen.label || "")
+    + (willReload ? "\n\nSwitching restarts the text model — about "
+                    + "twenty seconds before the first reply." : "");
+}
+
+/* The browser half of harmony.py. The gateway rewrites a complete response, but
+   a stream is tokens — so the page splits what it has so far on each tick.
+   Returns null for anything without the marker, so no other model is touched. */
+function splitHarmony(text) {
+  if (!text || text.indexOf("<|channel|>") < 0) return null;
+  const finals = [], analysis = [];
+  const re = /<\|channel\|>([^<|]*?)(?:\s+to=([^\s<|]+))?\s*(?:<\|constrain\|>[^<|]*)?<\|message\|>([\s\S]*?)(?=<\|end\|>|<\|start\|>|<\|return\|>|<\|channel\|>|$)/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const name = (m[1] || "").trim(), body = (m[3] || "").replace(/<\|[^|>]*\|>/g, "");
+    if (m[2]) continue;                       // a tool call, not for display
+    if (name === "analysis") analysis.push(body);
+    else if (name === "final" || name === "") finals.push(body);
+  }
+  return { content: finals.join("\n").trim(), reasoning: analysis.join("\n").trim() };
+}
+
 async function runChat() {
   if (chatting) { chatting.abort(); return; }
   const text = $("cInput").value.trim();
@@ -4162,7 +4215,7 @@ async function runChat() {
   if (!text) { $("cInput").focus(); return; }
 
   chatLog.push({ role: "user", content: text });
-  const reply = { role: "assistant", content: "", reasoning: "", pending: true };
+  const reply = { role: "assistant", content: "", reasoning: "", raw: "", pending: true };
   chatLog.push(reply);
   $("cInput").value = "";
   autoGrow($("cInput"));
@@ -4178,7 +4231,7 @@ async function runChat() {
       headers: Object.assign({ "Content-Type": "application/json" },
                              apiKey ? { Authorization: "Bearer " + apiKey } : {}),
       body: JSON.stringify({
-        model: "gemma", stream: true, max_tokens: 1500, temperature: 0.7,
+        model: $("cModel").value || "gemma", stream: true, max_tokens: 1500, temperature: 0.7,
         chat_template_kwargs: { enable_thinking: showThinking },
         messages: chatLog.filter((m) => !m.pending)
                          .map((m) => ({ role: m.role, content: m.content })),
@@ -4202,8 +4255,23 @@ async function runChat() {
         if (p === "[DONE]") continue;
         try {
           const d = JSON.parse(p).choices[0].delta || {};
-          if (d.content) reply.content += d.content;
+          if (d.content) reply.raw += d.content;
           if (d.reasoning) reply.reasoning += d.reasoning;
+          // GPT-OSS answers in channels and a stream arrives as raw tokens, so
+          // the gateway — which rewrites whole responses — cannot help here.
+          // The page splits the accumulated text on each tick instead.
+          //
+          // `raw` is kept separate on purpose. Splitting in place overwrote the
+          // accumulator with its own parsed output, and the next delta then
+          // appended fresh markup onto parsed text; the result was a reply that
+          // was half parsed and half channel markers.
+          const split = splitHarmony(reply.raw);
+          if (split) {
+            reply.content = split.content;
+            if (split.reasoning) reply.reasoning = split.reasoning;
+          } else {
+            reply.content = reply.raw;
+          }
           // Stays `pending` until the stream ends, so the caret keeps running.
           scheduleChatRender();
         } catch (_) { /* partial JSON across chunk boundaries */ }
@@ -4220,7 +4288,7 @@ async function runChat() {
     reply.pending = false;
     // Stopping keeps what had already arrived — it was on screen a moment ago,
     // and throwing it away to say "(stopped)" is a worse trade than it sounds.
-    if (e.name === "AbortError") reply.content = reply.content.trim()
+    if (e.name === "AbortError") reply.content = (reply.content || "").trim()
       ? reply.content + "\n\n*(stopped)*" : "*(stopped)*";
     else reply.content = "Failed: " + e.message;
     saveChat();
@@ -4726,6 +4794,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
     if (mode === "press") loadArtists();
     if (mode === "sfx") renderSfxHint();
     if (mode === "sprites") renderSpriteMethods();
+    if (isChat) renderTextModels();
     hideStatus();
     showPage("studio");          // also swaps .cols for the chat view
     renderForge();
