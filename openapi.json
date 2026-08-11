@@ -1713,6 +1713,39 @@
         }
       }
     },
+    "/v1/agent/download": {
+      "get": {
+        "tags": [
+          "agent"
+        ],
+        "summary": "Download a job's working folder as a zip",
+        "description": "Everything the agent made, in one file. The per-file endpoint is for looking at a result from wherever you are; this is for taking it off the machine.",
+        "parameters": [
+          {
+            "name": "job",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A zip of the working folder.",
+            "content": {
+              "application/zip": {}
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "That job has no files."
+          }
+        }
+      }
+    },
     "/supervisor/auth": {
       "get": {
         "tags": [

@@ -4353,7 +4353,23 @@ function paintMsg(node, m) {
   // the filesystem — which is not finished.
   if (m.agentFiles && m.agentFiles.length && !m.pending) {
     const box = el("div", "made");
-    box.appendChild(el("div", "t", m.agentFiles.length + " file(s) in " + m.agentJob));
+    const head2 = el("div", "t");
+    head2.appendChild(el("span", null, m.agentFiles.length + " file(s) in " + m.agentJob));
+    const zip = el("button", null, "Download all");
+    zip.style.cssText = "background:none;border:0;color:var(--muted);font-size:11px;margin-left:10px";
+    zip.onclick = async () => {
+      // Everything at once, for taking off the machine — the per-file buttons
+      // are for looking, this is for keeping.
+      try {
+        const blob = await api("/v1/agent/download?job=" + encodeURIComponent(m.agentJob),
+                               { raw: true, timeout: 0 });
+        const href = URL.createObjectURL(blob); blobUrls.push(href);
+        const a = document.createElement("a");
+        a.href = href; a.download = m.agentJob + ".zip"; a.click();
+      } catch (e) { alert("Could not download: " + e.message); }
+    };
+    head2.appendChild(zip);
+    box.appendChild(head2);
     m.agentFiles.forEach((f) => {
       const row = el("div", "f");
       row.appendChild(el("span", "n", f.path));
@@ -4600,7 +4616,16 @@ async function runChat() {
   if (!text) { $("cInput").focus(); return; }
 
   chatLog.push({ role: "user", content: text });
-  if ($("cAgent").checked) { saveChat(); renderChat(); return runAgent(text); }
+  if ($("cAgent").checked) {
+    // Clear before handing off, not after: the agent branch returned early and
+    // never reached the reset below, so the prompt stayed in the box while its
+    // own reply streamed in underneath.
+    $("cInput").value = "";
+    autoGrow($("cInput"));
+    saveChat();
+    renderChat();
+    return runAgent(text);
+  }
   const switching = noteModelSwitch();
   const reply = { role: "assistant", content: "", reasoning: "", raw: "",
                   model: $("cModel").value || whoAnswers(),
