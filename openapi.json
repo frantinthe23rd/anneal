@@ -1435,6 +1435,10 @@
                     ],
                     "default": "sheet",
                     "description": "How the frames are made.\n\n`sheet` generates one image containing every pose and cuts it up. One generation for the whole set, so it is much faster — but it asks the model for a *layout*, and frames are recovered by finding blobs. Measured: three runs of the same four-pose brief returned four frames, three, and seven, because sprites drawn touching each other are cut as one, and the character drifts between poses.\n\n`edit` generates one base sprite and then edits it once per pose. Identity comes from the reference image rather than from asking, and each frame is its own file, so nothing can merge and every frame is the same size. Costs one generation per frame — measured at 33 s and 4.90 GB peak each, 512x512, four steps — and needs `poses`. It takes the heavy slot, so a loaded music or image model is evicted first, and a busy one gives a 409.\n\nBoth are Apache-2.0."
+                  },
+                  "action": {
+                    "type": "string",
+                    "description": "A movement to break into frames, instead of naming each pose yourself. \"Walking forward with the cape flowing behind\" with `frames: 6` asks the text model for one instruction per frame.\n\nOne text call of a few seconds against minutes per frame, and it runs before any frame exists — so a breakdown that misread you costs nothing. The poses it produced come back as `poses` in the response, alongside `action`, so you can correct them by sending `poses` next time.\n\n`edit` only: a sheet draws every pose at once from one prompt, so there is nothing to break down. Ignored if `poses` is also sent. A reply that cannot be parsed is a 502 asking for poses instead."
                   }
                 }
               }

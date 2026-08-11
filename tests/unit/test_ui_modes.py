@@ -249,3 +249,35 @@ class TestTheLibraryPlaysTheRightThing(unittest.TestCase):
         # not at the end of the url — it is at the end of the path parameter.
         line = [l for l in self.src.splitlines() if "const served =" in l][0]
         self.assertIn("path=", line)
+
+
+class TestBothWaysToSayIt(unittest.TestCase):
+    """`action` shipped in the API and never reached the page, so the only way
+    to use it was curl — which is not what "an alternative to poses" implies to
+    someone reading the tab."""
+
+    def setUp(self):
+        self.src = source()
+
+    def test_the_movement_can_be_described(self):
+        self.assertIn('id="spAction"', self.src)
+        self.assertRegex(self.src, r"body\.action\s*=")
+
+    def test_only_one_input_shows_at_a_time(self):
+        """Showing both invites filling in both, and the server would then have
+        to guess which was meant."""
+        fn = self.src[self.src.index("function setSpriteHow"):]
+        fn = fn[:fn.index("\nasync function ")]
+        self.assertIn("spActionBox", fn)
+        self.assertIn("spPosesBox", fn)
+
+    def test_the_breakdown_is_shown_back(self):
+        # Without it the only feedback on a misread movement is the frames.
+        self.assertIn("what it broke the movement into", self.src)
+
+    def test_describing_is_offered_only_for_editing(self):
+        """A sheet draws every pose at once from one prompt; there is nothing to
+        break down."""
+        fn = self.src[self.src.index("function renderSpriteMethods"):]
+        fn = fn[:fn.index("\nfunction ")]
+        self.assertIn('spHow', fn)

@@ -412,7 +412,15 @@ is linear time, about 35 s a frame, so sixteen is roughly ten minutes. Both
 numbers and the per-frame rate are in `/health` → `limits.sprites.methods`, so
 a client can price a request rather than discover it by waiting.
 
-`poses` is required for `edit`; there is nothing to edit towards without it.
+**Or describe the movement and let it break it down.** `action: "walking forward
+with the cape flowing behind"` with `frames: 6` asks the text model for one
+instruction per frame — a few seconds, before any frame is generated, so a
+misread costs nothing. What it chose comes back as `poses`, so you can correct
+it by sending those next time. Secondary motion is the reason to use it: it puts
+the cape in every frame, which is the thing that is easy to forget by hand.
+
+`poses` or `action` is required for `edit`; there is nothing to edit towards
+without one.
 Write them physically — "shield lifted high above the head with both arms" is
 obeyed, "shield raised in front" came back as the original pose. Up to 16, since
 each one is a separate generation.
