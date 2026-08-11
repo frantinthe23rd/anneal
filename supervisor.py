@@ -91,6 +91,11 @@ REAP_INTERVAL = 20.0
 # task id, which MAX_REPLAY_AGE_SECONDS already puts at six hours. A week is
 # generous and keeps recent history readable in the database.
 JOB_RETENTION_SECONDS = int(os.environ.get("ANNEAL_JOB_RETENTION_SECONDS", str(7 * 24 * 3600)))
+# An agent run's record is history rather than a queue — the working folder it
+# names outlives it either way — so it is kept for longer than a job row and
+# still not for ever. The trace it carries is the part that grows.
+AGENT_RETENTION_SECONDS = int(os.environ.get("ANNEAL_AGENT_RETENTION_SECONDS",
+                                             str(agent.RUN_RETENTION_SECONDS)))
 PRUNE_INTERVAL = 3600.0
 PROXY_TIMEOUT = float(os.environ.get("PROXY_TIMEOUT", "1800"))
 
@@ -583,6 +588,7 @@ MAX_TRACKED_JOBS = 5000
 
 JOBS = JobStore(os.path.join(AIMUSIC_ROOT, "jobs.db"))
 PRESSES = PressStore(os.path.join(AIMUSIC_ROOT, "presses.db"))
+AGENT_RUNS = agent.RunStore(os.path.join(AIMUSIC_ROOT, "agent-runs.db"))
 
 
 def _local_json(path, payload=None, method=None, timeout=1800):
@@ -667,11 +673,20 @@ def agent_files(root):
     return out
 
 
+def agent_job_name(job):
+    """The folder name a job string means.
+
+    Sanitised because it becomes a directory, and separate from creating that
+    directory: looking a run up by folder must not leave an empty one behind
+    for every typo.
+    """
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", str(job or "")).strip("-")[:60]
+    return safe or time.strftime("%Y%m%d-%H%M%S")
+
+
 def agent_root(job):
     """The working folder for one job, created on demand."""
-    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", str(job or "")).strip("-")[:60]
-    if not safe:
-        safe = time.strftime("%Y%m%d-%H%M%S")
+    safe = agent_job_name(job)
     root = os.path.join(AIMUSIC_ROOT, "agent", safe)
     os.makedirs(root, exist_ok=True)
     return safe, os.path.realpath(root)
@@ -738,6 +753,77 @@ def agent_media(root):
 
         return False, "unknown generator %r" % name
     return media
+
+
+def agent_worker(rid, prompt, root, model, max_steps):
+    """One run, on a thread of its own.
+
+    It used to be the request handler's own body, which is why a run was only
+    as durable as the connection that asked for it: closing the tab left the
+    loop going with nothing able to re-attach, and a slow client held a socket
+    open for the length of a run. The worker writes to the record and nothing
+    else reads its return value.
+    """
+    # Held for the run: see pin_service. Released in `finally`, so a crash
+    # cannot leave the text service pinned for ever.
+    pin_service("text")
+    try:
+        out = agent.run(prompt, root, agent_chat(model), max_steps=max_steps,
+                        media=agent_media(root),
+                        on_step=lambda entry: AGENT_RUNS.append_step(rid, entry),
+                        should_stop=lambda: AGENT_RUNS.cancelled(rid))
+        AGENT_RUNS.finish(rid, "cancelled" if out["stopped"] == "cancelled" else "done",
+                          reply=out["reply"], stopped=out["stopped"],
+                          seconds=out["seconds"], files=agent_files(root))
+    except Exception as exc:                     # noqa: BLE001
+        log("agent run %s failed: %r" % (rid, exc))
+        # The files it managed to write are still there and still worth
+        # listing: a run that failed on step nine made eight steps of work.
+        AGENT_RUNS.finish(rid, "failed", error=str(exc)[:300], files=agent_files(root))
+    finally:
+        unpin_service("text")
+
+
+def start_agent_run(prompt, job, root, model, max_steps):
+    """Record the run, then start it. Returns the id."""
+    rid = AGENT_RUNS.create(job=job, prompt=prompt, model=model, max_steps=max_steps)
+    threading.Thread(target=agent_worker, args=(rid, prompt, root, model, max_steps),
+                     daemon=True).start()
+    return rid
+
+
+def agent_events(store, rid, sent=0, poll=0.5, idle_ping=15.0,
+                 sleep=time.sleep, now=time.monotonic):
+    """Everything a run has to say from step `sent` onwards, until it settles.
+
+    The stream is a reader of the record rather than the run itself, which is
+    what makes re-attaching and watching from the start the same code path —
+    and the reason a dropped connection costs nothing but the connection.
+
+    `ping` exists because steps can be minutes apart: with nothing written in
+    between, a client that hung up is never noticed and the thread waits on a
+    socket nobody is reading.
+    """
+    spoke = now()
+    while True:
+        record = store.get(rid)
+        if not record:
+            yield "error", {"error": "no such run", "run_id": rid}
+            return
+        for entry in record["trace"][sent:]:
+            sent += 1
+            spoke = now()
+            yield "step", entry
+        if record["state"] in agent.TERMINAL_STATES:
+            yield "done", {"run_id": rid, "job": record["job"], "state": record["state"],
+                           "reply": record["reply"] or "", "steps": record["steps"],
+                           "stopped": record["stopped"], "seconds": record["seconds"],
+                           "error": record["error"], "files": record["files"]}
+            return
+        if now() - spoke >= idle_ping:
+            spoke = now()
+            yield "ping", {"state": record["state"], "stage": record["stage"]}
+        sleep(poll)
 
 
 def _local_bytes(path, payload, timeout=1800):
@@ -1261,6 +1347,7 @@ def reaper():
             last_prune = time.time()
             try:
                 JOBS.prune(JOB_RETENTION_SECONDS)
+                AGENT_RUNS.prune(AGENT_RETENTION_SECONDS)
             except Exception as exc:
                 log("job prune failed: %r" % exc)
 
@@ -2795,6 +2882,33 @@ class Handler(BaseHTTPRequestHandler):
             self._send_press_zip()
             return
 
+        if route == "/v1/agent":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            rid = (q.get("id") or [""])[0]
+            job = (q.get("job") or [""])[0]
+            if rid:
+                record = AGENT_RUNS.get(rid)
+                if not record:
+                    self._send_json({"code": 404, "error": "no such run"}, 404)
+                    return
+                self._send_json({"data": record, "code": 200, "error": None})
+                return
+            if job:
+                # A page that reconnects knows which folder it was working in;
+                # the id was in the tab that went away.
+                record = AGENT_RUNS.latest_for(agent_job_name(job))
+                if not record:
+                    self._send_json({"code": 404, "error": "no run for that folder"}, 404)
+                    return
+                self._send_json({"data": record, "code": 200, "error": None})
+                return
+            self._send_json({"data": {"runs": AGENT_RUNS.recent()},
+                             "code": 200, "error": None})
+            return
+
         if route == "/v1/agent/download":
             if not self._authorized():
                 self._send_json({"code": 401, "error": "unauthorized"}, 401)
@@ -2997,6 +3111,20 @@ class Handler(BaseHTTPRequestHandler):
             if not prompt:
                 self._send_json({"code": 400, "error": "'prompt' is required"}, 400)
                 return
+            job, root = agent_root(payload.get("job"))
+            # Asked before the model is resolved, and on the folder rather than
+            # on the string: two different job names can sanitise to one
+            # directory, and two loops editing the same files with no idea
+            # about each other is the thing being prevented.
+            busy = AGENT_RUNS.active_for(job)
+            if busy:
+                self._send_json({
+                    "code": 409,
+                    "error": "a run is already working in %r. Watch it at "
+                             "/v1/agent?id=%s, or stop it with /v1/agent/cancel."
+                             % (job, busy),
+                    "run_id": busy, "poll": "/v1/agent?id=" + busy}, 409)
+                return
             chosen = resolve_text_model(payload.get("model"))
             if not chosen:
                 self._send_json({"code": 400, "error": "unknown model %r" % payload.get("model")}, 400)
@@ -3011,12 +3139,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"code": 400, "error": "'max_steps' must be a number"}, 400)
                 return
             steps = max(1, min(steps, agent.MAX_STEPS))
-            job, root = agent_root(payload.get("job"))
 
-            # Streamed, because a run is minutes of tool calls and a JSON body
-            # that arrives at the end tells you nothing while you wait. Same
-            # framing the chat stream uses: close-delimited SSE, since
-            # Transfer-Encoding is hop-by-hop and the relay strips it.
+            # The loop runs on a worker and writes a durable record. What the
+            # caller gets back is a way of watching it: the stream, or the id
+            # to poll. Neither is the run any more, which is the point — the
+            # run outlives the connection either way (#67).
+            rid = start_agent_run(prompt, job, root, chosen, steps)
+            opening = {"run_id": rid, "job": job, "model": chosen,
+                       "state": agent.RUNNING, "max_steps": steps,
+                       "poll": "/v1/agent?id=" + rid}
+            if payload.get("stream") is False:
+                self._send_json({"data": opening, "code": 200, "error": None})
+                return
+
+            # Streamed by default, because a run is minutes of tool calls and a
+            # JSON body that arrives at the end tells you nothing while you
+            # wait. Close-delimited SSE, since Transfer-Encoding is hop-by-hop
+            # and the relay strips it.
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")
@@ -3032,26 +3171,38 @@ class Handler(BaseHTTPRequestHandler):
                     raise AgentHungUp()
 
             try:
-                emit("start", {"job": job, "model": chosen, "max_steps": steps})
-                # Held for the run: see pin_service. Released in `finally`, so a
-                # crash or a hung-up client cannot leave it pinned for ever.
-                pin_service("text")
-                out = agent.run(prompt, root, agent_chat(chosen),
-                                max_steps=steps, media=agent_media(root),
-                                on_step=lambda entry: emit("step", entry))
-                emit("done", {"job": job, "reply": out["reply"], "steps": out["steps"],
-                              "stopped": out["stopped"], "seconds": out["seconds"],
-                              "files": agent_files(root)})
+                emit("start", opening)
+                for kind, data in agent_events(AGENT_RUNS, rid):
+                    emit(kind, data)
             except AgentHungUp:
-                log("agent: client disconnected during %s" % job)
-            except Exception as exc:                     # noqa: BLE001
-                log("agent failed: %r" % exc)
-                try:
-                    emit("error", {"error": str(exc)[:300]})
-                except AgentHungUp:
-                    pass
-            finally:
-                unpin_service("text")
+                log("agent: %s stopped watching %s — the run continues" % (
+                    self.client_address[0], rid))
+            return
+
+        if route == "/v1/agent/cancel":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            payload, _ = self._body()
+            if payload is None:
+                return              # 413 already sent
+            rid = payload.get("id") or payload.get("run_id") or ""
+            if not rid:
+                self._send_json({"code": 400, "error": "'id' is required"}, 400)
+                return
+            record = AGENT_RUNS.get(rid)
+            if not record:
+                self._send_json({"code": 404, "error": "no such run"}, 404)
+                return
+            if not AGENT_RUNS.cancel(rid):
+                self._send_json({"code": 409, "error": "that run is %r, not running"
+                                                       % record["state"]}, 409)
+                return
+            # Asked, not done: the loop looks between steps, so a run waiting on
+            # the model's first token stops when that token arrives.
+            self._send_json({"data": {"cancelled": rid, "state": agent.RUNNING,
+                                      "stage": "stopping"},
+                             "code": 200, "error": None})
             return
 
         if route == "/v1/sfx":
@@ -3407,8 +3558,15 @@ def main():
     signal.signal(signal.SIGTERM, shutdown)
     signal.signal(signal.SIGINT, shutdown)
 
-    # A press runs in a thread; a restart leaves its record claiming to be
-    # working with nothing behind it. Reconcile before serving.
+    # A press and an agent run both live in sqlite and work in a thread; a
+    # restart leaves the record claiming to be working with nothing behind it.
+    # Reconcile before serving.
+    try:
+        orphaned = AGENT_RUNS.sweep_interrupted()
+        if orphaned:
+            log("marked %d agent run(s) interrupted by the last restart" % orphaned)
+    except Exception as exc:
+        log("agent sweep failed: %r" % exc)
     try:
         PRESS.sweep_interrupted()
         # A queue that does not survive a restart is a queue that loses work.

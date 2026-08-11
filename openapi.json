@@ -462,7 +462,7 @@
           "supervisor"
         ],
         "summary": "Gateway and service state",
-        "description": "Never wakes a model. Safe to poll as often as you like. No auth required.\n\nThe `system` block reports `free_mb`, `swap_used_mb`, `pageouts_per_sec` and `pressure_level` (macOS's own verdict: normal / warning / critical), plus a boolean `pressure`.\n\n**Do not treat swap volume as a problem.** This host routinely runs a model larger than physical RAM; macOS pages it out once and then idles at a negligible pageout rate. `pressure` is true only when the kernel reports warning or critical, or paging is genuinely sustained.\n\nThe `limits` block carries the numbers and options a client must respect, so a page or an agent can ask rather than repeat them. It includes `sprites`: every method the host knows, each with its label, its licence, whether it is `available` here and, when it is not, `why`. The Animation form is built from it — a method carrying a non-commercial term is stated in one place only.",
+        "description": "Never wakes a model. Safe to poll as often as you like. No auth required.\n\nThe `system` block reports `free_mb`, `swap_used_mb`, `pageouts_per_sec` and `pressure_level` (macOS's own verdict: normal / warning / critical), plus a boolean `pressure`.\n\n**Do not treat swap volume as a problem.** This host routinely runs a model larger than physical RAM; macOS pages it out once and then idles at a negligible pageout rate. `pressure` is true only when the kernel reports warning or critical, or paging is genuinely sustained.\n\nThe `limits` block carries the numbers and options a client must respect, so a page or an agent can ask rather than repeat them. It includes `sprites`: every method the host knows, each with its label, its licence, whether it is `available` here and, when it is not, `why`. The Animation form is built from it — a method carrying a non-commercial term is stated in one place only.\n\n`running` is measured rather than remembered: each service's port is probed, so a backend that outlived the gateway is reported as up, with its memory, instead of as cold.",
         "security": [],
         "responses": {
           "200": {
@@ -475,16 +475,28 @@
                     "services": {
                       "music": {
                         "running": false,
+                        "state": "cold",
                         "heavy": true,
-                        "idle_seconds": 812.4
+                        "idle_seconds": 812.4,
+                        "memory_mb": null
                       },
                       "speech": {
                         "running": true,
-                        "heavy": false
+                        "state": "hot",
+                        "heavy": false,
+                        "memory_mb": 692
+                      },
+                      "text": {
+                        "running": true,
+                        "state": "hot",
+                        "heavy": false,
+                        "memory_mb": 4689
                       },
                       "image": {
                         "running": false,
-                        "heavy": true
+                        "state": "cold",
+                        "heavy": true,
+                        "memory_mb": null
                       }
                     }
                   },
@@ -1604,12 +1616,89 @@
       }
     },
     "/v1/agent": {
+      "get": {
+        "tags": [
+          "agent"
+        ],
+        "summary": "Read an agent run",
+        "description": "The durable record of a run: the prompt, the model, the working folder, the state, and the trace as it was appended. This is what a page that was away renders — the stream and this endpoint read the same row, so nothing is lost by not watching.\n\n`id` is one run. `job` is the most recent run for a working folder, for a client that knows which folder it was working in but not which run — the id was in the tab that went away. Neither gives the recent runs.\n\nStates: `running`, `done`, `failed`, `cancelled`, and `interrupted` for a run whose worker was taken by a gateway restart. An interrupted run cannot be resumed; its files are still in the folder.\n\nAnswered from sqlite: it wakes nothing.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "One run."
+          },
+          {
+            "name": "job",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "The latest run for a working folder."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run, or `{runs: […]}` when neither parameter is given.",
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "id": "3f9c1a2b4d5e",
+                    "job": "demo",
+                    "prompt": "write notes.md",
+                    "model": "qwen-coder",
+                    "state": "done",
+                    "stage": "done",
+                    "steps": 2,
+                    "max_steps": 12,
+                    "trace": [
+                      {
+                        "step": 1,
+                        "tool": "write_file",
+                        "args": {
+                          "path": "notes.md"
+                        },
+                        "ok": true,
+                        "result": "wrote notes.md (98 bytes)"
+                      }
+                    ],
+                    "reply": "Wrote notes.md and listed the folder.",
+                    "stopped": null,
+                    "files": [
+                      {
+                        "path": "notes.md",
+                        "bytes": 98
+                      }
+                    ],
+                    "error": null,
+                    "seconds": 21.4,
+                    "created": 1765000000.0,
+                    "updated": 1765000021.0
+                  },
+                  "code": 200,
+                  "error": null
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "No such run, or no run for that folder."
+          }
+        }
+      },
       "post": {
         "tags": [
           "agent"
         ],
         "summary": "Run the model as an agent in a working folder",
-        "description": "Gives the text model a folder and the tools already in Anneal, then runs the loop until it stops calling them or a cap is reached.\n\n**It cannot run anything.** There is no shell tool and no network tool. The tools are `write_file`, `read_file`, `list_files`, `generate_image`, `generate_speech` and `generate_sfx`, and every path is resolved and checked against the working folder — `..`, absolute paths and symlinks out are refused and reported back to the model rather than raising. So the worst a confused model can do is fill a folder with bad files.\n\nThe folder is `$AIMUSIC_ROOT/agent/<job>/`. Pass `job` to continue in an existing one; omit it for a new folder named by timestamp.\n\nGeneration goes back through Anneal's own endpoints, so an agent asking for an image pays the same admission control and eviction as any other caller, and the result lands in the library as well as the folder.\n\n**The response is an SSE stream**, because a run is minutes of tool calls and a body that arrives at the end tells you nothing while you wait. Events are `start`, one `step` per tool call, then `done` — or `error`.\n\nSlow: both models answer at roughly 10-13 tokens/sec, and a step that generates an image or a sound adds that on top. `max_steps` is capped.",
+        "description": "Gives the text model a folder and the tools already in Anneal, then runs the loop until it stops calling them or a cap is reached.\n\n**It cannot run anything.** There is no shell tool and no network tool. The tools are `write_file`, `read_file`, `list_files`, `generate_image`, `generate_speech` and `generate_sfx`, and every path is resolved and checked against the working folder — `..`, absolute paths and symlinks out are refused and reported back to the model rather than raising. So the worst a confused model can do is fill a folder with bad files.\n\nThe folder is `$AIMUSIC_ROOT/agent/<job>/`. Pass `job` to continue in an existing one; omit it for a new folder named by timestamp.\n\nGeneration goes back through Anneal's own endpoints, so an agent asking for an image pays the same admission control and eviction as any other caller, and the result lands in the library as well as the folder.\n\n**The run outlives the request.** The loop runs on a worker and writes a durable record as each step completes, so a dropped connection costs the connection and nothing else. The response is an SSE stream by default — `start` (carrying `run_id`), one `step` per tool call, a `ping` while nothing is happening, then `done`, or `error` — because a run is minutes of tool calls and a body that arrives at the end tells you nothing while you wait. Send `stream: false` for the id straight away and poll `GET /v1/agent?id=` instead; both read the same record, and reconnecting to a run already in flight is the same call.\n\n**One run per folder.** A second run against a folder that already has one is refused with 409 naming the run that holds it — two loops editing the same files with no idea about each other is not a queue worth building. Stop the first with POST /v1/agent/cancel.\n\nSlow: both models answer at roughly 10-13 tokens/sec, and a step that generates an image or a sound adds that on top. `max_steps` is capped.",
         "requestBody": {
           "required": true,
           "content": {
@@ -1636,6 +1725,11 @@
                     "type": "integer",
                     "default": 12,
                     "description": "Tool calls before it stops. Clamped to the server's cap."
+                  },
+                  "stream": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Stream the run as SSE. `false` answers immediately with the run id, and the run carries on — poll GET /v1/agent?id= for it."
                   }
                 }
               }
@@ -1644,10 +1738,24 @@
         },
         "responses": {
           "200": {
-            "description": "An SSE stream of `start`, `step`… and `done`.",
+            "description": "An SSE stream of `start`, `step`… and `done` — or, with `stream: false`, the run id and where to poll it.",
             "content": {
               "text/event-stream": {
-                "example": "data: {\"type\":\"start\",\"job\":\"20260811-140301\",\"model\":\"qwen-coder\"}\n\ndata: {\"type\":\"step\",\"step\":1,\"tool\":\"write_file\",\"ok\":true,\"result\":\"wrote index.html (412 bytes)\"}\n\ndata: {\"type\":\"done\",\"steps\":3,\"seconds\":94.2,\"reply\":\"Made a title screen.\",\"files\":[{\"path\":\"index.html\",\"bytes\":412}]}\n\n"
+                "example": "data: {\"type\":\"start\",\"run_id\":\"3f9c1a2b4d5e\",\"job\":\"20260811-140301\",\"model\":\"qwen-coder\",\"state\":\"running\",\"max_steps\":12,\"poll\":\"/v1/agent?id=3f9c1a2b4d5e\"}\n\ndata: {\"type\":\"step\",\"step\":1,\"tool\":\"write_file\",\"args\":{\"path\":\"index.html\"},\"ok\":true,\"result\":\"wrote index.html (412 bytes)\"}\n\ndata: {\"type\":\"done\",\"run_id\":\"3f9c1a2b4d5e\",\"state\":\"done\",\"steps\":3,\"seconds\":94.2,\"reply\":\"Made a title screen.\",\"files\":[{\"path\":\"index.html\",\"bytes\":412}]}\n\n"
+              },
+              "application/json": {
+                "example": {
+                  "data": {
+                    "run_id": "3f9c1a2b4d5e",
+                    "job": "demo",
+                    "model": "qwen-coder",
+                    "state": "running",
+                    "max_steps": 12,
+                    "poll": "/v1/agent?id=3f9c1a2b4d5e"
+                  },
+                  "code": 200,
+                  "error": null
+                }
               }
             }
           },
@@ -1657,8 +1765,69 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
+          "409": {
+            "description": "A run is already working in that folder. The body carries `run_id` and `poll` for the run that holds it."
+          },
           "503": {
             "description": "The chosen model is not downloaded."
+          }
+        }
+      }
+    },
+    "/v1/agent/cancel": {
+      "post": {
+        "tags": [
+          "agent"
+        ],
+        "summary": "Stop an agent run",
+        "description": "Asks a run to stop. The loop looks between steps, so a run waiting on the model's first token stops when that token arrives; the record settles as `cancelled` once the worker notices, and the files already written stay in the folder.\n\nA folder holds at most one run, so this is also how a wedged run is got out of the way without waiting for the thirty-minute wall-clock cap.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "The run id."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The run was asked to stop.",
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "cancelled": "3f9c1a2b4d5e",
+                    "state": "running",
+                    "stage": "stopping"
+                  },
+                  "code": 200,
+                  "error": null
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No `id`."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "No such run."
+          },
+          "409": {
+            "description": "That run already settled."
           }
         }
       }

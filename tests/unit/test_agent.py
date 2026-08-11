@@ -15,9 +15,10 @@ import json
 import os
 import shutil
 import tempfile
+import time
 import unittest
 
-from tests.context import REPO_ROOT  # noqa: F401
+from tests.context import REPO_ROOT
 
 import agent
 
@@ -300,3 +301,296 @@ class TestThePinIsOnlyAgainstTheReaper(unittest.TestCase):
         block = self.src[self.src.index("def start_service(name):"):]
         block = block[:block.index("\ndef ")]
         self.assertNotIn("is_pinned(", block)
+
+
+class RunStoreCase(unittest.TestCase):
+    """A run is only as durable as the tab, and the tab is the least durable
+    thing in the system (#67). The record is what outlives it, so these are
+    about what survives a second reader, a restart and a cancel — not about the
+    loop, which is tested above and did not change shape."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.path = os.path.join(self.tmp, "agent-runs.db")
+        self.store = agent.RunStore(self.path)
+
+    def start(self, job="demo", prompt="make a page", model="qwen-coder", steps=12):
+        return self.store.create(job=job, prompt=prompt, model=model, max_steps=steps)
+
+    def test_a_new_run_records_what_it_was_asked_for(self):
+        rid = self.start()
+        record = self.store.get(rid)
+        self.assertEqual(record["id"], rid)
+        self.assertEqual(record["job"], "demo")
+        self.assertEqual(record["prompt"], "make a page")
+        self.assertEqual(record["model"], "qwen-coder")
+        self.assertEqual(record["state"], agent.RUNNING)
+        self.assertEqual(record["steps"], 0)
+        self.assertEqual(record["trace"], [])
+        self.assertEqual(record["max_steps"], 12)
+
+    def test_an_unknown_id_is_none_rather_than_an_exception(self):
+        self.assertIsNone(self.store.get("nope"))
+
+    def test_steps_are_visible_to_another_reader_while_the_run_is_going(self):
+        """The whole point: the page that reconnects is not the process that
+        started the run, and the run has not finished."""
+        rid = self.start()
+        self.store.append_step(rid, {"step": 1, "tool": "write_file",
+                                     "args": {"path": "a.txt"}, "ok": True,
+                                     "result": "wrote a.txt (1 bytes)"})
+        other = agent.RunStore(self.path)
+        record = other.get(rid)
+        self.assertEqual(record["state"], agent.RUNNING)
+        self.assertEqual(record["steps"], 1)
+        self.assertEqual(record["trace"][0]["tool"], "write_file")
+        self.assertEqual(record["trace"][0]["args"]["path"], "a.txt")
+
+    def test_a_long_result_is_trimmed_on_write(self):
+        """A twelve-step run with file contents in the results is not small,
+        and the record is read on every poll."""
+        rid = self.start()
+        self.store.append_step(rid, {"step": 1, "tool": "read_file", "args": {},
+                                     "ok": True, "result": "x" * 50000})
+        kept = self.store.get(rid)["trace"][0]["result"]
+        self.assertLessEqual(len(kept), agent.TRACE_RESULT_CHARS + 40)
+        self.assertIn("truncated", kept)
+
+    def test_finishing_records_the_reply_and_the_files(self):
+        rid = self.start()
+        self.store.finish(rid, "done", reply="Made a.txt.", stopped=None,
+                          seconds=12.5, files=[{"path": "a.txt", "bytes": 1}])
+        record = self.store.get(rid)
+        self.assertEqual(record["state"], "done")
+        self.assertEqual(record["reply"], "Made a.txt.")
+        self.assertEqual(record["files"], [{"path": "a.txt", "bytes": 1}])
+        self.assertEqual(record["seconds"], 12.5)
+
+    def test_a_folder_has_at_most_one_run_in_flight(self):
+        """Two runs writing into one folder is two models editing the same
+        files with no idea about each other."""
+        rid = self.start(job="demo")
+        self.assertEqual(self.store.active_for("demo"), rid)
+        self.assertIsNone(self.store.active_for("other"))
+        self.store.finish(rid, "done")
+        self.assertIsNone(self.store.active_for("demo"))
+
+    def test_the_latest_run_for_a_folder_is_findable_after_it_ends(self):
+        """A page that reconnects knows its folder; it may not know the id."""
+        first = self.start(job="demo")
+        self.store.finish(first, "done")
+        second = self.start(job="demo")
+        self.assertEqual(self.store.latest_for("demo")["id"], second)
+
+    def test_recent_is_newest_first(self):
+        one = self.start(job="a")
+        self.store.finish(one, "done")
+        two = self.start(job="b")
+        self.assertEqual([r["id"] for r in self.store.recent(10)], [two, one])
+
+    def test_a_run_the_gateway_left_behind_is_marked_interrupted(self):
+        """A run lives in sqlite and runs in a thread. A restart keeps the
+        record and loses the worker; anything still 'running' at startup is by
+        definition orphaned, and must not go on claiming to work."""
+        rid = self.start()
+        self.store.append_step(rid, {"step": 1, "tool": "write_file", "args": {},
+                                     "ok": True, "result": "wrote a.txt"})
+        finished = self.start(job="other")
+        self.store.finish(finished, "done")
+
+        self.assertEqual(self.store.sweep_interrupted(), 1)
+        record = self.store.get(rid)
+        self.assertEqual(record["state"], "interrupted")
+        self.assertIn("1", record["stage"])
+        self.assertEqual(self.store.get(finished)["state"], "done")
+        # And it is idempotent: nothing is left to sweep the second time.
+        self.assertEqual(self.store.sweep_interrupted(), 0)
+
+    def test_cancelling_asks_the_run_to_stop(self):
+        rid = self.start()
+        self.assertFalse(self.store.cancelled(rid))
+        self.assertTrue(self.store.cancel(rid))
+        self.assertTrue(self.store.cancelled(rid))
+        # A run that already finished cannot be cancelled.
+        done = self.start(job="other")
+        self.store.finish(done, "done")
+        self.assertFalse(self.store.cancel(done))
+
+    def test_pruning_keeps_what_is_running(self):
+        old = self.start(job="old")
+        self.store.finish(old, "done")
+        live = self.start(job="live")
+        self.store._exec("UPDATE runs SET updated_at = ? WHERE id = ?",
+                         (time.time() - 40 * 86400, old))
+        self.store.prune(7 * 86400)
+        self.assertIsNone(self.store.get(old))
+        self.assertIsNotNone(self.store.get(live))
+
+
+class TestTheLoopCanBeStopped(SandboxCase):
+    """Blocking a second run against a folder means a wedged run holds the
+    folder until the wall-clock cap, thirty minutes away. The button that
+    already said "Stop" has to actually stop it."""
+
+    def test_it_stops_between_steps_when_asked(self):
+        calls = []
+
+        def chat(messages, tools):
+            calls.append(1)
+            return {"content": "", "tool_calls": [
+                {"id": "c1", "type": "function",
+                 "function": {"name": "list_files", "arguments": "{}"}}]}
+
+        out = agent.run("go", self.root, chat, should_stop=lambda: len(calls) >= 2)
+        self.assertEqual(out["stopped"], "cancelled")
+        self.assertLessEqual(out["steps"], 2)
+
+    def test_a_run_nobody_cancelled_is_unaffected(self):
+        out = agent.run("go", self.root, lambda m, t: {"content": "hi", "tool_calls": None},
+                        should_stop=lambda: False)
+        self.assertIsNone(out["stopped"])
+
+
+class TestTheStreamIsAViewOfTheRecord(unittest.TestCase):
+    """The stream used to be the run: the loop lived in the request handler, so
+    closing the tab left a run nothing could re-attach to. It is now a reader of
+    the record, which is what makes reconnecting and streaming the same thing."""
+
+    def setUp(self):
+        import supervisor
+        self.supervisor = supervisor
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.store = agent.RunStore(os.path.join(self.tmp, "runs.db"))
+
+    def test_a_finished_run_replays_its_whole_trace_then_done(self):
+        rid = self.store.create(job="j", prompt="p", model="m", max_steps=12)
+        for n in (1, 2):
+            self.store.append_step(rid, {"step": n, "tool": "write_file",
+                                         "args": {"path": "%d.txt" % n},
+                                         "ok": True, "result": "wrote"})
+        self.store.finish(rid, "done", reply="Made two files.", seconds=3.0,
+                          files=[{"path": "1.txt", "bytes": 1}])
+        seen = list(self.supervisor.agent_events(self.store, rid, sleep=lambda s: None))
+        self.assertEqual([kind for kind, _ in seen], ["step", "step", "done"])
+        self.assertEqual(seen[1][1]["args"]["path"], "2.txt")
+        self.assertEqual(seen[-1][1]["reply"], "Made two files.")
+        self.assertEqual(seen[-1][1]["state"], "done")
+
+    def test_steps_written_while_it_watches_are_picked_up(self):
+        rid = self.store.create(job="j", prompt="p", model="m", max_steps=12)
+        ticks = []
+
+        def sleep(_seconds):
+            ticks.append(1)
+            if len(ticks) == 1:
+                self.store.append_step(rid, {"step": 1, "tool": "list_files",
+                                             "args": {}, "ok": True, "result": "empty"})
+            else:
+                self.store.finish(rid, "done", reply="done", seconds=1.0, files=[])
+
+        seen = list(self.supervisor.agent_events(self.store, rid, sleep=sleep))
+        self.assertEqual([kind for kind, _ in seen], ["step", "done"])
+
+    def test_a_silent_run_still_writes_something_now_and_then(self):
+        """A step can be minutes apart. Nothing is written in between, so a
+        client that hung up is never noticed and the thread waits for ever."""
+        rid = self.store.create(job="j", prompt="p", model="m", max_steps=12)
+        clock = [0.0]
+
+        def sleep(seconds):
+            clock[0] += seconds
+            if clock[0] > 60:
+                self.store.finish(rid, "done", reply="", seconds=60.0, files=[])
+
+        seen = list(self.supervisor.agent_events(
+            self.store, rid, sleep=sleep, now=lambda: clock[0], idle_ping=10))
+        self.assertIn("ping", [kind for kind, _ in seen])
+        self.assertEqual(seen[-1][0], "done")
+
+    def test_a_run_that_vanished_ends_the_stream(self):
+        """A pruned or deleted record must not spin."""
+        seen = list(self.supervisor.agent_events(self.store, "nosuchrun",
+                                                 sleep=lambda s: None))
+        self.assertEqual([kind for kind, _ in seen], ["error"])
+
+
+class TestTheGatewayOwnsTheRunsRatherThanTheRequest(unittest.TestCase):
+    """Structural, because the alternative is a real run: the properties below
+    are the ones whose absence brings back exactly the bug in #67."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(REPO_ROOT, "supervisor.py"), encoding="utf-8") as fh:
+            cls.src = fh.read()
+
+    def post_handler(self):
+        """The POST branch specifically — GET /v1/agent reads the same route
+        name and comes first in the file."""
+        post = self.src[self.src.index("    def do_POST(self):"):]
+        block = post[post.index('if route == "/v1/agent":'):]
+        return block[:block.index("\n        if route ==", 10)]
+
+    def test_the_loop_is_not_run_inside_the_request_handler(self):
+        handler = self.post_handler()
+        self.assertNotIn("agent.run(", handler,
+                         "the loop must be on a worker, or the run is only as "
+                         "durable as the connection")
+        self.assertIn("start_agent_run(", handler)
+
+    def test_the_worker_records_every_step_as_it_happens(self):
+        worker = self.src[self.src.index("def agent_worker("):]
+        worker = worker[:worker.index("\ndef ")]
+        self.assertIn("append_step", worker)
+        self.assertIn("AGENT_RUNS.finish", worker)
+        self.assertIn("unpin_service", worker)
+
+    def test_an_interrupted_run_is_swept_at_startup(self):
+        main = self.src[self.src.index("def main():"):]
+        self.assertIn("AGENT_RUNS.sweep_interrupted()", main)
+
+    def test_the_records_are_pruned_on_the_same_timer_as_the_jobs(self):
+        """JobStore.prune() existed and nothing called it for a year; a trace
+        of tool results grows faster than that did."""
+        reaper = self.src[self.src.index("def reaper():"):]
+        reaper = reaper[:reaper.index("\ndef ")]
+        self.assertIn("AGENT_RUNS.prune(", reaper)
+
+
+class TestTheRunEndpointsAreDocumented(unittest.TestCase):
+    """Docs change with the code. Three endpoints have shipped here documented
+    nowhere; the spec is the thing other people build against."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(REPO_ROOT, "openapi.json"), encoding="utf-8") as fh:
+            cls.spec = json.load(fh)
+        with open(os.path.join(REPO_ROOT, "INTEGRATION.md"), encoding="utf-8") as fh:
+            cls.guide = fh.read()
+
+    def test_reading_a_run_back_is_in_the_spec(self):
+        self.assertIn("get", self.spec["paths"]["/v1/agent"])
+        params = [p["name"] for p in self.spec["paths"]["/v1/agent"]["get"]["parameters"]]
+        self.assertIn("id", params)
+        self.assertIn("job", params)
+
+    def test_cancelling_is_in_the_spec(self):
+        self.assertIn("post", self.spec["paths"]["/v1/agent/cancel"])
+
+    def test_the_conflict_status_is_documented(self):
+        self.assertIn("409", self.spec["paths"]["/v1/agent"]["post"]["responses"])
+
+    def test_the_run_id_is_in_the_start_event(self):
+        example = (self.spec["paths"]["/v1/agent"]["post"]["responses"]["200"]
+                   ["content"]["text/event-stream"]["example"])
+        self.assertIn("run_id", example)
+
+    def test_the_guide_says_a_run_survives_the_connection(self):
+        self.assertIn("/v1/agent?id=", self.guide)
+        self.assertIn("/v1/agent/cancel", self.guide)
+
+    def test_the_route_is_owned_by_the_gateway(self):
+        import services
+        self.assertIn("/v1/agent/cancel", services.GATEWAY_ROUTES)
+        self.assertIsNone(services.resolve("/v1/agent/cancel"))
