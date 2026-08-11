@@ -48,7 +48,9 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import services
 from services import (SERVICES, MUSIC_TIERS, DEFAULT_MUSIC_TIER,
+                      TEXT_MODELS, DEFAULT_TEXT_MODEL,
                       COLD_START_SECONDS, resolve)  # noqa: E402
 from jobstore import JobStore  # noqa: E402
 import outputs  # noqa: E402
@@ -56,6 +58,7 @@ import paths  # noqa: E402
 import trim  # noqa: E402
 import vector  # noqa: E402
 import builder  # noqa: E402  (capability_limits reports its constants)
+import harmony  # noqa: E402  (GPT-OSS speaks channels; clients read OpenAI)
 import sfx      # noqa: E402  (a subprocess one-shot, not a registered service)
 # Imported under another name: `poses` is a local variable in three functions
 # here, and shadowing the module in the one place that needs it is a bug that
@@ -908,6 +911,83 @@ class ServiceBusy(Exception):
         )
 
 
+def resolve_text_model(asked):
+    """The registry name for what a caller asked for, or None if it is unknown.
+
+    Accepts the short name or the repo id, because a client written against the
+    OpenAI shape sends back whatever `model` string it was given. An unknown
+    name resolves to None rather than the default: answering with a different
+    model than the one requested is the failure this feature exists to remove.
+    """
+    if not asked:
+        return DEFAULT_TEXT_MODEL
+    asked = str(asked).strip()
+    if asked in TEXT_MODELS:
+        return asked
+    for name, spec in TEXT_MODELS.items():
+        if asked == spec["repo"]:
+            return name
+    return None
+
+
+def text_model_problem(name):
+    """Why this host cannot serve that text model, or None."""
+    resolved = resolve_text_model(name)
+    if not resolved:
+        return ("unknown model %r — one of: %s (or their repo ids)"
+                % (name, ", ".join(TEXT_MODELS)))
+    path = services.text_model_path(TEXT_MODELS[resolved]["repo"])
+    if not path or not os.path.isdir(path):
+        return ("%s is not downloaded — ./anneal models text fetches it"
+                % TEXT_MODELS[resolved]["repo"])
+    return None
+
+
+def loaded_text_model():
+    """Which registry entry the text backend is currently configured for."""
+    cmd = SERVICE_OBJECTS["text"].spec["cmd"]
+    try:
+        path = cmd[cmd.index("--model") + 1]
+    except (ValueError, IndexError):
+        return None
+    for name, spec in TEXT_MODELS.items():
+        if services.text_model_path(spec["repo"]) == path:
+            return name
+    return None
+
+
+def ensure_text_model(name):
+    """Make the text backend run `name`, restarting if it is running another.
+
+    mlx_lm.server takes its model on the command line and holds it for the life
+    of the process, and text is heavy, so switching costs a restart and a cold
+    load. Surfaced rather than hidden — the same call ensure_music_tier() makes
+    for the same reason.
+    """
+    resolved = resolve_text_model(name)
+    if not resolved:
+        return None
+    wanted = services.text_model_path(TEXT_MODELS[resolved]["repo"])
+    svc = SERVICE_OBJECTS["text"]
+    cmd = svc.spec["cmd"]
+    try:
+        at = cmd.index("--model") + 1
+    except ValueError:
+        return resolved
+    if cmd[at] == wanted:
+        return resolved                    # already running this one
+
+    if svc.is_running():
+        with svc.flight_lock:
+            busy = svc.in_flight
+        if busy or svc.has_work():
+            raise ServiceBusy("text", "text (%s)" % resolved)
+        log("text: switching model to %r — restarting" % resolved)
+        svc.stop("model switch to %s" % resolved)
+    cmd[at] = wanted
+    return resolved
+
+
 def ensure_music_tier(tier):
     """Make the music backend run the model for `tier`, restarting if needed.
 
@@ -1320,6 +1400,25 @@ def capability_limits():
             "default_method": DEFAULT_SPRITE_METHOD,
             "default_frames": DEFAULT_SPRITE_FRAMES,
             "max_frames": MAX_SPRITE_FRAMES,
+        },
+        # Which text models this host can serve, and which is loaded now.
+        # Switching costs a restart and a cold load, so a client that cares
+        # about latency needs to know whether it is about to pay for one.
+        "text": {
+            "models": {
+                name: {
+                    "label": spec["label"],
+                    "licence": spec["licence"],
+                    "note": spec.get("note"),
+                    "repo": spec["repo"],
+                    "available": text_model_problem(name) is None,
+                    "why": text_model_problem(name),
+                }
+                for name, spec in TEXT_MODELS.items()
+            },
+            "default": DEFAULT_TEXT_MODEL,
+            "loaded": loaded_text_model(),
+            "switch_costs_a_reload": True,
         },
         # Not a service: no port, no idle timer, nothing to evict. The page
         # needs to know it exists, what it can be asked for and whether this
@@ -1924,6 +2023,23 @@ class Handler(BaseHTTPRequestHandler):
         return (params.get("path") or [""])[0] or None
 
     # -- persistence ------------------------------------------------------
+    def _translate_harmony(self, route, response_body):
+        """Turn GPT-OSS's channels into the OpenAI shape on the way out.
+
+        Only chat completions, and only when the marker is present, so no other
+        model's reply can be altered by this. Measured before it existed: a tool
+        call arrived as text with `tool_calls` null and `finish_reason` "stop",
+        which is a model that appears to have ignored its tools.
+        """
+        if not route.startswith("/v1/chat/completions"):
+            return response_body
+        try:
+            parsed = json.loads(response_body.decode("utf-8"))
+        except ValueError:
+            return response_body
+        rewritten = harmony.rewrite(parsed)
+        return json.dumps(rewritten).encode()
+
     def _maybe_cutout(self, route, request_body, response_body):
         """Matte a generated image onto transparency, in place, when asked.
 
@@ -2196,16 +2312,43 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/query_result":
             body = self._rewrite_polled_ids(body)
         elif route in ("/v1/chat/completions", "/v1/completions") and body:
-            # mlx_lm identifies its model by the filesystem path it was loaded
-            # from, and 404s on anything else. Nobody should have to send a
-            # snapshot path, so accept whatever the caller wrote — or nothing —
-            # and substitute the model actually loaded.
+            # `model` now chooses which text model answers, and mlx_lm still
+            # identifies its own by the filesystem path it loaded from and 404s
+            # on anything else. So the field is read as a choice, acted on, and
+            # then replaced with the path — nobody should have to send a
+            # snapshot path, and an unrecognised name must not be silently
+            # answered by a different model.
             try:
                 payload = json.loads(body.decode("utf-8"))
-                payload["model"] = TEXT_MODEL_PATH
-                body = json.dumps(payload).encode()
             except Exception:
-                pass
+                payload = None
+            if payload is not None:
+                asked = payload.get("model")
+                # An mlx_lm path echoed back by a client is not a choice.
+                if isinstance(asked, str) and os.path.isabs(asked):
+                    asked = None
+                chosen = resolve_text_model(asked)
+                if not chosen:
+                    self._send_json({
+                        "code": 400,
+                        "error": "unknown model %r — one of: %s (or their repo "
+                                 "ids). GET /health lists which are installed."
+                                 % (asked, ", ".join(TEXT_MODELS))}, 400)
+                    return
+                problem = text_model_problem(chosen)
+                if problem:
+                    self._send_json({"code": 503, "error": problem,
+                                     "model": chosen}, 503)
+                    return
+                try:
+                    ensure_text_model(chosen)
+                except ServiceBusy as busy:
+                    self._send_json({"code": 409, "error": str(busy),
+                                     "busy_service": busy.holder}, 409)
+                    return
+                payload["model"] = services.text_model_path(
+                    TEXT_MODELS[chosen]["repo"])
+                body = json.dumps(payload).encode()
         elif route == "/release_task" and body:
             try:
                 payload = json.loads(body.decode("utf-8"))
@@ -2337,7 +2480,7 @@ class Handler(BaseHTTPRequestHandler):
                 if resp.status == 200 and transform == "text":
                     # Unwrap the OpenAI envelope down to the text itself.
                     try:
-                        d = json.loads(payload.decode("utf-8"))
+                        d = harmony.rewrite(json.loads(payload.decode("utf-8")))
                         msg = (d["choices"][0].get("message") or {})
                         payload = json.dumps({
                             "data": {"text": (msg.get("content") or "").strip(),
@@ -2348,6 +2491,7 @@ class Handler(BaseHTTPRequestHandler):
                         payload = json.dumps({"code": 502,
                                               "error": "unexpected text response: %s" % exc}).encode()
                 elif resp.status == 200:
+                    payload = self._translate_harmony(route, payload)
                     payload = self._track_music_jobs(route, body, payload)
                     payload = self._maybe_cutout(route, body, payload)
                     self._persist_output(route, body, payload,

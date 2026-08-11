@@ -112,6 +112,33 @@
    "size_gb": 4.3,
    "licence": "Apache-2.0",
    "note": "Only for sprite method 'edit', which generates one base sprite and then edits it once per pose. Optional: the default 'sheet' method needs no model of its own. Measured at 33 s and 4.90 GB peak per frame at 512x512, four steps."
+  },
+  "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit": {
+   "revision": "019cc73c45c770444708a6dd8690c66243cc5c80",
+   "target": "hf_cache",
+   "service": "text",
+   "required": false,
+   "size_gb": 4.3,
+   "licence": "Apache-2.0",
+   "note": "Optional second text model, for code and tool use. Same size as the default and no reasoning preamble to disable. Selected with the OpenAI `model` field."
+  },
+  "mlx-community/Qwen3-4B-Instruct-2507-4bit": {
+   "revision": "50d427756c6b1b2fe0c0a10f67fbda1fc8e82c1b",
+   "target": "hf_cache",
+   "service": "text",
+   "required": false,
+   "size_gb": 2.3,
+   "licence": "Apache-2.0",
+   "note": "Optional third text model: half the size of the others, for lyric planning and short replies where the wait costs more than the polish."
+  },
+  "mlx-community/gpt-oss-20b-MXFP4-Q4": {
+   "revision": "f356f2747216d7e98fee755df25987459fc19089",
+   "target": "hf_cache",
+   "service": "text",
+   "required": false,
+   "size_gb": 11.2,
+   "licence": "Apache-2.0",
+   "note": "Optional text model for agent work. The largest that fits: measured 11.18 GB peak against about 11.8 GB usable unified memory on this 16 GB machine, 28 s to load, 13 tok/s. Faster than the 4.8 GB default despite being 20B, because only a few experts are active per token. Nothing else heavy can be loaded while it is."
   }
  },
  "upstream": {
