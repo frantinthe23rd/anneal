@@ -1191,6 +1191,31 @@ def sprite_method_problem(method, model_path=None):
     return None
 
 
+# What the sprite editor is doing right now. It runs as a subprocess holding
+# about 4.9 GB for minutes at a time, where nothing in SERVICE_OBJECTS can see
+# it — so without this the whole strip reads "cold" through a ten-minute run
+# while the machine is fully occupied.
+_EDIT_STATE = {"active": False, "frame": 0, "of": 0}
+_edit_lock = threading.Lock()
+
+
+def edit_state():
+    with _edit_lock:
+        return dict(_EDIT_STATE)
+
+
+def set_edit_state(active, frame=0, of=0):
+    with _edit_lock:
+        _EDIT_STATE.update({"active": active, "frame": frame, "of": of})
+
+
+def method_frame_cap(method):
+    """How many frames a method can make. Not one number for both: the sheet
+    limit is about figures getting too small in a shared image, and editing has
+    no shared image."""
+    return pose_edit.MAX_POSES if method == "edit" else MAX_SPRITE_FRAMES
+
+
 def sprite_limits(payload):
     """Reject what cannot work, before spending minutes on the image model."""
     if not (payload.get("prompt") or "").strip():
@@ -1203,15 +1228,22 @@ def sprite_limits(payload):
         return ("'frames' must be between 2 and %d — more poses than that in one "
                 "image leaves each too small to use" % MAX_SPRITE_FRAMES)
     poses = payload.get("poses")
-    if poses is not None:
-        if not isinstance(poses, list) or not all(isinstance(p, str) for p in poses):
-            return "'poses' must be a list of strings, one per frame"
-        if len(poses) > MAX_SPRITE_FRAMES:
-            return "'poses' cannot be longer than %d" % MAX_SPRITE_FRAMES
     method = payload.get("method") or DEFAULT_SPRITE_METHOD
     if method not in SPRITE_METHODS:
         return ("unknown 'method' %r — one of: %s"
                 % (method, ", ".join(SPRITE_METHODS)))
+    if poses is not None:
+        if not isinstance(poses, list) or not all(isinstance(p, str) for p in poses):
+            return "'poses' must be a list of strings, one per frame"
+        # The cap differs by method, because the reason for it differs. A sheet
+        # draws every pose in one image, so more of them makes each figure too
+        # small; editing generates each frame on its own and only costs time.
+        cap = method_frame_cap(method)
+        if len(poses) > cap:
+            return ("'poses' cannot be longer than %d for method %r%s"
+                    % (cap, method,
+                       "" if method == "edit" else
+                       " — method 'edit' takes up to %d" % pose_edit.MAX_POSES))
     if method == "edit" and not [p for p in (poses or []) if p.strip()]:
         # Without an instruction per frame there is nothing to edit towards,
         # and falling back to a frame count would produce N copies of the base.
@@ -1251,12 +1283,16 @@ def capability_limits():
                     "licence": spec["licence"],
                     "available": sprite_method_problem(name) is None
                                  and bool(sprite_python()),
+                    "max_frames": method_frame_cap(name),
+                    "seconds_per_frame": (pose_edit.SECONDS_PER_FRAME
+                                          if name == "edit" else None),
                     "why": sprite_method_problem(name) or (
                         None if sprite_python() else
                         "no interpreter with rembg — ./setup.sh --tools"),
                 }
                 for name, spec in SPRITE_METHODS.items()
             },
+            "editing": edit_state(),
             "default_method": DEFAULT_SPRITE_METHOD,
             "default_frames": DEFAULT_SPRITE_FRAMES,
             "max_frames": MAX_SPRITE_FRAMES,
@@ -1410,11 +1446,16 @@ class Handler(BaseHTTPRequestHandler):
         out_dir = os.path.join(outputs.root(), "sprites", "%s-%s" % (
             time.strftime("%Y%m%d-%H%M%S"),
             re.sub(r"[^a-z0-9]+", "-", subject.lower())[:40].strip("-") or "sprite"))
+        set_edit_state(True, 0, len(pose_list))
         try:
-            made, failures = pose_edit.generate(base, pose_list, out_dir)
+            made, failures = pose_edit.generate(
+                base, pose_list, out_dir,
+                on_frame=lambda done, total: set_edit_state(True, done, total))
         except RuntimeError as exc:
             self._send_json({"code": 502, "error": str(exc)}, 502)
             return
+        finally:
+            set_edit_state(False)
         if not made:
             self._send_json({"code": 502,
                              "error": "no frame could be edited: %s"

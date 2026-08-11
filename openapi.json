@@ -1420,7 +1420,7 @@
                       "type": "string"
                     },
                     "maxItems": 8,
-                    "description": "One description per frame, in order — e.g. [\"idle\", \"crouched to jump\", \"stretched mid-air\", \"landing splat\"]. Sets the frame count. Without it the poses come back near-identical; with it they genuinely differ but the character design drifts more."
+                    "description": "One description per frame, in order — e.g. [\"idle\", \"crouched to jump\", \"stretched mid-air\", \"landing splat\"]. Sets the frame count. Without it the poses come back near-identical; with it they genuinely differ but the character design drifts more.\n\nOne pose per frame. The cap depends on the method and is reported per method in `/health` → `limits.sprites.methods.<name>.max_frames`: **8** for `sheet`, because more figures in one image makes each too small to use, and **16** for `edit`, which generates each frame separately so a tenth frame is as good as the first. Editing costs about 35 s a frame, so sixteen is roughly ten minutes — `seconds_per_frame` is served so a client can say so up front."
                   },
                   "fps": {
                     "type": "integer",
