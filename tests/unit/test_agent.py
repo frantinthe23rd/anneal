@@ -272,3 +272,31 @@ class TestItIsNudgedOffThePlan(SandboxCase):
         out = agent.run("go", self.root, chat)
         self.assertEqual(len(calls), 2)
         self.assertEqual(out["reply"], "Made a.txt.")
+
+
+class TestThePinIsOnlyAgainstTheReaper(unittest.TestCase):
+    """Pinning the text model started out blocking eviction too, which is wrong
+    in the other direction: an agent asking for an image would be refused, when
+    calling the other tools is the entire point of agent mode. Only one heavy
+    model fits, so a media step has to take the slot and the next chat call pays
+    a reload."""
+
+    def setUp(self):
+        self.src = open(os.path.join(os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__)))), "supervisor.py"),
+            encoding="utf-8").read()
+
+    def test_the_reaper_respects_it(self):
+        reaper = self.src[self.src.index("def reaper():"):]
+        reaper = reaper[:reaper.index("\ndef ")]
+        self.assertIn("is_pinned(", reaper)
+
+    def test_eviction_does_not(self):
+        block = self.src[self.src.index("def free_heavy_slot"):]
+        block = block[:block.index("\ndef ")]
+        self.assertNotIn("is_pinned(", block)
+
+    def test_starting_a_heavy_service_does_not_either(self):
+        block = self.src[self.src.index("def start_service(name):"):]
+        block = block[:block.index("\ndef ")]
+        self.assertNotIn("is_pinned(", block)

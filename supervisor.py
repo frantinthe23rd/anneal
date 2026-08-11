@@ -36,6 +36,7 @@ import json
 import re
 import shutil
 import tempfile
+import io
 import zipfile
 import os
 import signal
@@ -619,10 +620,14 @@ def press_text(prompt, max_tokens=900, temperature=0.9):
     return ((d or {}).get("data") or {}).get("text", "")
 
 
-# Services that must not be unloaded right now. An agent run is a loop of calls
-# to the text model with tool work in between, and text has a five-minute idle
-# timeout — so a slow tool could see the model reaped between two of its own
-# steps, and the run would then pay a cold load in the middle of itself.
+# Services the idle reaper must leave alone right now. An agent run is a loop of
+# calls to the text model with tool work in between, and text has a five-minute
+# idle timeout — so a slow tool could see the model reaped between two of its
+# own steps, and the run would pay a cold load in the middle of itself.
+#
+# Deliberate eviction is not affected: a media step has to take the heavy slot,
+# because only one heavy model fits. That costs the next chat call a reload,
+# which is the machine being 16 GB rather than anything this can fix.
 _pinned = set()
 _pin_lock = threading.Lock()
 
@@ -1203,11 +1208,13 @@ def start_service(name):
         for other_name, other in SERVICE_OBJECTS.items():
             if other_name == name or not other.heavy or not other.is_running():
                 continue
-            if is_pinned(other_name):
-                # Mid-agent-run. Refusing is the honest answer: taking the model
-                # out from under a loop that is about to call it again turns one
-                # slow step into a cold load, and the caller cannot tell why.
-                raise ServiceBusy(other_name, name)
+            # A pin does *not* block eviction. It was written to, and that was
+            # wrong in the other direction: an agent asking for an image would
+            # be refused, when calling the other tools is the entire point of
+            # agent mode. Only one heavy model fits, so a media step has to take
+            # the slot; the next chat call reloads the text model and pays the
+            # cold start. The pin is protection from the idle reaper, which
+            # unloads for no reason at all, and not from a deliberate request.
             with other.flight_lock:
                 in_flight = other.in_flight
             if in_flight or other.has_work():
@@ -2786,6 +2793,33 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json({"code": 401, "error": "unauthorized"}, 401)
                 return
             self._send_press_zip()
+            return
+
+        if route == "/v1/agent/download":
+            if not self._authorized():
+                self._send_json({"code": 401, "error": "unauthorized"}, 401)
+                return
+            q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            job, root = agent_root((q.get("job") or [""])[0])
+            names = agent_files(root)
+            if not names:
+                self._send_json({"code": 404, "error": "that job has no files"}, 404)
+                return
+            # Built in memory: a working folder is source and small artefacts,
+            # and the alternative is a temp file to clean up on every error path.
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for entry in names:
+                    zf.write(os.path.join(root, entry["path"]),
+                             os.path.join(job, entry["path"]))
+            blob = buf.getvalue()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Disposition",
+                             'attachment; filename="%s.zip"' % job)
+            self.send_header("Content-Length", str(len(blob)))
+            self.end_headers()
+            self.wfile.write(blob)
             return
 
         if route == "/v1/agent/file":
