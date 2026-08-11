@@ -41,6 +41,24 @@ CHANNEL_RE = re.compile(
     re.S)
 
 
+# `<|im_end|>`, `<|eot_id|>`, `<|end|>` — every model has one and they differ,
+# so this matches the shape rather than a list that goes stale the next time a
+# model is added. Deliberately narrow: the pipes are required, so "a < b" and
+# "x | y" are untouched.
+CONTROL_TOKEN_RE = re.compile(r"<\|[^<>|]{0,40}\|>")
+
+
+def strip_control_tokens(text):
+    """Remove stop and role tokens a template leaked into the reply.
+
+    mlx_lm passes them through, so a Qwen reply arrived as "Hi there! How can I
+    assist you today?<|im_end|>" — the stop token rendered as text.
+    """
+    if not text or "<|" not in text:
+        return text
+    return CONTROL_TOKEN_RE.sub("", text).strip()
+
+
 def looks_like_harmony(text):
     return bool(text) and "<|channel|>" in text and "<|message|>" in text
 
@@ -111,7 +129,13 @@ def rewrite(body):
         if not isinstance(message, dict):
             continue
         content = message.get("content")
-        if not isinstance(content, str) or not looks_like_harmony(content):
+        if not isinstance(content, str):
+            continue
+        if not looks_like_harmony(content):
+            # Not channels, but it may still carry the template's stop token.
+            cleaned = strip_control_tokens(content)
+            if cleaned != content:
+                message["content"] = cleaned
             continue
         parsed = parse(content)
         message["content"] = parsed["content"]

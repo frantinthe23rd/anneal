@@ -4313,7 +4313,10 @@ let chatNodes = [];
 function buildMsg(m) {
   const wrap = el("div", "msg" + (m.role === "user" ? " user" : ""));
   const head = el("div", "msghead");
-  head.appendChild(el("span", "who", m.role === "user" ? "you" : "gemma"));
+  // Whoever actually answered. This said "gemma" whatever was loaded, so
+  // picking Qwen and getting a reply labelled GEMMA was the model appearing not
+  // to have changed at all.
+  head.appendChild(el("span", "who", m.role === "user" ? "you" : (m.model || whoAnswers())));
   wrap.appendChild(head);
   wrap.appendChild(el("div", "body"));
   return wrap;
@@ -4321,8 +4324,10 @@ function buildMsg(m) {
 
 function paintMsg(node, m) {
   // Nothing changed since the last frame: leave the DOM alone entirely.
-  if (node._src === m.content && node._pending === m.pending && node._reason === m.reasoning) return;
+  if (node._src === m.content && node._pending === m.pending
+      && node._reason === m.reasoning && node._note === m.note) return;
   node._src = m.content; node._pending = m.pending; node._reason = m.reasoning;
+  node._note = m.note;
 
   const body = node.querySelector(".body");
   if (m.role === "user") body.textContent = m.content;          // never parsed
@@ -4332,6 +4337,13 @@ function paintMsg(node, m) {
     if (!m.pending) m.html = body.innerHTML;                    // settled: cache it
   } else body.textContent = "";
   if (m.pending) body.appendChild(el("span", "caret"));
+  // Said while it is loading, and dropped once the reply arrives — by then the
+  // wait it was explaining is over.
+  if (m.note && m.pending && !m.content) {
+    const n = el("div", "swap", m.note);
+    n.style.cssText = "color:var(--heat-2);font-size:12px;margin-top:6px";
+    body.appendChild(n);
+  }
 
   // Chat is the one mode whose output is text you take somewhere else;
   // everything else has a download link. Copying the message rather than the
@@ -4447,7 +4459,8 @@ function splitHarmony(text) {
    starting a fresh directory. */
 async function runAgent(text) {
   const reply = { role: "assistant", content: "", reasoning: "", raw: "",
-                  steps: [], pending: true };
+                  steps: [], model: $("cModel").value || whoAnswers(),
+                  note: noteModelSwitch(), pending: true };
   chatLog.push(reply);
   renderChat();
 
@@ -4510,6 +4523,26 @@ async function runAgent(text) {
   }
 }
 
+/* The short name of whichever text model is loaded, for the transcript. Falls
+   back to the picker, then to nothing rather than to a guess — a label naming
+   the wrong model is worse than no label. */
+function whoAnswers() {
+  const spec = limits.text || {};
+  return spec.loaded || ($("cModel") && $("cModel").value) || "assistant";
+}
+
+/* Switching model restarts the backend and reloads several gigabytes. It looked
+   like a hang: the reply simply did not start for half a minute with nothing
+   said. Warn before the wait rather than during it. */
+function noteModelSwitch() {
+  const spec = limits.text || {};
+  const chosen = $("cModel").value;
+  if (!spec.loaded || !chosen || chosen === spec.loaded) return null;
+  const label = ((spec.models || {})[chosen] || {}).label || chosen;
+  return "Loading " + label + " — it replaces the model in memory, so the first "
+       + "reply waits for the weights.";
+}
+
 async function runChat() {
   if (chatting) { chatting.abort(); return; }
   const text = $("cInput").value.trim();
@@ -4519,7 +4552,10 @@ async function runChat() {
 
   chatLog.push({ role: "user", content: text });
   if ($("cAgent").checked) { saveChat(); renderChat(); return runAgent(text); }
-  const reply = { role: "assistant", content: "", reasoning: "", raw: "", pending: true };
+  const switching = noteModelSwitch();
+  const reply = { role: "assistant", content: "", reasoning: "", raw: "",
+                  model: $("cModel").value || whoAnswers(),
+                  note: switching, pending: true };
   chatLog.push(reply);
   $("cInput").value = "";
   autoGrow($("cInput"));
@@ -4560,6 +4596,10 @@ async function runChat() {
         try {
           const d = JSON.parse(p).choices[0].delta || {};
           if (d.content) reply.raw += d.content;
+          // The gateway strips these from a complete response, but a stream is
+          // tokens — `<|im_end|>` arrived as visible text at the end of a Qwen
+          // reply.
+          if (reply.raw.includes("<|")) reply.raw = reply.raw.replace(/<\|[^<>|]{0,40}\|>/g, "");
           if (d.reasoning) reply.reasoning += d.reasoning;
           // GPT-OSS answers in channels and a stream arrives as raw tokens, so
           // the gateway — which rewrites whole responses — cannot help here.
