@@ -938,8 +938,10 @@ def text_model_problem(name):
                 % (name, ", ".join(TEXT_MODELS)))
     path = services.text_model_path(TEXT_MODELS[resolved]["repo"])
     if not path or not os.path.isdir(path):
-        return ("%s is not downloaded — ./anneal models text fetches it"
-                % TEXT_MODELS[resolved]["repo"])
+        # Name the model, not the service: `./anneal models text` fetches all
+        # four and 22.6 GB, when what is missing here may be 2.3.
+        return ("%s is not downloaded — ./anneal models %s fetches it"
+                % (TEXT_MODELS[resolved]["repo"], TEXT_MODELS[resolved]["repo"]))
     return None
 
 

@@ -192,3 +192,48 @@ class TestPartialRepos(unittest.TestCase):
             if spec.get("allow_patterns"):
                 self.assertLess(float(spec["size_gb"]), 20,
                                 "%s: size_gb looks like the whole repo" % repo)
+
+
+class TestSelectingOneModel(unittest.TestCase):
+    """`./anneal models <service>` was a sensible unit when a service had one
+    or two models. `text` now has four, so asking for a 4.3 GB coder downloads
+    22.6 GB — and the 503 a caller gets for a missing model named exactly that
+    command, which is misleading rather than merely coarse.
+
+    A selection token may now be a repo id as well as a service name.
+    """
+
+    def setUp(self):
+        with open(os.path.join(REPO, "update.sh"), encoding="utf-8") as fh:
+            self.update = fh.read()
+
+    def run_list(self, selection):
+        import subprocess
+        done = subprocess.run(["./anneal", "models", "list", selection],
+                              cwd=REPO, capture_output=True, text=True)
+        return done.returncode, done.stdout + done.stderr
+
+    def test_a_service_still_works(self):
+        code, out = self.run_list("text")
+        self.assertEqual(code, 0, out)
+        self.assertIn("gemma", out)
+
+    def test_a_repo_id_selects_only_that_model(self):
+        repo = "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit"
+        code, out = self.run_list(repo)
+        self.assertEqual(code, 0, out)
+        self.assertIn("Qwen2.5-Coder", out)
+        # The point: the other text models are not in the plan.
+        plan = out.split("Not fetching")[0]
+        self.assertNotIn("gemma", plan)
+        self.assertNotIn("gpt-oss", plan)
+
+    def test_an_unknown_token_says_what_is_accepted(self):
+        code, out = self.run_list("not-a-thing")
+        self.assertNotEqual(code, 0)
+        self.assertIn("not-a-thing", out)
+
+    def test_the_error_names_both_kinds_of_token(self):
+        code, out = self.run_list("not-a-thing")
+        self.assertIn("service", out.lower())
+        self.assertIn("model", out.lower())
