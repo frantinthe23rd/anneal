@@ -111,6 +111,71 @@ def parse(text):
     return out
 
 
+# Qwen answers a tool turn as markup, not as `tool_calls`. Two shapes seen:
+# `<function name="x" arguments='{...}'/>` (often inside a ```xml fence) and the
+# `<tool_call>{"name": ..., "arguments": {...}}</tool_call>` its card documents.
+# mlx_lm parses neither, so the reply came back with `tool_calls: None` and
+# `finish_reason: stop` — a model that appears to have described the work and
+# stopped, which is exactly what it looked like from the outside.
+FUNCTION_TAG_RE = re.compile(
+    r"""<function\s+name=["'](?P<name>[^"']+)["']\s+arguments=["'](?P<args>.*?)["']\s*/?>""",
+    re.S)
+TOOL_CALL_TAG_RE = re.compile(r"<tool_call>\s*(?P<body>\{.*?\})\s*</tool_call>", re.S)
+
+
+# And a third shape, which is what Qwen actually produced here: a fenced JSON
+# object with `name` and `arguments`, one fence per call. Both keys are required
+# and `arguments` must be an object, so a fence that merely contains JSON with a
+# `name` field — a package.json, a manifest — is not mistaken for a call.
+JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.S)
+
+
+def parse_fenced_calls(text):
+    if not text or "```" not in text:
+        return []
+    out = []
+    for m in JSON_FENCE_RE.finditer(text):
+        try:
+            payload = json.loads(m.group(1))
+        except ValueError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        name, args = payload.get("name"), payload.get("arguments")
+        if isinstance(name, str) and isinstance(args, dict):
+            out.append(_call(name, args))
+    return out
+
+
+def parse_markup_calls(text):
+    """Tool calls a model wrote as markup, in OpenAI shape. [] if there are none."""
+    if not text or "<" not in text:
+        return []
+    out = []
+    for m in FUNCTION_TAG_RE.finditer(text):
+        try:
+            args = json.loads(m.group("args"))
+        except ValueError:
+            continue
+        out.append(_call(m.group("name"), args))
+    for m in TOOL_CALL_TAG_RE.finditer(text):
+        try:
+            payload = json.loads(m.group("body"))
+        except ValueError:
+            continue
+        name = payload.get("name")
+        args = payload.get("arguments")
+        if isinstance(name, str) and isinstance(args, dict):
+            out.append(_call(name, args))
+    return out
+
+
+def _call(name, args):
+    return {"id": "call_" + uuid.uuid4().hex[:24], "type": "function",
+            "function": {"name": str(name).split(".")[-1],
+                         "arguments": json.dumps(args)}}
+
+
 def rewrite(body):
     """Rewrite a chat-completions response in place, if it is harmony.
 
@@ -132,9 +197,15 @@ def rewrite(body):
         if not isinstance(content, str):
             continue
         if not looks_like_harmony(content):
-            # Not channels, but it may still carry the template's stop token.
             cleaned = strip_control_tokens(content)
-            if cleaned != content:
+            # A call written as markup is still a call. Without this the loop
+            # sees a reply with no tool_calls and stops, having done nothing.
+            markup = parse_markup_calls(cleaned) or parse_fenced_calls(cleaned)
+            if markup:
+                message["tool_calls"] = markup
+                message["content"] = ""
+                choice["finish_reason"] = "tool_calls"
+            elif cleaned != content:
                 message["content"] = cleaned
             continue
         parsed = parse(content)

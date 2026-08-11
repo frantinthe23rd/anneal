@@ -187,12 +187,23 @@ def run(prompt, root, chat, max_steps=MAX_STEPS, max_seconds=MAX_SECONDS,
                 {"role": "user", "content": prompt}]
     started = time.time()
     trace, steps, stopped, reply = [], 0, None, ""
+    nudged = False
 
     while True:
         turn = chat(messages, TOOLS) or {}
         calls = turn.get("tool_calls") or []
         reply = (turn.get("content") or "").strip()
         if not calls:
+            # A smaller model often answers the first turn with a *plan* — "I
+            # will create index.html, then a stylesheet" — and stops, because
+            # describing the work reads like doing it. Nudge once, and only
+            # once: if it says the same thing again it means it, and asking
+            # repeatedly would be a loop of its own.
+            if not trace and not nudged:
+                nudged = True
+                messages.append({"role": "assistant", "content": turn.get("content") or ""})
+                messages.append({"role": "user", "content": NUDGE})
+                continue
             break
 
         messages.append({"role": "assistant", "content": turn.get("content") or "",
@@ -234,10 +245,14 @@ def run(prompt, root, chat, max_steps=MAX_STEPS, max_seconds=MAX_SECONDS,
             "seconds": round(time.time() - started, 1)}
 
 
+NUDGE = ("Do it now — call the tools. A plan is not the work: nothing exists "
+         "until write_file has run. Start with the first file.")
+
 SYSTEM = """You are working inside one folder on a local machine.
 
 Use the tools to do what is asked. Write real files with write_file — do not
-paste code into your reply and call it done. Check your work with list_files and
+paste code into your reply and call it done, and do not describe a plan and stop:
+nothing exists until write_file has run. Make the first file on your first turn. Check your work with list_files and
 read_file.
 
 You can generate images, speech and sound effects; each saves into the folder.
