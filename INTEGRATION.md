@@ -376,10 +376,8 @@ so it costs seconds rather than a different model. If rembg is not installed the
 image still comes back, opaque, with `cutout_error` saying why: the generation
 cost a model load and is not worth discarding over a post-processing step.
 
-`/v1/sprites` still cuts a sheet into frames, but the Animation tab that drove
-it was removed after use — the character drifts between frames and the pose
-instructions are not followed, so a set reads as several characters rather than
-one moving. The single cut-out is the half that held up.
+`/v1/sprites` makes a character in several poses; the **Animation** tab drives
+it. A single cut-out is the same matting applied to one image.
 
 **Two ways to make sprite frames, and they fail differently.** `method: "sheet"`
 is the default: one generation containing every pose, cut up afterwards. It is

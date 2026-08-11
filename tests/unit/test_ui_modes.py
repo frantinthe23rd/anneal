@@ -145,17 +145,30 @@ class TestTheMeasuredClaims(unittest.TestCase):
         game-dev agent finds the endpoint."""
         self.assertIn("/v1/sprites", self.src)
 
-    def test_no_dead_animation_code_survives_the_tab_going(self):
-        """The tab came back and went again — on the evidence of using it, not
-        on a change of mind. The character drifts between frames and the pose
-        instructions are not followed, so the loop reads as several characters
-        rather than one moving. That is a model problem; presenting it nicely
-        does not fix it. What is left behind is a run handler, a render branch
-        and CSS nothing can reach, and lint-ui.py sees unresolved ids rather
-        than unreachable branches."""
-        for dead in ("runSprites", "renderSpriteMethods", "r.frames",
-                     ".frames .fr", "item.anim", "spPrompt"):
-            self.assertNotIn(dead, self.src, dead)
+    def test_the_animation_tab_shows_the_loop_and_the_frames(self):
+        """It went away twice and came back once, each time on evidence. The
+        sheet method drifts the character and merges sprites that touch; the
+        edit method makes one frame per pose from one base sprite and holds.
+
+        The tab has to show both: the loop answers "does this read as one
+        character moving", the strip answers "which frame is wrong"."""
+        self.assertIn("runSprites", self.src)
+        self.assertIn("preview_url", self.src)
+        self.assertIn("r.frames", self.src)
+        self.assertIn(".frames .fr", self.src)
+
+    def test_the_working_method_is_the_one_preselected(self):
+        """`sheet` stays the server default because it needs no extra model,
+        but a person opening the tab should get the one that works."""
+        fn = self.src[self.src.index("function renderSpriteMethods"):]
+        fn = fn[:fn.index("\nasync function ")]
+        self.assertIn("methods.edit && methods.edit.available", fn)
+
+    def test_the_method_list_is_not_written_into_the_page(self):
+        """It carries a licence, and a licence in two places drifts."""
+        self.assertIn("renderSpriteMethods", self.src)
+        self.assertNotIn("Non-Commercial", self.src)
+        self.assertNotIn('value="edit"', self.src)
 
     def test_the_endpoint_survives_the_tab(self):
         """It is still worth calling — a game-dev agent wants frames, not a

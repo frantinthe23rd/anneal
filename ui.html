@@ -695,7 +695,19 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 /* A cut-out is transparent, and on a dark page that means invisible. The
    chequerboard is the convention for "this has an alpha channel" and doubles as
    proof the background actually went. */
-.item img.cut { background-color: var(--surface-2);
+/* The loop is capped rather than given the whole column: seeing it and the
+   frames it is made of at the same time is the point of the panel. */
+.item.anim > img { max-height: 260px; width: auto; max-width: 100%; border-radius: 8px; }
+/* Frames and cut-outs are transparent, and on a dark page that means invisible.
+   The chequerboard is the alpha convention and doubles as proof it worked. */
+.frames { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.frames .fr { position: relative; border: 1px solid var(--line); border-radius: 7px;
+  padding: 4px; }
+.frames .fr img { display: block; width: 92px; height: auto; }
+.frames .fr .n { position: absolute; right: 5px; bottom: 4px; font-size: 10px;
+  font-family: var(--mono); color: var(--text); background: var(--bg);
+  border-radius: 4px; padding: 0 4px; }
+.item.anim > img, .frames .fr, .item img.cut { background-color: var(--surface-2);
   background-image:
     linear-gradient(45deg, var(--line) 25%, transparent 25%, transparent 75%, var(--line) 75%),
     linear-gradient(45deg, var(--line) 25%, transparent 25%, transparent 75%, var(--line) 75%);
@@ -1024,6 +1036,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
       <button class="tab" role="tab" data-mode="press"  aria-selected="false">Press</button>
       <button class="tab" role="tab" data-mode="speech" aria-selected="false">Speech</button>
       <button class="tab" role="tab" data-mode="image"  aria-selected="false">Image</button>
+      <button class="tab" role="tab" data-mode="sprites" aria-selected="false">Animation</button>
       <button class="tab" role="tab" data-mode="sfx"     aria-selected="false">Effects</button>
       <button class="tab" role="tab" data-mode="chat"   aria-selected="false">Chat</button>
     </div>
@@ -1176,6 +1189,41 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
                 Changing the prompt has little effect — ask a brass watch to become silver and
                 you get the same brass watch. For a different subject, generate afresh.</div>
             </div>
+          </div>
+        </section>
+
+        <!-- ANIMATION -->
+        <section data-panel="sprites" class="hidden">
+          <label class="f" for="spPrompt">Describe the character</label>
+          <textarea id="spPrompt" placeholder="a small orange fox in a blue scarf"></textarea>
+
+          <div class="field">
+            <label class="f" for="spPoses">Poses <span style="text-transform:none;letter-spacing:0">(one per line)</span></label>
+            <textarea id="spPoses" rows="6" style="min-height:132px" placeholder="standing still, facing the viewer&#10;mid stride, left leg forward, walking&#10;mid stride, right leg forward, walking&#10;both arms lifted high above the head"></textarea>
+            <div class="hint"><b>Write them physically.</b> “Both arms lifted high above the head”
+              is obeyed; “arms raised” comes back as the pose you started with. One line is one
+              frame.</div>
+          </div>
+
+          <div class="field">
+            <!-- Its own row, not half of a pair: the labels come from the server
+                 and are a sentence long, and in a half-width select they were
+                 cut to "One base sprite, the". -->
+            <label class="f" for="spMethod">Method</label>
+            <select id="spMethod"></select>
+            <div class="hint" id="spMethodHint"></div>
+          </div>
+
+          <div class="field">
+            <label class="f" for="spStyle">Style</label>
+            <input type="text" id="spStyle" value="flat pixel art">
+          </div>
+
+          <div class="field hidden" id="spSheetOpts">
+            <label class="f" for="spFrames">Frames</label>
+            <input type="number" id="spFrames" value="4" min="2" max="8">
+            <div class="hint">Only used when no poses are named — the sheet method spaces that
+              many figures across one image.</div>
           </div>
         </section>
 
@@ -1408,17 +1456,33 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
     </section>
 
     <section>
+      <h3>Animation — a character in several poses</h3>
+      <p>Describe a character, then name a pose per line. You get the frames as transparent
+         PNGs and a looping preview.</p>
+      <ul>
+        <li><b>Write poses physically.</b> “Both arms lifted high above the head” is obeyed;
+            “arms raised” comes back as the pose you started with. This is the single biggest
+            difference between a frame and a duplicate.</li>
+        <li><b>Editing</b> makes one base sprite and then edits it once per pose. The character
+            holds together because every frame comes from the same reference, and each frame is
+            its own file so nothing can merge. About 35 seconds a frame, and it unloads whatever
+            model is warm.</li>
+        <li><b>Sheet</b> draws every pose in one image and cuts it up. One generation for the
+            whole set, so it is much faster — and it drifts: the same brief has returned four
+            frames, three, and seven, because sprites drawn touching each other are cut as one
+            and the character changes between poses.</li>
+      </ul>
+      <p>Frames are trimmed to the character and the preview stands them on a common floor, so
+         the loop does not slide about. <code>/v1/sprites</code> does the same thing for an agent.</p>
+
       <h3>Cut-outs</h3>
       <p><b>Cut out the background</b> on the Image tab returns the subject on transparency —
          a game sprite, an icon, something to composite. The image is generated as normal and
          then matted, so it costs a few seconds rather than a different model. Ask for one
          character or object against a simple background; a landscape has no subject to
          separate.</p>
-      <p>There was an Animation tab that cut a generated sheet into a walk cycle. It was
-         removed after using it: the character changes between frames and the pose
-         instructions are not followed, so a set reads as several characters rather than one
-         moving. A single cut-out was the half of that pipeline that held up, and this is it.
-         <code>/v1/sprites</code> still exists for callers who want the frames.</p>
+      <p>This is the single-subject half of the sprite pipeline. For a character in several
+         poses, see <b>Animation</b> above.</p>
 
       <h3>Effects — a sound, not a song</h3>
       <p>Describe a sound and get a WAV: a door slam, footsteps on gravel, a UI blip.
@@ -1645,7 +1709,7 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
         <tr><td><code>GET</code></td><td><code>/v1/voices</code></td><td>Voice list — starts the speech process, loads no weights</td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/images/generations</code></td><td>Image, as a path or base64</td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/sfx</code></td><td>A sound effect as a WAV. Loads and exits, so it evicts nothing</td></tr>
-        <tr><td><code>POST</code></td><td><code>/v1/sprites</code></td><td>An animation set as separate transparent PNGs, plus a preview GIF. <b>API only</b> — see the note under Image</td></tr>
+        <tr><td><code>POST</code></td><td><code>/v1/sprites</code></td><td>An animation set as separate transparent PNGs, plus a preview GIF. Also the <b>Animation</b> tab</td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/vector</code></td><td>An SVG icon. <b>Experimental</b> — see the README</td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/chat/completions</code></td><td>OpenAI-shaped chat, streaming</td></tr>
         <tr><td><code>POST</code></td><td><code>/v1/text</code></td><td>One-shot completion</td></tr>
@@ -1941,7 +2005,7 @@ function forgeServices() {
     .concat(known.filter((n) => !SERVICE_ORDER.includes(n)));
 }
 const SERVICE_FOR_MODE = { music: "music", speech: "speech", image: "image",
-                           chat: "text" };
+                           chat: "text", sprites: "image" };
 // Effects deliberately map to no service: nothing stays warm, so a chip saying
 // "cold" would be reporting a state that never changes.
 let health = {};
@@ -2125,7 +2189,7 @@ function addResult(r) { results.unshift(r); renderResults(); return r; }
    does. Everything landed in one pile before, so generating a track and then
    switching to Image left the track sitting under the Image tab. */
 const RESULT_KIND_FOR_MODE = { music: "music", speech: "speech", image: "image",
-                               sfx: "sfx" };
+                               sfx: "sfx", sprites: "animation" };
 
 function shownResults() {
   const kind = RESULT_KIND_FOR_MODE[mode];
@@ -2141,7 +2205,8 @@ function renderResults() {
   box.textContent = "";
 
   shown.forEach((r) => {
-    const item = el("div", "item" + (r.failed ? " failed" : "") + (r.pending ? " pending" : ""));
+    const item = el("div", "item" + (r.failed ? " failed" : "") + (r.pending ? " pending" : "")
+                    + (r.kind === "animation" ? " anim" : ""));
     const top = el("div", "top");
     top.appendChild(el("span", "kind", r.kind));
     top.appendChild(el("div", "pr", r.prompt));
@@ -2161,6 +2226,27 @@ function renderResults() {
       i.src = r.image; i.alt = r.prompt; i.loading = "lazy";
       if (r.cutout) i.className = "cut";
       item.appendChild(i);
+      if (r.shortfall) {
+        const w = el("div", "prog", r.shortfall);
+        w.style.color = "var(--heat-2)";
+        item.appendChild(w);
+      }
+      // The loop answers "does this read as one character moving"; the strip
+      // answers "which frame is wrong". Neither answers the other's question,
+      // so a set shows both.
+      if (r.frames && r.frames.length) {
+        const strip = el("div", "frames");
+        r.frames.forEach((f, n) => {
+          const cell = el("div", "fr");
+          const fi = document.createElement("img");
+          fi.src = f.url; fi.alt = f.pose || ("frame " + (n + 1)); fi.loading = "lazy";
+          if (f.pose) cell.title = f.pose;
+          cell.appendChild(fi);
+          cell.appendChild(el("span", "n", String(n + 1)));
+          strip.appendChild(cell);
+        });
+        item.appendChild(strip);
+      }
       // A set is the loop *and* the frames it is made of. The loop answers
       // "does this read as one character moving"; the strip answers "which
       // frame is wrong", and neither question is answerable from the other.
@@ -2172,6 +2258,12 @@ function renderResults() {
       dl.href = r.audio || r.image; dl.download = r.filename || "anneal-output";
       dl.textContent = "Download";
       foot.appendChild(dl);
+      if (r.sheetPath) {
+        const sh = el("button", null, r.sheetLabel || "Sheet");
+        sh.title = "What every frame came from";
+        sh.onclick = () => showArtwork(r.sheetPath, r.prompt);
+        foot.appendChild(sh);
+      }
       if (r.kind === "image" && r.path) {
         const v = el("button", null, "Vary this");
         v.title = "Generate a variation that keeps this composition";
@@ -2194,6 +2286,7 @@ const EMPTY_LINE = {
   speech: "Nothing spoken yet. Write a line and press Forge.",
   image:  "No images yet. Describe one and press Forge.",
   press:  "No records yet. Write a brief and press Press.",
+  sprites: "No animations yet. Describe a character and press Forge.",
   sfx:     "No effects yet. Describe a sound and press Forge.",
 };
 function setEmptyLine(m) {
@@ -2224,6 +2317,7 @@ async function run() {
   try {
     if (mode === "music") await runMusic();
     else if (mode === "speech") await runSpeech();
+    else if (mode === "sprites") await runSprites();
     else if (mode === "sfx") await runSfx();
     else await runImage();
   } catch (e) {
@@ -2364,6 +2458,109 @@ async function runSpeech() {
    request should start from. Cleared after one use, because silently deriving
    every later image from an old one would be baffling. */
 let varyFrom = null;
+
+/* The method list comes from /health, never from here — it carries a licence,
+   and whether this host can run it at all. `edit` is preselected when it is
+   available: it is the one that produces frames that hold together as a
+   character, and `sheet` remains for when speed matters more than that. */
+function renderSpriteMethods() {
+  const sel = $("spMethod"), hint = $("spMethodHint");
+  const spec = limits.sprites || {};
+  const methods = spec.methods || {};
+  const names = Object.keys(methods);
+  if (!names.length) { hint.textContent = ""; return; }
+  if (sel.options.length !== names.length) {
+    sel.textContent = "";
+    names.forEach((name) => {
+      const m = methods[name];
+      const o = el("option", null, m.label + (m.available ? "" : " — unavailable"));
+      o.value = name; o.disabled = !m.available;
+      sel.appendChild(o);
+    });
+    const preferred = methods.edit && methods.edit.available ? "edit"
+      : (methods[spec.default_method] && methods[spec.default_method].available
+         ? spec.default_method : names.find((n) => methods[n].available) || names[0]);
+    sel.value = preferred;
+  }
+  if (spec.max_frames) $("spFrames").max = spec.max_frames;
+  const chosen = methods[sel.value] || {};
+  // The frame count only means anything to the sheet method; editing takes one
+  // pose per frame and a count would be a number with nothing to do.
+  $("spSheetOpts").classList.toggle("hidden", sel.value === "edit");
+  hint.textContent = (chosen.available ? "" : (chosen.why || "Not available here") + ". ")
+    + (sel.value === "edit"
+       ? "One base sprite, then one edit per pose — about 35 seconds a frame, and "
+         + "it unloads whatever model is warm. Frames hold together as one character. "
+       : "One generation cut into frames — about a minute for the whole set, but the "
+         + "character drifts between poses and sprites drawn touching get cut as one. ")
+    + (chosen.licence || "");
+}
+
+async function runSprites() {
+  const prompt = $("spPrompt").value.trim();
+  if (!prompt) { setStatus("Describe the character first.", "warn"); return; }
+  const method = $("spMethod").value;
+  const poses = $("spPoses").value.split("\n").map((p) => p.trim()).filter(Boolean);
+  if (method === "edit" && !poses.length) {
+    setStatus("Name at least one pose — each line is a frame.", "warn"); return;
+  }
+
+  const body = { prompt, method, style: $("spStyle").value.trim() || "flat pixel art" };
+  // The pose list *is* the frame count when there is one. Sending both is a
+  // contradiction the server resolves by ignoring one of them.
+  if (poses.length) body.poses = poses;
+  else body.frames = Number($("spFrames").value) || 4;
+
+  const cold = coldWarning("image");
+  setStatus(method === "edit"
+    ? "Making the base sprite, then editing " + poses.length + " pose(s)…"
+    : (cold || "Generating the sheet, then cutting it…"), cold ? "warn" : "", { bar: true });
+
+  const d = (await api("/v1/sprites", { method: "POST", body })).data || {};
+
+  let previewUrl = null;
+  if (d.preview_url) {
+    const blob = await api(d.preview_url, { raw: true });
+    previewUrl = URL.createObjectURL(blob); blobUrls.push(previewUrl);
+  }
+  const frames = [];
+  for (const f of d.frames || []) {
+    if (!f.url) continue;
+    const blob = await api(f.url, { raw: true });
+    const u = URL.createObjectURL(blob); blobUrls.push(u);
+    frames.push({ url: u, path: f.file, pose: f.pose });
+  }
+
+  const notes = [];
+  if (d.skipped && d.skipped.length) {
+    notes.push(d.skipped.length + " pose(s) could not be made: "
+               + d.skipped.map((x) => x.pose).join("; "));
+  }
+  if (d.preview_error) notes.push("No loop: " + d.preview_error);
+  // Only the sheet method can disagree with the count it was asked for — the
+  // cutter finds sprite-shaped regions and never sees the number. Editing makes
+  // one frame per pose, so a shortfall there is a named failure, above.
+  if (method !== "edit" && d.requested_frames && frames.length !== d.requested_frames) {
+    notes.push(frames.length < d.requested_frames
+      ? "Asked for " + d.requested_frames + ", kept " + frames.length
+        + " — the rest came out blank on the sheet and were dropped."
+      : "Asked for " + d.requested_frames + ", found " + frames.length
+        + " — the model drew more separable figures than there were poses.");
+  }
+
+  addResult({
+    kind: "animation", prompt,
+    image: previewUrl || (frames[0] || {}).url,
+    frames,
+    filename: slug(prompt) + ".gif",
+    meta: frames.length + " frame(s)" + (d.fps ? " · " + d.fps + " fps" : "")
+          + " · " + body.style + " · " + method,
+    shortfall: notes.length ? notes.join(" ") : null,
+    sheetPath: d.sheet || d.base,
+    sheetLabel: d.base ? "Base sprite" : "Sheet",
+  });
+  hideStatus();
+}
 
 /* Sound effects. The only generator here that competes with nothing else — it
    peaks at 1.49 GB and exits, so there is no cold start to warn about and no
@@ -3334,9 +3531,9 @@ function applyRequest(kind, req) {
    down — and never had a Press filter at all, which left finished records
    reachable only by scrolling past everything else. */
 const LIB_KIND_FOR_MODE = { music: "music", speech: "speech", image: "images",
-                            press: "press", sfx: "sfx" };
+                            press: "press", sfx: "sfx", sprites: "sprites" };
 const LIB_TITLE = { music: "Saved tracks", speech: "Saved speech", image: "Saved images",
-                    press: "Records", sfx: "Saved effects" };
+                    press: "Records", sfx: "Saved effects", sprites: "Animations" };
 
 function setLibrary(on) {
   libView = on;
@@ -4361,6 +4558,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
     // session adds an artist, and a stale list would not offer them.
     if (mode === "press") loadArtists();
     if (mode === "sfx") renderSfxHint();
+    if (mode === "sprites") renderSpriteMethods();
     hideStatus();
     showPage("studio");          // also swaps .cols for the chat view
     renderForge();
