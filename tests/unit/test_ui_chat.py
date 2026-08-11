@@ -264,37 +264,41 @@ class ChatFitsTheWindowTest(unittest.TestCase):
 
 
 class ChatSitsInTheSameBoxTest(unittest.TestCase):
-    """#chatview is a sibling of .wrap rather than a child, so it spanned the
-    whole window while every other view stopped at 1240 — measured at 1600px
-    wide, the tab strip ran 200–1400 and the chat ran 0–1600."""
+    """#chatview was a sibling of .wrap rather than a child. That cost two
+    things with one cause: it spanned the whole window — measured at 1600px, the
+    tab strip ran 200-1400 and the chat ran 0-1600 — and .wrap's 64px bottom
+    padding fell between the tab strip and the chat, so the gap above it was
+    visibly larger than in every other view.
+
+    Asserted as nesting rather than as a matching width, because a copied
+    max-width is exactly the kind of second copy that drifts."""
 
     @classmethod
     def setUpClass(cls):
         with open(UI, encoding="utf-8") as fh:
             cls.src = fh.read()
 
-    def wrap_rule(self):
-        """There is more than one `.wrap {` rule — one carries the animation.
-        Take the one that sets the width, which is the one being matched."""
+    def test_the_chat_view_is_inside_the_wrap(self):
         import re
-        for m in re.finditer(r"\n\.wrap \{([^}]*)\}", self.src):
-            if "max-width" in m.group(1):
-                return m.group(1)
-        raise AssertionError("no .wrap rule sets a max-width")
+        start = self.src.index('<div class="wrap">')
+        tag = re.compile(r"<(/?)div\b[^>]*>", re.I)
+        i, depth = start, 0
+        while True:
+            m = tag.search(self.src, i)
+            depth += -1 if m.group(1) else 1
+            i = m.end()
+            if depth == 0:
+                break
+        self.assertLess(self.src.index('id="chatview"'), i,
+                        "#chatview is outside .wrap, so it spans the window and "
+                        "inherits .wrap's bottom padding as a gap above it")
 
-    def chat_rule(self):
+    def test_it_does_not_carry_its_own_width(self):
+        """Constraining it separately worked and left two numbers to keep in
+        step. Being inside the wrap is the fix that cannot drift."""
         import re
         m = re.search(r"\n\.chatview \{([^}]*)\}", self.src)
-        assert m, ".chatview rule not found"
-        return m.group(1)
-
-    def test_it_is_constrained_to_the_same_width(self):
-        import re
-        want = re.search(r"max-width:\s*(\d+)px", self.wrap_rule()).group(1)
-        self.assertIn("max-width: %spx" % want, self.chat_rule())
-
-    def test_it_is_centred_the_same_way(self):
-        self.assertIn("margin: 0 auto", self.chat_rule())
+        self.assertNotIn("max-width", m.group(1))
 
 
 class TabsAreGroupedTest(unittest.TestCase):

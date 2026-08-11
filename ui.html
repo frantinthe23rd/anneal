@@ -825,21 +825,21 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 /* Sidebar beside the conversation, the way every other chat interface puts it.
    The column that holds the transcript and the composer is what shrinks; the
    list scrolls on its own. */
-/* Same box as .wrap. #chatview is a sibling of it rather than a child, so it
-   spanned the whole window while every other view stopped at 1240 — the chat
-   was visibly wider than the tab strip above it. Constrained here rather than
-   moved, so the two cannot drift: if .wrap's width changes, this line is the
-   one place that has to change with it. */
+/* Inside .wrap now, like every other view. It was a sibling, which cost two
+   things: it spanned the whole window (at 1600px the tab strip ran 200–1400 and
+   the chat ran 0–1600), and .wrap's 64px bottom padding sat between the tab
+   strip and the chat, so the gap above it was visibly bigger than anywhere
+   else. Both were the same cause. */
 .chatview { display: grid; grid-template-columns: 232px minmax(0, 1fr); gap: 12px;
-  min-height: 0; align-items: stretch;
-  position: relative; z-index: 1;
-  max-width: 1240px; margin: 0 auto; padding: 0 20px 64px; }
+  min-height: 0; align-items: stretch; }
 .chatview .history { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .chatview .hhead { display: flex; align-items: center; gap: 8px; padding: 13px 14px;
   border-bottom: 1px solid var(--line); }
 .chatview .hhead h2 { margin: 0; font-size: 12px; letter-spacing: .11em;
   text-transform: uppercase; color: var(--muted); }
 .chatview .hhead .iconbtn { margin-left: auto; min-height: 28px; padding: 4px 10px; }
+.chatview .hhead .hclose { margin-left: 0; display: none; padding: 4px 9px; font-size: 15px;
+  line-height: 1; }
 .hlist { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px; }
 .hlist .row { display: flex; align-items: center; gap: 6px; border-radius: 8px;
   padding: 8px 10px; cursor: pointer; }
@@ -884,6 +884,11 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
   .chatview { grid-template-columns: minmax(0, 1fr); position: relative; }
   .chatview .history { position: absolute; inset: 0 auto 0 0; width: min(280px, 84vw);
     z-index: 6; box-shadow: 0 10px 40px rgba(0,0,0,.45); }
+  /* Open, it covers the button that opened it — so it carries its own way out.
+     Tapping the conversation behind it closes it too. */
+  .chatview .hhead .hclose { display: inline-flex; }
+  .chatview:not(.aside) .side::before { content: ""; position: absolute; inset: 0;
+    background: rgba(8,6,5,.45); z-index: 5; }
   .chatview.aside .history { display: none; }
 }
 .chatview .log { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; }
@@ -1450,14 +1455,14 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
       <div class="items hidden" id="items"></div>
     </div>
     </div>
-  </div>
-
-  <!-- ------------------------------------------------------------ chat -->
+    <!-- ------------------------------------------------------------ chat -->
   <div class="chatview hidden" id="chatview">
     <div class="panel history" id="chatHistory">
       <div class="hhead">
         <h2>Chats</h2>
         <button class="iconbtn" id="cNew" title="Start a new conversation">New</button>
+        <button class="iconbtn hclose" id="cAsideClose" title="Hide the chat list"
+                aria-label="Hide the chat list"><span aria-hidden="true">×</span></button>
       </div>
       <div class="hlist" id="chatList"></div>
     </div>
@@ -1484,7 +1489,10 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
         <button class="go send" id="cSend">Send</button>
       </div>
     </div>
+    </div>
   </div>
+
+</div>
 
   <!-- ----------------------------------------------------------- guide -->
   <div class="doc hidden" id="pageGuide">
@@ -2017,7 +2025,6 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
   <footer class="sitefoot">
     <span>Anneal — local generation. MIT licensed, © 2026 Jon Moseley.</span>
   </footer>
-</div>
 
 <!-- ------------------------------------------------------------- key gate -->
 <div class="gate hidden" id="gate">
@@ -3971,7 +3978,14 @@ function openChat(id, { render = true } = {}) {
     if (chatId) localStorage.setItem(CHAT_CURRENT_KEY, chatId);
     else localStorage.removeItem(CHAT_CURRENT_KEY);
   } catch (_) {}
-  if (render) { renderChat(); renderChatList(); $("cInput").focus(); }
+  if (render) {
+    renderChat();
+    renderChatList();
+    // On a phone the list is over the conversation, so opening one should get
+    // out of its own way.
+    if (window.matchMedia("(max-width: 760px)").matches) setChatAside(false, true);
+    $("cInput").focus();
+  }
 }
 
 function deleteChat(id) {
@@ -5136,6 +5150,19 @@ function restoreChatAside() {
 $("cAside").onclick = () => {
   setChatAside($("chatview").classList.contains("aside"), true);
 };
+$("cAsideClose").onclick = () => setChatAside(false, true);
+// Tapping the conversation behind the overlay closes it, which is what the
+// scrim in front of it is for.
+$("chatview").addEventListener("click", (e) => {
+  const view = $("chatview");
+  if (view.classList.contains("aside")) return;
+  if (!window.matchMedia("(max-width: 760px)").matches) return;
+  // The toggle's own click bubbles here after it has opened the list, and this
+  // handler then closed it again — so it never appeared to open at all.
+  if (e.target.closest(".history, #cAside")) return;
+  setChatAside(false, true);
+});
+
 $("cSend").onclick = runChat;
 $("cInput").addEventListener("input", () => autoGrow($("cInput")));
 $("cInput").addEventListener("keydown", (e) => {
