@@ -148,15 +148,26 @@ for spec in models.values():
         services.append(spec["service"])
 
 only_required = False
+picked_repos = set()
 if selection in ("required", "all"):
     wanted = list(services)
     only_required = selection == "required"
 else:
+    # A token is a service or a single model. Selecting by service alone was a
+    # sensible unit when a service had one or two models; `text` now has four,
+    # so asking for a 4.3 GB coder fetched 22.6 GB — and the error a caller gets
+    # for a missing model named exactly that command.
     wanted = [s.strip() for s in selection.split(",") if s.strip()]
-    unknown = [s for s in wanted if s not in services]
+    by_repo = {}
+    for repo in models:
+        by_repo[repo] = repo
+        by_repo[repo.split("/")[-1]] = repo      # the name without the owner
+    unknown = [s for s in wanted if s not in services and s not in by_repo]
     if unknown:
-        sys.exit("unknown service(s): %s\nknown: %s"
-                 % (", ".join(unknown), ", ".join(services)))
+        sys.exit("unknown service or model: %s\nservices: %s\nmodels: %s"
+                 % (", ".join(unknown), ", ".join(services),
+                    ", ".join(sorted(models))))
+    picked_repos = {by_repo[s] for s in wanted if s in by_repo}
 
 
 def local_dir(spec):
@@ -177,7 +188,11 @@ def size(spec):
 
 chosen, skipped = [], []
 for repo, spec in models.items():
-    take = spec.get("service") in wanted and (spec.get("required", True) or not only_required)
+    # A model named directly is taken whether or not it is optional — naming it
+    # is the decision that `required` exists to ask for.
+    take = repo in picked_repos or (
+        spec.get("service") in wanted
+        and (spec.get("required", True) or not only_required))
     (chosen if take else skipped).append((repo, spec))
 
 # Size before bytes. Someone deciding whether to do this at all needs the

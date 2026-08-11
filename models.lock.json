@@ -13,7 +13,9 @@
   "and nobody should have to fetch those to try the ones that do.",
   "",
   "size_gb is `du -sh` on this install, not the download size. They are close",
-  "for weights and the difference is not worth a second number to keep true."
+  "for weights and the difference is not worth a second number to keep true.",
+  "",
+  "A selection can name a service or a single model — `./anneal models text` or `./anneal models Qwen3-4B-Instruct-2507-4bit`. Naming a model fetches it whether or not it is optional, because naming it is the decision `required` exists to ask for."
  ],
  "recorded": "2026-08-08",
  "models": {

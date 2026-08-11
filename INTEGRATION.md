@@ -357,8 +357,9 @@ curl -X POST "$ANNEAL_URL/v1/chat/completions" -H "Authorization: Bearer $ANNEAL
 | `qwen-coder` | Qwen2.5 Coder 7B — code and tool use | 4.3 GB |
 | `qwen-fast` | Qwen3 4B — half the size, for short replies | 2.3 GB |
 
-All three are permissively licensed; only `gemma` is required. The others are
-`./anneal models text`. An unknown name is a 400 rather than being quietly
+All are permissively licensed; only `gemma` is required. Fetch one by name —
+`./anneal models Qwen2.5-Coder-7B-Instruct-4bit` — or a whole service with
+`./anneal models text`, which takes all of them and about 22 GB. An unknown name is a 400 rather than being quietly
 answered by whatever is loaded — answering with a different model than the one
 asked for is the failure this exists to remove. A known name that is not
 downloaded is a 503 naming the command.

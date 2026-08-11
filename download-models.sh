@@ -14,6 +14,7 @@
 #   ./download-models.sh                required weights for every service
 #   ./download-models.sh all            everything, optional models included
 #   ./download-models.sh music,speech   only those services
+#   ./download-models.sh gpt-oss-20b-MXFP4-Q4   one model, by name
 #   ./download-models.sh list           what it would fetch, and how big
 set -euo pipefail
 
