@@ -151,3 +151,70 @@ class TestControlTokensDoNotReachTheReader(unittest.TestCase):
         out = harmony.rewrite(body)["choices"][0]["message"]
         self.assertEqual(out["content"], "Here is the answer.")
         self.assertEqual(out["reasoning"], "Thinking about it.")
+
+
+class TestCallsWrittenAsMarkup(unittest.TestCase):
+    """Qwen answers a tool turn as markup. mlx_lm does not parse it, so the
+    reply arrived with `tool_calls: None` and `finish_reason: stop` — and an
+    agent run ended after zero steps having described the work and done none of
+    it. Measured against the running gateway."""
+
+    FUNC = ("```xml\n<function name=\"write_file\" "
+            "arguments='{\"path\": \"a.txt\", \"content\": \"hello\"}'/>\n```")
+    TOOLCALL = '<tool_call>{"name": "list_files", "arguments": {}}</tool_call>'
+
+    def rewrite(self, content):
+        body = {"choices": [{"message": {"role": "assistant", "content": content},
+                             "finish_reason": "stop"}]}
+        out = harmony.rewrite(body)
+        return out["choices"][0]
+
+    def test_the_function_tag_becomes_a_tool_call(self):
+        choice = self.rewrite(self.FUNC)
+        call = choice["message"]["tool_calls"][0]
+        self.assertEqual(call["function"]["name"], "write_file")
+        self.assertEqual(json.loads(call["function"]["arguments"]),
+                         {"path": "a.txt", "content": "hello"})
+        self.assertEqual(choice["finish_reason"], "tool_calls")
+
+    def test_the_documented_tool_call_tag_works_too(self):
+        call = self.rewrite(self.TOOLCALL)["message"]["tool_calls"][0]
+        self.assertEqual(call["function"]["name"], "list_files")
+
+    def test_the_markup_does_not_also_remain_as_content(self):
+        """A client that renders content would print the call as text."""
+        self.assertEqual(self.rewrite(self.FUNC)["message"]["content"], "")
+
+    def test_prose_that_merely_mentions_a_tag_is_untouched(self):
+        text = "Use the <function> element when you want a call."
+        self.assertIsNone(self.rewrite(text)["message"].get("tool_calls"))
+
+    def test_unparseable_arguments_are_not_forwarded(self):
+        bad = '<function name="write_file" arguments=\'{not json\'/>'
+        self.assertIsNone(self.rewrite(bad)["message"].get("tool_calls"))
+
+
+class TestCallsWrittenAsFencedJson(unittest.TestCase):
+    """The shape Qwen actually produced: a ```json fence holding
+    {"name": ..., "arguments": {...}}, one fence per call. Measured — an agent
+    run ended at zero steps because nothing recognised it."""
+
+    def rewrite(self, content):
+        body = {"choices": [{"message": {"content": content}, "finish_reason": "stop"}]}
+        return harmony.rewrite(body)["choices"][0]
+
+    def test_a_fenced_call_is_recognised(self):
+        text = '```json\n{"name": "write_file", "arguments": {"path": "a.txt", "content": "x"}}\n```'
+        call = self.rewrite(text)["message"]["tool_calls"][0]
+        self.assertEqual(call["function"]["name"], "write_file")
+
+    def test_two_fences_are_two_calls(self):
+        text = ('```json\n{"name": "write_file", "arguments": {"path": "a"}}\n```\n\n'
+                '```json\n{"name": "list_files", "arguments": {}}\n```')
+        self.assertEqual(len(self.rewrite(text)["message"]["tool_calls"]), 2)
+
+    def test_json_that_is_not_a_call_is_left_alone(self):
+        """A fenced package.json has a name and is not a tool call."""
+        text = '```json\n{"name": "my-app", "version": "1.0.0"}\n```'
+        self.assertIsNone(self.rewrite(text)["message"].get("tool_calls"))
+        self.assertIn("my-app", self.rewrite(text)["message"]["content"])

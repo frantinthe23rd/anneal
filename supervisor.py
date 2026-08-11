@@ -619,6 +619,29 @@ def press_text(prompt, max_tokens=900, temperature=0.9):
     return ((d or {}).get("data") or {}).get("text", "")
 
 
+# Services that must not be unloaded right now. An agent run is a loop of calls
+# to the text model with tool work in between, and text has a five-minute idle
+# timeout — so a slow tool could see the model reaped between two of its own
+# steps, and the run would then pay a cold load in the middle of itself.
+_pinned = set()
+_pin_lock = threading.Lock()
+
+
+def pin_service(name):
+    with _pin_lock:
+        _pinned.add(name)
+
+
+def unpin_service(name):
+    with _pin_lock:
+        _pinned.discard(name)
+
+
+def is_pinned(name):
+    with _pin_lock:
+        return name in _pinned
+
+
 class AgentHungUp(Exception):
     """The client closed the stream. Not an error — stop writing to it."""
 
@@ -1180,6 +1203,11 @@ def start_service(name):
         for other_name, other in SERVICE_OBJECTS.items():
             if other_name == name or not other.heavy or not other.is_running():
                 continue
+            if is_pinned(other_name):
+                # Mid-agent-run. Refusing is the honest answer: taking the model
+                # out from under a loop that is about to call it again turns one
+                # slow step into a cold load, and the caller cannot tell why.
+                raise ServiceBusy(other_name, name)
             with other.flight_lock:
                 in_flight = other.in_flight
             if in_flight or other.has_work():
@@ -1237,6 +1265,12 @@ def reaper():
                 with svc.flight_lock:
                     busy = svc.in_flight > 0
                 if busy:
+                    svc.touch()
+                    continue
+                if is_pinned(name):
+                    # Held open for the length of an agent run. Touched as well
+                    # as skipped, so the idle clock does not fire the instant
+                    # the pin is released.
                     svc.touch()
                     continue
                 idle_for = time.time() - svc.last_activity
@@ -2965,6 +2999,9 @@ class Handler(BaseHTTPRequestHandler):
 
             try:
                 emit("start", {"job": job, "model": chosen, "max_steps": steps})
+                # Held for the run: see pin_service. Released in `finally`, so a
+                # crash or a hung-up client cannot leave it pinned for ever.
+                pin_service("text")
                 out = agent.run(prompt, root, agent_chat(chosen),
                                 max_steps=steps, media=agent_media(root),
                                 on_step=lambda entry: emit("step", entry))
@@ -2979,6 +3016,8 @@ class Handler(BaseHTTPRequestHandler):
                     emit("error", {"error": str(exc)[:300]})
                 except AgentHungUp:
                     pass
+            finally:
+                unpin_service("text")
             return
 
         if route == "/v1/sfx":

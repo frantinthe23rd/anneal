@@ -115,7 +115,11 @@ class TestTheLoop(SandboxCase):
                 "content": ""}
 
     def test_a_reply_with_no_tool_call_ends_it(self):
-        out = agent.run("hello", self.root, self.scripted([{"content": "hi", "tool_calls": None}]))
+        """After the one nudge. A first turn with no call is usually a plan, so
+        it is pushed once; saying the same thing again ends the run."""
+        out = agent.run("hello", self.root, self.scripted([
+            {"content": "hi", "tool_calls": None},
+            {"content": "hi", "tool_calls": None}]))
         self.assertEqual(out["steps"], 0)
         self.assertEqual(out["reply"], "hi")
 
@@ -226,3 +230,45 @@ class TestInliningASite(SandboxCase):
         """Nothing here fetches from the network, and the page must not either."""
         html = '<link rel="stylesheet" href="https://cdn.example/x.css">'
         self.assertEqual(agent.inline_site(html, {}), html)
+
+
+class TestItIsNudgedOffThePlan(SandboxCase):
+    """A smaller model often answers the first turn with a plan — "I will
+    create index.html, then a stylesheet" — and stops, because describing the
+    work reads like doing it. Reported: qwen outlined the steps and ended."""
+
+    def test_a_plan_with_no_call_is_pushed_once(self):
+        turns = [{"content": "I will create index.html and style.css.", "tool_calls": None},
+                 {"content": "", "tool_calls": [{"id": "1", "type": "function",
+                  "function": {"name": "write_file",
+                               "arguments": json.dumps({"path": "a.txt", "content": "x"})}}]},
+                 {"content": "done", "tool_calls": None}]
+        out = agent.run("build it", self.root, lambda m, t: turns.pop(0))
+        self.assertEqual(out["steps"], 1)
+        self.assertEqual(out["reply"], "done")
+
+    def test_it_is_nudged_only_once(self):
+        """If it says the same thing again it means it, and asking repeatedly
+        would be a loop of its own."""
+        seen = []
+        def chat(messages, tools):
+            seen.append(len(messages))
+            return {"content": "I will do it later.", "tool_calls": None}
+        out = agent.run("build it", self.root, chat)
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(out["steps"], 0)
+
+    def test_a_reply_after_real_work_is_not_nudged(self):
+        """Once something has been made, a reply with no call is the summary —
+        which is how a run is meant to end."""
+        turns = [{"content": "", "tool_calls": [{"id": "1", "type": "function",
+                  "function": {"name": "write_file",
+                               "arguments": json.dumps({"path": "a.txt", "content": "x"})}}]},
+                 {"content": "Made a.txt.", "tool_calls": None}]
+        calls = []
+        def chat(messages, tools):
+            calls.append(1)
+            return turns.pop(0)
+        out = agent.run("go", self.root, chat)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(out["reply"], "Made a.txt.")
