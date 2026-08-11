@@ -204,14 +204,48 @@ class TestModelsThatAreNotServices(unittest.TestCase):
         self.assertEqual(self.src.count("extraChips()"), 3,
                          "defined once, used by the studio strip and the hero strip")
 
-    def test_the_editor_reports_progress_rather_than_a_temperature(self):
-        """It is neither cold nor hot while running: it is on frame 3 of 8."""
+    def test_they_use_the_same_vocabulary_as_every_other_model(self):
+        """They were "on demand" chips, which hid the fact that they hold
+        1.5 GB and 4.9 GB while they run and evict what is warm. Speech is
+        smaller than both and has always been shown loading in and out. The
+        only real difference is that these go cold at the end of the request
+        rather than after an idle timeout, which belongs in the tooltip."""
         fn = self.src[self.src.index("function extraChips"):]
         fn = fn[:fn.index("\nfunction ")]
-        self.assertIn("editing.active", fn)
-        self.assertIn("editing.frame", fn)
+        self.assertIn('"svc " + (running ? "hot" : "cold")', fn)
+        self.assertNotIn("ondemand", self.src)
+
+    def test_a_run_reports_what_it_is_holding(self):
+        fn = self.src[self.src.index("function extraChips"):]
+        fn = fn[:fn.index("\nfunction ")]
+        self.assertIn("footprint_mb", fn)
+        self.assertIn("e.frame", fn, "the editor also reports which frame it is on")
 
     def test_the_state_comes_from_health_not_from_a_guess(self):
         # The page cannot know a subprocess is running; the server has to say.
         import supervisor
         self.assertIn("editing", supervisor.capability_limits()["sprites"])
+
+
+class TestTheLibraryPlaysTheRightThing(unittest.TestCase):
+    """A sprite set is one library row standing for a directory, so its `name`
+    has no extension. The picture test was applied to the name alone, so a set
+    fell through to the audio branch and offered a player for a GIF — the same
+    fault the comment above it already recorded for sprite frames, returning by
+    a different route."""
+
+    def setUp(self):
+        self.src = source()
+
+    def test_the_media_type_is_taken_from_the_served_file_too(self):
+        self.assertIn("PICTURE.test(served)", self.src)
+
+    def test_gif_counts_as_a_picture(self):
+        line = [l for l in self.src.splitlines() if "const PICTURE =" in l][0]
+        self.assertIn("gif", line)
+
+    def test_a_query_string_does_not_defeat_it(self):
+        # The url is /v1/outputs/file?path=…/preview.gif, so the extension is
+        # not at the end of the url — it is at the end of the path parameter.
+        line = [l for l in self.src.splitlines() if "const served =" in l][0]
+        self.assertIn("path=", line)
