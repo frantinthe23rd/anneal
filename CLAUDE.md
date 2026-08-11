@@ -155,9 +155,18 @@ loaded; if behaviour doesn't match the code, check the process start time first.
   the output kinds or the health payload's services went stale the moment one
   was added, and each time it failed *after* the change shipped rather than
   during it. The UI had the same bug where no test could see it: the forge strip
-  was a hardcoded array and silently omitted `video`. Assert against
+  was a hardcoded array and silently omitted `video`. `stop-api.sh` had it in the
+  most expensive form: two backend names, written when music was the only
+  backend, so speech, image and text were never killed — they survived every
+  restart holding their weights. Assert against
   `services.SERVICES`, `outputs.KINDS` or the source file, and build UI lists
-  from `/health`. Four occurrences so far.
+  from `/health`. Five occurrences so far.
+- **A backend can outlive the supervisor**, and then the supervisor's own
+  bookkeeping is fiction. `is_running()` answers "is one up", not "did we start
+  one": it counts a process adopted off the port, because `/health`, eviction,
+  the idle reaper and the text model switch all read it as the former. Anything
+  that compares `svc.spec` with what a caller asked for is comparing two things
+  the running process never saw — read the process (`ps`, `footprint`) instead.
 - **`grep -m1` / `head -1` mid-pipeline** SIGPIPEs upstream stages; under the
   launchers' `set -euo pipefail` that silently aborts the whole script.
 - **Streamed responses must be close-delimited.** `Transfer-Encoding` is

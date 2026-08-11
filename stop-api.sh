@@ -2,7 +2,8 @@
 # Stop the supervisor (which stops the model backend) and tear down the tailnet proxy.
 set -euo pipefail
 
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/env.sh"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$HERE/env.sh"
 
 PIDFILE="$AIMUSIC_ROOT/supervisor.pid"
 
@@ -30,10 +31,24 @@ if [[ -f "$PIDFILE" ]]; then
     rm -f "$PIDFILE"
 fi
 
-# Belt and braces: nothing should be left holding the model in memory.
+# Belt and braces: nothing should be left holding a model in memory.
+#
+# The backend patterns come from services.SERVICES — each entry already carries
+# the command it is started with — rather than being named here. Two names were
+# written here when music was the only backend, and speech, image and text were
+# then never killed: they survived every restart, were reparented to init, and
+# went on holding their weights while /health reported them cold (issue #46).
 pkill -f "supervisor.py" 2>/dev/null || true
-pkill -f "acestep.api_server:app" 2>/dev/null || true
-pkill -f "acestep-api" 2>/dev/null || true
+
+PATTERNS="$(/usr/bin/python3 "$HERE/services.py" --stop-patterns 2>/dev/null || true)"
+if [[ -z "$PATTERNS" ]]; then
+    echo "WARNING: could not read the service table, so no backend was killed by" >&2
+    echo "         name. Check for leftovers: ps -A -o pid,ppid,command | grep -i anneal" >&2
+fi
+while IFS= read -r pattern; do
+    [[ -n "$pattern" ]] || continue
+    pkill -f "$pattern" 2>/dev/null || true
+done <<<"$PATTERNS"
 
 # Only tear the proxy down if this machine is the one that put it up. Stopping
 # the gateway used to remove the serve config unconditionally and start-api.sh

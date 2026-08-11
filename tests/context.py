@@ -16,6 +16,12 @@ Two of the substitutions are safety rather than hygiene:
                     instead, so any such call fails immediately and loudly.
   ACESTEP_API_KEY   Fixed to a known value so auth can be exercised without
                     ever reading env.local.sh.
+  the backend ports Each service's port is moved into the privileged range,
+                    where no backend of this machine's can be listening. The
+                    supervisor now probes those ports to answer /health — a
+                    backend it did not start is still one that is up — so left
+                    at their real values a unit test would report on, and could
+                    reach, whatever this machine happens to be serving.
 """
 
 from __future__ import annotations
@@ -33,6 +39,16 @@ TEST_API_KEY = "test-key-not-a-secret"
 
 # Deliberately not a port anything listens on.
 CLOSED_PORT = "9"
+
+# Likewise for the backends. Below 1024, so nothing a user on this machine
+# started can be listening there, and distinct from each other and from
+# CLOSED_PORT because the service table requires unique ports.
+CLOSED_BACKEND_PORTS = {
+    "ACESTEP_BACKEND_PORT": "10",
+    "SPEECH_PORT": "11",
+    "TEXT_PORT": "12",
+    "IMAGE_PORT": "13",
+}
 
 _installed = {}
 
@@ -56,6 +72,7 @@ def install():
     os.environ["ACESTEP_API_KEY"] = TEST_API_KEY
     os.environ["SUPERVISOR_HOST"] = "127.0.0.1"
     os.environ["SUPERVISOR_PORT"] = CLOSED_PORT
+    os.environ.update(CLOSED_BACKEND_PORTS)
     os.environ["TAILNET_HOST"] = ""
     # Inherited values would make the auth and tier tests depend on the shell
     # that launched them.
