@@ -73,8 +73,10 @@ class ChatPersistenceTest(unittest.TestCase):
         save = self.src[self.src.index("function saveChat()"):]
         save = save[:save.index("\n}")]
         self.assertIn("!m.pending", save)
-        load = self.src[self.src.index("function loadChat()"):]
-        self.assertIn("!m.pending", load[:load.index("\n}")])
+        # Reading a conversation moved into openChat() when there became more
+        # than one of them; the filter is what matters, not where it lives.
+        opened = self.src[self.src.index("function openChat("):]
+        self.assertIn("!m.pending", opened[:opened.index("\n}")])
 
     def test_save_is_called_when_a_reply_completes(self):
         run = self.src[self.src.index("async function runChat()"):]
@@ -98,12 +100,24 @@ class ChatPersistenceTest(unittest.TestCase):
                          "zeroing chatNodes here hides the reset from renderChat")
         self.assertIn("renderChat()", fn)
 
-    def test_discarding_asks_first(self):
-        """It was free to discard when a reload destroyed it anyway."""
-        handler = self.src[self.src.index('$("cClear").onclick'):]
-        handler = handler[:handler.index("};")]
-        self.assertIn("confirm(", handler)
-        self.assertIn("clearChat()", handler)
+    def test_starting_a_new_conversation_keeps_the_old_one(self):
+        """It used to ask before discarding, because starting a new
+        conversation destroyed the only one there was. Conversations are kept
+        in a list now, so there is nothing to discard and nothing to confirm —
+        asking would be a prompt about a loss that no longer happens."""
+        fn = self.src[self.src.index("function startNewChat()"):]
+        fn = fn[:fn.index("\n}")]
+        self.assertNotIn("confirm(", fn)
+        # The previous conversation is already filed; only the live state resets.
+        self.assertIn("chatLog = []", fn)
+        self.assertIn("renderChatList()", fn)
+
+    def test_deleting_one_still_asks(self):
+        """That is a real loss, and the only one left."""
+        fn = self.src[self.src.index("function renderChatList()"):]
+        fn = fn[:fn.index("\nfunction ")]
+        self.assertIn("confirm(", fn)
+        self.assertIn("deleteChat(", fn)
 
     def test_forget_everything_takes_the_transcript_too(self):
         """It is now the most personal thing in localStorage."""
@@ -169,3 +183,146 @@ class NoExternalRequestsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChatHistoryTest(unittest.TestCase):
+    """One conversation, and "New conversation" discarded it — so the only way
+    to keep a thread was never to start another. Every other chat interface
+    keeps a list; this one now does too."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(UI, encoding="utf-8") as fh:
+            cls.src = fh.read()
+
+    def test_conversations_are_stored_separately_from_the_index(self):
+        """Loading the list must not deserialise every message of every chat,
+        and trimming one must not rewrite the others."""
+        self.assertIn("CHAT_INDEX_KEY", self.src)
+        self.assertIn("function chatKeyFor", self.src)
+
+    def test_the_old_single_conversation_is_adopted(self):
+        """Upgrading should not look like losing your history."""
+        fn = self.src[self.src.index("function loadChat()"):]
+        fn = fn[:fn.index("\n}\n")]
+        self.assertIn("CHAT_KEY", fn)
+        self.assertIn("removeItem", fn)
+
+    def test_dropping_an_old_chat_takes_its_body(self):
+        """Or the index shrinks while the storage it pointed at is orphaned."""
+        fn = self.src[self.src.index("function saveChat()"):]
+        fn = fn[:fn.index("\n}\n")]
+        self.assertIn("CHAT_MAX_KEPT", fn)
+        self.assertIn("removeItem(chatKeyFor(", fn)
+
+    def test_the_title_is_the_first_thing_said(self):
+        self.assertIn("function titleFor", self.src)
+
+    def test_the_list_can_be_collapsed_and_the_choice_remembered(self):
+        self.assertIn("CHAT_ASIDE_KEY", self.src)
+        self.assertIn("function setChatAside", self.src)
+
+    def test_it_starts_collapsed_where_it_would_cover_the_conversation(self):
+        fn = self.src[self.src.index("function restoreChatAside()"):]
+        fn = fn[:fn.index("\n}")]
+        self.assertIn("max-width: 760px", fn)
+
+
+class ChatFitsTheWindowTest(unittest.TestCase):
+    """The box you type into must be on screen at any window height. It was
+    not: #chatitems was `clamp(300px, 100vh - 400px, 900px)`, so on a short
+    window the clamp floored at 300px and the transcript plus the composer were
+    taller than the viewport."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(UI, encoding="utf-8") as fh:
+            cls.src = fh.read()
+
+    def test_the_transcript_no_longer_has_a_fixed_height(self):
+        self.assertNotIn("calc(100vh - 400px)", self.src)
+
+    def test_the_view_is_sized_from_its_own_position(self):
+        """Nothing above it has a height CSS could subtract — the header, the
+        page tabs and the mode strip all size to their content, and one of them
+        wraps on a narrow window."""
+        fn = self.src[self.src.index("function sizeChat()"):]
+        fn = fn[:fn.index("\n}")]
+        self.assertIn("getBoundingClientRect", fn)
+        self.assertIn("innerHeight", fn)
+
+    def test_the_floor_is_what_must_fit_rather_than_a_round_number(self):
+        """300 was a round number, and at 900x540 it was 49px taller than the
+        room available — which put the composer back below the fold."""
+        fn = self.src[self.src.index("function sizeChat()"):]
+        fn = fn[:fn.index("\n}")]
+        self.assertIn(".composer", fn)
+        self.assertIn(".loghead", fn)
+
+    def test_it_is_resized_when_the_window_is(self):
+        self.assertIn('addEventListener("resize", sizeChat)', self.src)
+
+
+class ChatSitsInTheSameBoxTest(unittest.TestCase):
+    """#chatview is a sibling of .wrap rather than a child, so it spanned the
+    whole window while every other view stopped at 1240 — measured at 1600px
+    wide, the tab strip ran 200–1400 and the chat ran 0–1600."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(UI, encoding="utf-8") as fh:
+            cls.src = fh.read()
+
+    def wrap_rule(self):
+        """There is more than one `.wrap {` rule — one carries the animation.
+        Take the one that sets the width, which is the one being matched."""
+        import re
+        for m in re.finditer(r"\n\.wrap \{([^}]*)\}", self.src):
+            if "max-width" in m.group(1):
+                return m.group(1)
+        raise AssertionError("no .wrap rule sets a max-width")
+
+    def chat_rule(self):
+        import re
+        m = re.search(r"\n\.chatview \{([^}]*)\}", self.src)
+        assert m, ".chatview rule not found"
+        return m.group(1)
+
+    def test_it_is_constrained_to_the_same_width(self):
+        import re
+        want = re.search(r"max-width:\s*(\d+)px", self.wrap_rule()).group(1)
+        self.assertIn("max-width: %spx" % want, self.chat_rule())
+
+    def test_it_is_centred_the_same_way(self):
+        self.assertIn("margin: 0 auto", self.chat_rule())
+
+
+class TabsAreGroupedTest(unittest.TestCase):
+    """Grouped by what comes out — audio, then visual, then text — so related
+    things sit together rather than in the order they were built."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(UI, encoding="utf-8") as fh:
+            cls.src = fh.read()
+
+    def order(self):
+        import re
+        strip = self.src[self.src.index('<div class="tabs" role="tablist">'):]
+        strip = strip[:strip.index("</div>")]
+        return re.findall(r'data-mode="(\w+)"', strip)
+
+    def test_the_audio_tabs_are_contiguous(self):
+        order = self.order()
+        audio = [order.index(m) for m in ("music", "press", "speech", "sfx")]
+        self.assertEqual(sorted(audio), list(range(min(audio), min(audio) + 4)))
+
+    def test_the_visual_tabs_are_contiguous(self):
+        order = self.order()
+        visual = [order.index(m) for m in ("image", "sprites")]
+        self.assertEqual(sorted(visual), list(range(min(visual), min(visual) + 2)))
+
+    def test_audio_comes_before_visual_and_chat_is_last(self):
+        order = self.order()
+        self.assertLess(order.index("sfx"), order.index("image"))
+        self.assertEqual(order[-1], "chat")
