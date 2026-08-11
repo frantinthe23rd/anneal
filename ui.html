@@ -1475,6 +1475,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
         <span class="hint" id="cTurns" style="margin:0"></span>
         <span class="sp"></span>
         <select id="cModel" style="width:auto;padding:4px 8px;font-size:12px"></select>
+        <label class="check" id="cAgentWrap" title="Give the model a working folder and the other tools, and let it work in steps.">
+          <input type="checkbox" id="cAgent"> Agent</label>
         <label class="check" id="cThinkWrap" title="Some models reason before answering. With this on, a short reply can spend its whole budget thinking.">
           <input type="checkbox" id="cThink"> Show reasoning</label>
         <button class="iconbtn" id="cClear">New conversation</button>
@@ -4436,6 +4438,78 @@ function splitHarmony(text) {
   return { content: finals.join("\n").trim(), reasoning: analysis.join("\n").trim() };
 }
 
+/* Agent mode. The same composer, a different endpoint: instead of a reply it
+   streams the tool calls as they happen, because a run is minutes and a result
+   that arrives at the end tells you nothing while you wait.
+
+   Each conversation gets its own working folder, named by its id, so asking
+   for another change continues where the last one left off rather than
+   starting a fresh directory. */
+async function runAgent(text) {
+  const reply = { role: "assistant", content: "", reasoning: "", raw: "",
+                  steps: [], pending: true };
+  chatLog.push(reply);
+  renderChat();
+
+  if (!chatId) chatId = newChatId();
+  const controller = new AbortController();
+  chatting = controller;
+  $("cSend").textContent = "Stop";
+  $("go").textContent = "Stop";
+
+  const line = (s) => (s.ok ? "✓ " : "✗ ") + s.tool
+    + (s.args && s.args.path ? "  " + s.args.path : "")
+    + (s.ok ? "" : " — " + (s.result || "").split("\n")[0]);
+
+  try {
+    const res = await fetch("/v1/agent", {
+      method: "POST", signal: controller.signal,
+      headers: Object.assign({ "Content-Type": "application/json" },
+                             apiKey ? { Authorization: "Bearer " + apiKey } : {}),
+      body: JSON.stringify({ prompt: text, job: chatId,
+                             model: $("cModel").value || undefined }),
+    });
+    if (!res.ok) throw await httpError(res);
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop();
+      for (const l of lines) {
+        if (!l.startsWith("data: ")) continue;
+        let e; try { e = JSON.parse(l.slice(6)); } catch (_) { continue; }
+        if (e.type === "step") {
+          reply.steps.push(line(e));
+          reply.content = reply.steps.join("\n");
+        } else if (e.type === "done") {
+          const note = e.stopped ? "\n\n*(stopped: " + e.stopped + ")*" : "";
+          reply.content = (reply.steps.length ? reply.steps.join("\n") + "\n\n" : "")
+            + (e.reply || "") + note;
+          reply.agentFiles = e.files || [];
+          reply.agentJob = e.job;
+        } else if (e.type === "error") {
+          reply.content += "\n\nFailed: " + e.error;
+        }
+        scheduleChatRender();
+      }
+    }
+  } catch (err) {
+    reply.content += err.name === "AbortError" ? "\n\n*(stopped)*"
+                                               : "\n\nFailed: " + err.message;
+  } finally {
+    reply.pending = false;
+    chatting = null;
+    $("cSend").textContent = "Send";
+    $("go").textContent = mode === "chat" ? "Send" : "Forge";
+    saveChat();
+    renderChat();
+    renderForge();
+  }
+}
+
 async function runChat() {
   if (chatting) { chatting.abort(); return; }
   const text = $("cInput").value.trim();
@@ -4444,6 +4518,7 @@ async function runChat() {
   if (!text) { $("cInput").focus(); return; }
 
   chatLog.push({ role: "user", content: text });
+  if ($("cAgent").checked) { saveChat(); renderChat(); return runAgent(text); }
   const reply = { role: "assistant", content: "", reasoning: "", raw: "", pending: true };
   chatLog.push(reply);
   $("cInput").value = "";
