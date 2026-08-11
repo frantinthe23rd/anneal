@@ -153,3 +153,57 @@ class TestFramesAreTrimmedBeforeTheyAreAnimated(unittest.TestCase):
         a = self.sprites.trim_to_content(self.frame((10, 10, 60, 110)))
         b = self.sprites.trim_to_content(self.frame((90, 40, 140, 140)))
         self.assertEqual(a.size, b.size)
+
+
+class TestHowManyFrames(unittest.TestCase):
+    """The cap was 8 for both methods, for a reason that only applies to one.
+
+    A sheet draws every pose inside one image, so more poses means each figure
+    is smaller and eventually too small to use — that is a quality limit and it
+    is real. Editing generates each frame separately at 512x512, so a tenth
+    frame is exactly as good as the first and the only cost is another 35
+    seconds. Carrying the sheet's limit over to editing was borrowing a
+    constraint rather than having one.
+    """
+
+    def test_editing_allows_more_frames_than_a_sheet(self):
+        self.assertGreater(pose_edit.MAX_POSES, supervisor.MAX_SPRITE_FRAMES)
+
+    def test_a_full_four_direction_cycle_fits(self):
+        # Four directions of four frames is the common case this exists for.
+        self.assertGreaterEqual(pose_edit.MAX_POSES, 16)
+
+    def test_the_sheet_cap_is_unchanged(self):
+        """Raising it there would make each figure smaller, which is the fault
+        the original limit was guarding against."""
+        self.assertEqual(supervisor.MAX_SPRITE_FRAMES, 8)
+
+    def test_a_long_pose_list_is_accepted_for_editing(self):
+        payload = {"prompt": "a knight", "method": "edit",
+                   "poses": ["pose %d" % i for i in range(12)]}
+        self.assertIsNone(supervisor.sprite_limits(payload))
+
+    def test_the_same_list_is_refused_for_a_sheet(self):
+        payload = {"prompt": "a knight", "method": "sheet",
+                   "poses": ["pose %d" % i for i in range(12)]}
+        problem = supervisor.sprite_limits(payload)
+        self.assertIsNotNone(problem)
+        self.assertIn("8", problem)
+
+    def test_past_the_edit_cap_is_still_refused(self):
+        payload = {"prompt": "a knight", "method": "edit",
+                   "poses": ["pose %d" % i for i in range(pose_edit.MAX_POSES + 1)]}
+        self.assertIsNotNone(supervisor.sprite_limits(payload))
+
+    def test_the_cap_is_reported_per_method(self):
+        """The form has to know which limit applies to the method chosen,
+        without a copy of either number in the page."""
+        node = supervisor.capability_limits()["sprites"]
+        self.assertEqual(node["methods"]["edit"]["max_frames"], pose_edit.MAX_POSES)
+        self.assertEqual(node["methods"]["sheet"]["max_frames"], supervisor.MAX_SPRITE_FRAMES)
+
+    def test_the_time_per_frame_is_reported(self):
+        """Sixteen frames is ten minutes. A number the page can multiply beats
+        a person discovering it by waiting."""
+        node = supervisor.capability_limits()["sprites"]
+        self.assertGreater(node["methods"]["edit"]["seconds_per_frame"], 0)

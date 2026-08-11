@@ -404,9 +404,17 @@ frame is its own file — so nothing can merge and every frame is the same size.
 Measured end to end: four frames in 3 m 22 s including the base sprite and the
 matting, 33 s and 4.90 GB peak per frame at 512x512.
 
+**The frame cap differs by method, and so does the reason.** `sheet` takes 8:
+every pose shares one image, so more of them makes each figure too small to use.
+`edit` takes 16 — a four-direction cycle of four — because each frame is its own
+512x512 generation and the tenth is exactly as good as the first. The only cost
+is linear time, about 35 s a frame, so sixteen is roughly ten minutes. Both
+numbers and the per-frame rate are in `/health` → `limits.sprites.methods`, so
+a client can price a request rather than discover it by waiting.
+
 `poses` is required for `edit`; there is nothing to edit towards without it.
 Write them physically — "shield lifted high above the head with both arms" is
-obeyed, "shield raised in front" came back as the original pose. Up to 8, since
+obeyed, "shield raised in front" came back as the original pose. Up to 16, since
 each one is a separate generation.
 
 It holds about 4.9 GB in a subprocess the supervisor cannot see, so it takes the

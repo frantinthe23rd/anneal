@@ -187,3 +187,31 @@ class TestTheMeasuredClaims(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestModelsThatAreNotServices(unittest.TestCase):
+    """Sound effects and the sprite editor load inside a request and exit, so
+    neither is in `health.services` and neither can have a chip built from it.
+    Both were invisible: effects appeared on the studio strip but not the front
+    door, and the sprite editor appeared nowhere at all — so a ten-minute run
+    holding 4.9 GB showed a strip reading entirely cold."""
+
+    def setUp(self):
+        self.src = source()
+
+    def test_both_strips_use_the_same_extra_chips(self):
+        self.assertIn("function extraChips", self.src)
+        self.assertEqual(self.src.count("extraChips()"), 3,
+                         "defined once, used by the studio strip and the hero strip")
+
+    def test_the_editor_reports_progress_rather_than_a_temperature(self):
+        """It is neither cold nor hot while running: it is on frame 3 of 8."""
+        fn = self.src[self.src.index("function extraChips"):]
+        fn = fn[:fn.index("\nfunction ")]
+        self.assertIn("editing.active", fn)
+        self.assertIn("editing.frame", fn)
+
+    def test_the_state_comes_from_health_not_from_a_guess(self):
+        # The page cannot know a subprocess is running; the server has to say.
+        import supervisor
+        self.assertIn("editing", supervisor.capability_limits()["sprites"])

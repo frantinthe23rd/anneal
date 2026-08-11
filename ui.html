@@ -1212,6 +1212,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
             <label class="f" for="spMethod">Method</label>
             <select id="spMethod"></select>
             <div class="hint" id="spMethodHint"></div>
+            <div class="hint" id="spEstimate"></div>
           </div>
 
           <div class="field">
@@ -1470,7 +1471,11 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
         <li><b>Sheet</b> draws every pose in one image and cuts it up. One generation for the
             whole set, so it is much faster — and it drifts: the same brief has returned four
             frames, three, and seven, because sprites drawn touching each other are cut as one
-            and the character changes between poses.</li>
+            and the character changes between poses. Capped at 8, because every pose shares one
+            image and more of them makes each figure too small.</li>
+        <li><b>How many frames.</b> Editing takes up to 16 — four directions of four — since
+            each frame is its own generation and the tenth is as good as the first. The form
+            says how long the poses you have named will take before you press anything.</li>
       </ul>
       <p>Frames are trimmed to the character and the preview stands them on a common floor, so
          the loop does not slide about. <code>/v1/sprites</code> does the same thing for an agent.</p>
@@ -2044,6 +2049,60 @@ const STATE_LABEL = { cold: "cold", heating: "heating", hot: "hot",
                       // would show a state that can never change.
                       ondemand: "on demand" };
 
+/* Models that are not services. Both load inside a request and exit, so they
+   have no port, no idle timer and nothing in `health.services` — and the strip
+   is where someone looks to find out what this machine can do. Leaving them off
+   made the two cheapest generators the only ones you could not see.
+
+   The sprite editor differs from effects in one way that matters: it holds
+   about 4.9 GB for minutes at a time, so while it runs the strip must say so.
+   Reporting everything cold through a ten-minute run is worse than saying
+   nothing. */
+function extraChips() {
+  const chips = [];
+  const fx = limits.sfx;
+  if (fx) {
+    const usable = fx.available !== false;
+    const chip = el("div", "svc " + (usable ? "ondemand" : "absent")
+                    + (busy && mode === "sfx" ? " working" : ""));
+    chip.appendChild(el("span", "dot"));
+    chip.appendChild(el("span", "nm", "effects"));
+    chip.appendChild(el("span", "st", usable ? STATE_LABEL.ondemand : "not installed"));
+    chip.title = usable
+      ? "Sound effects load and exit per request — about 1.5 GB for a few "
+        + "seconds, so nothing is kept warm and nothing else is unloaded."
+      : (fx.why || "Sound effects are not installed on this host.");
+    chips.push(chip);
+  }
+
+  const sp = limits.sprites || {};
+  const edit = (sp.methods || {}).edit;
+  if (edit) {
+    const editing = sp.editing || {};
+    const usable = edit.available !== false;
+    const chip = el("div", "svc " + (editing.active ? "heating"
+                                     : usable ? "ondemand" : "absent"));
+    chip.appendChild(el("span", "dot"));
+    chip.appendChild(el("span", "nm", "animation"));
+    chip.appendChild(el("span", "st",
+      editing.active
+        // The count is frames *finished*, so show the one being worked on —
+        // "frame 0/3" at the start reads as nothing happening.
+        ? (editing.of
+           ? "frame " + Math.min(editing.frame + 1, editing.of) + "/" + editing.of
+           : "editing")
+        : usable ? STATE_LABEL.ondemand : "not installed"));
+    chip.title = editing.active
+      ? "Editing sprite poses — about 4.9 GB, one generation per frame."
+      : usable
+        ? "Sprite poses load about 4.9 GB per run and exit. Nothing is kept warm, "
+          + "but a run does unload whatever else is."
+        : (edit.why || "The sprite edit model is not installed on this host.");
+    chips.push(chip);
+  }
+  return chips;
+}
+
 function renderForge() {
   const box = $("forge");
   box.textContent = "";
@@ -2074,24 +2133,7 @@ function renderForge() {
     box.appendChild(chip);
   });
 
-  // Sound effects are not in `health.services` and should not be: no process,
-  // no port, no idle timer. But the strip is where someone looks to find out
-  // what this machine can do, and leaving it off made the one generator that
-  // costs nothing the only one you could not see.
-  const fx = limits.sfx;
-  if (fx) {
-    const usable = fx.available !== false;
-    const chip = el("div", "svc " + (usable ? "ondemand" : "absent")
-                    + (busy && mode === "sfx" ? " working" : ""));
-    chip.appendChild(el("span", "dot"));
-    chip.appendChild(el("span", "nm", "effects"));
-    chip.appendChild(el("span", "st", usable ? STATE_LABEL.ondemand : "not installed"));
-    chip.title = usable
-      ? "Sound effects load and exit per request — about 1.5 GB for a few "
-        + "seconds, so nothing is kept warm and nothing else is unloaded."
-      : (fx.why || "Sound effects are not installed on this host.");
-    box.appendChild(chip);
-  }
+  extraChips().forEach((chip) => box.appendChild(chip));
 
   // The page heats while anything is generating, and cools when the last job
   // lands. renderForge already runs on every state change and is the only place
@@ -2482,18 +2524,51 @@ function renderSpriteMethods() {
          ? spec.default_method : names.find((n) => methods[n].available) || names[0]);
     sel.value = preferred;
   }
-  if (spec.max_frames) $("spFrames").max = spec.max_frames;
   const chosen = methods[sel.value] || {};
+  if (chosen.max_frames) $("spFrames").max = chosen.max_frames;
   // The frame count only means anything to the sheet method; editing takes one
   // pose per frame and a count would be a number with nothing to do.
   $("spSheetOpts").classList.toggle("hidden", sel.value === "edit");
   hint.textContent = (chosen.available ? "" : (chosen.why || "Not available here") + ". ")
     + (sel.value === "edit"
-       ? "One base sprite, then one edit per pose — about 35 seconds a frame, and "
-         + "it unloads whatever model is warm. Frames hold together as one character. "
+       ? "One base sprite, then one edit per pose. Frames hold together as one "
+         + "character, and it unloads whatever model is warm. Up to "
+         + (chosen.max_frames || "?") + " poses. "
        : "One generation cut into frames — about a minute for the whole set, but the "
-         + "character drifts between poses and sprites drawn touching get cut as one. ")
+         + "character drifts between poses and sprites drawn touching get cut as one. "
+         + "Up to " + (chosen.max_frames || "?") + " frames. ")
     + (chosen.licence || "");
+  estimateSprites();
+}
+
+/* Sixteen frames is ten minutes, and finding that out by waiting is the worst
+   way to learn it. The rate is served rather than written here, so it stays
+   true if the model or the step count changes. */
+function estimateSprites() {
+  const note = $("spEstimate");
+  const spec = (limits.sprites || {}).methods || {};
+  const chosen = spec[$("spMethod").value] || {};
+  const lines = $("spPoses").value.split("\n").map((p) => p.trim()).filter(Boolean);
+  const cap = chosen.max_frames || 0;
+  if (!chosen.seconds_per_frame || !lines.length) {
+    note.textContent = lines.length && cap && lines.length > cap
+      ? lines.length + " poses, and this method takes " + cap + "."
+      : "";
+    note.style.color = "";
+    return;
+  }
+  if (cap && lines.length > cap) {
+    note.textContent = lines.length + " poses, and this method takes " + cap + ".";
+    note.style.color = "var(--heat-2)";
+    return;
+  }
+  // Plus the base sprite, which is one ordinary image generation.
+  const secs = lines.length * chosen.seconds_per_frame + 45;
+  const mins = Math.round(secs / 60);
+  note.textContent = lines.length + " pose(s) — roughly "
+    + (secs < 90 ? Math.round(secs) + " seconds" : mins + " minutes")
+    + ", including the base sprite.";
+  note.style.color = "";
 }
 
 async function runSprites() {
@@ -4354,6 +4429,9 @@ function renderHeroStrip() {
       ? fmtMem(health[name].memory_mb) : st));
     box.appendChild(chip);
   });
+  // The front door says this strip is the truth about what is warm, so it has
+  // to carry the same models the studio strip does.
+  extraChips().forEach((chip) => box.appendChild(chip));
 }
 
 /* ------------------------------------------------------------- preferences
@@ -4576,6 +4654,10 @@ document.querySelectorAll("#mVocal button").forEach((b) => {
 });
 $("go").onclick = run;
 $("pAdopt").onchange = describeAdoption;
+// Without these, changing the method left the hint, the frame-count field and
+// the estimate showing the previous method's answer.
+$("spMethod").onchange = renderSpriteMethods;
+$("spPoses").addEventListener("input", estimateSprites);
 $("btnLibrary").onclick = () => setLibrary(!libView);
 $("varyCancel").onclick = clearVary;
 $("btnWrite").onclick = writeLyrics;

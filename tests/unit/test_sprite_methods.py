@@ -79,11 +79,13 @@ class TestValidation(unittest.TestCase):
                                     "poses": ["idle", "mid-swing"]}))
 
     def test_the_pose_cap_still_applies(self):
-        """Each pose is a full generation here rather than a share of one, so
-        the cap matters more, not less."""
+        """There is still a cap — each pose is a full generation, so sixteen of
+        them is about ten minutes. It is the edit method's own cap, not the
+        sheet's: the sheet limit exists because figures sharing one image get
+        too small, and nothing is shared here."""
         self.assertIsNotNone(self.bad({
             "prompt": "a knight", "method": "edit",
-            "poses": ["p"] * (supervisor.MAX_SPRITE_FRAMES + 1)}))
+            "poses": ["p"] * (supervisor.method_frame_cap("edit") + 1)}))
 
 
 class TestTheEditInstruction(unittest.TestCase):

@@ -38,9 +38,16 @@ EDIT_MODEL = os.environ.get("ANNEAL_EDIT_MODEL", "Runpod/FLUX.2-klein-4B-mflux-4
 EDIT_BASE = os.environ.get("ANNEAL_EDIT_BASE", "flux2-klein-4b")
 DEFAULT_STEPS = 4
 FRAME_SIZE = 512
-# One frame is about half a minute. Eight of them is four minutes of the machine
-# for one animation, which is where this stops being worth it.
-MAX_POSES = 8
+# Sixteen: four directions of four frames, which is the common case a sprite
+# sheet exists for. The sheet method caps at eight because more figures in one
+# image makes each too small to use — a real quality limit that does not apply
+# here, since every frame is its own 512x512 generation and the tenth is exactly
+# as good as the first. The only cost is linear time.
+MAX_POSES = 16
+# Measured across two sets on this machine: 33.3 s mean per frame at four steps,
+# 512x512. Served so the page can multiply rather than let someone find out by
+# waiting — sixteen frames is about ten minutes.
+SECONDS_PER_FRAME = 35
 
 GEN_PYTHON = os.path.join(paths.aimusic_root(), "gen-venv", "bin",
                           "mflux-generate-flux2-edit")
