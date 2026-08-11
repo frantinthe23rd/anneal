@@ -1194,6 +1194,28 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
           <textarea id="spPrompt" placeholder="a small orange fox in a blue scarf"></textarea>
 
           <div class="field">
+            <label class="f">How to describe it</label>
+            <div class="seg" id="spHow">
+              <button type="button" data-how="action" class="on">Describe the movement</button>
+              <button type="button" data-how="poses">Name each pose</button>
+            </div>
+          </div>
+
+          <div class="field" id="spActionBox">
+            <label class="f" for="spAction">The movement</label>
+            <textarea id="spAction" rows="3" placeholder="walking forward with the cape flowing behind"></textarea>
+            <div class="hint">Described once, then broken into one instruction per frame by the
+              text model — seconds, before any frame is made. What it decided comes back with the
+              result, so you can name the poses yourself next time if it read it wrong.</div>
+            <div class="field grid2" style="margin-top:10px">
+              <div>
+                <label class="f" for="spActionFrames">Frames</label>
+                <input type="number" id="spActionFrames" value="4" min="2" max="16">
+              </div>
+            </div>
+          </div>
+
+          <div class="field hidden" id="spPosesBox">
             <label class="f" for="spPoses">Poses <span style="text-transform:none;letter-spacing:0">(one per line)</span></label>
             <textarea id="spPoses" rows="6" style="min-height:132px" placeholder="standing still, facing the viewer&#10;mid stride, left leg forward, walking&#10;mid stride, right leg forward, walking&#10;both arms lifted high above the head"></textarea>
             <div class="hint"><b>Write them physically.</b> “Both arms lifted high above the head”
@@ -1469,6 +1491,12 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
             frames, three, and seven, because sprites drawn touching each other are cut as one
             and the character changes between poses. Capped at 8, because every pose shares one
             image and more of them makes each figure too small.</li>
+        <li><b>Describe the movement, or name each frame.</b> “Walking forward with the cape
+            flowing behind” is broken into one instruction per frame by the text model — seconds,
+            before any frame is made — and what it decided is shown with the result so you can
+            correct it by naming the poses yourself. Naming them is the precise way; describing
+            is the quick one, and it remembers secondary motion in every frame, which is the
+            part that is easy to forget by hand.</li>
         <li><b>How many frames.</b> Editing takes up to 16 — four directions of four — since
             each frame is its own generation and the tenth is as good as the first. The form
             says how long the poses you have named will take before you press anything.</li>
@@ -2278,6 +2306,15 @@ function renderResults() {
       // The loop answers "does this read as one character moving"; the strip
       // answers "which frame is wrong". Neither answers the other's question,
       // so a set shows both.
+      if (r.poses && r.poses.length) {
+        const det = el("div", "det open");
+        det.appendChild(el("dt", null, "what it broke the movement into"));
+        const ol = document.createElement("ol");
+        ol.style.cssText = "margin:6px 0 0;padding-left:20px;color:var(--muted);font-size:12.5px";
+        r.poses.forEach((p) => ol.appendChild(el("li", null, p)));
+        det.appendChild(ol);
+        item.appendChild(det);
+      }
       if (r.frames && r.frames.length) {
         const strip = el("div", "frames");
         r.frames.forEach((f, n) => {
@@ -2531,6 +2568,15 @@ function renderSpriteMethods() {
   // The frame count only means anything to the sheet method; editing takes one
   // pose per frame and a count would be a number with nothing to do.
   $("spSheetOpts").classList.toggle("hidden", sel.value === "edit");
+  // Breaking a movement into instructions is only meaningful when each frame is
+  // its own generation. A sheet draws them all at once from one prompt.
+  $("spHow").closest(".field").classList.toggle("hidden", sel.value !== "edit");
+  if (sel.value !== "edit") {
+    $("spActionBox").classList.add("hidden");
+    $("spPosesBox").classList.remove("hidden");
+  } else {
+    setSpriteHow(spriteHow);
+  }
   hint.textContent = (chosen.available ? "" : (chosen.why || "Not available here") + ". ")
     + (sel.value === "edit"
        ? "One base sprite, then one edit per pose. Frames hold together as one "
@@ -2550,7 +2596,9 @@ function estimateSprites() {
   const note = $("spEstimate");
   const spec = (limits.sprites || {}).methods || {};
   const chosen = spec[$("spMethod").value] || {};
-  const lines = $("spPoses").value.split("\n").map((p) => p.trim()).filter(Boolean);
+  const lines = spriteHow === "action"
+    ? new Array(Math.max(0, Number($("spActionFrames").value) || 0)).fill("x")
+    : $("spPoses").value.split("\n").map((p) => p.trim()).filter(Boolean);
   const cap = chosen.max_frames || 0;
   if (!chosen.seconds_per_frame || !lines.length) {
     note.textContent = lines.length && cap && lines.length > cap
@@ -2573,24 +2621,52 @@ function estimateSprites() {
   note.style.color = "";
 }
 
+/* Two ways to say the same thing, and the API takes either: name every frame,
+   or describe the movement once and let the text model break it down. Only one
+   is visible at a time — showing both invites filling in both, and the server
+   would then have to choose which one you meant. */
+let spriteHow = "action";
+
+function setSpriteHow(how) {
+  spriteHow = how;
+  document.querySelectorAll("#spHow button").forEach((b) =>
+    b.classList.toggle("on", b.dataset.how === how));
+  $("spActionBox").classList.toggle("hidden", how !== "action");
+  $("spPosesBox").classList.toggle("hidden", how !== "poses");
+  estimateSprites();
+}
+
 async function runSprites() {
   const prompt = $("spPrompt").value.trim();
   if (!prompt) { setStatus("Describe the character first.", "warn"); return; }
   const method = $("spMethod").value;
+  const describing = spriteHow === "action" && method === "edit";
+  const action = $("spAction").value.trim();
   const poses = $("spPoses").value.split("\n").map((p) => p.trim()).filter(Boolean);
-  if (method === "edit" && !poses.length) {
+  if (describing && !action) {
+    setStatus("Describe the movement first.", "warn"); return;
+  }
+  if (!describing && method === "edit" && !poses.length) {
     setStatus("Name at least one pose — each line is a frame.", "warn"); return;
   }
 
   const body = { prompt, method, style: $("spStyle").value.trim() || "flat pixel art" };
-  // The pose list *is* the frame count when there is one. Sending both is a
-  // contradiction the server resolves by ignoring one of them.
-  if (poses.length) body.poses = poses;
-  else body.frames = Number($("spFrames").value) || 4;
+  if (describing) {
+    body.action = action;
+    body.frames = Number($("spActionFrames").value) || 4;
+  } else if (poses.length) {
+    // The pose list *is* the frame count when there is one. Sending both is a
+    // contradiction the server resolves by ignoring one of them.
+    body.poses = poses;
+  } else {
+    body.frames = Number($("spFrames").value) || 4;
+  }
 
   const cold = coldWarning("image");
+  const willMake = describing ? body.frames : poses.length;
   setStatus(method === "edit"
-    ? "Making the base sprite, then editing " + poses.length + " pose(s)…"
+    ? (describing ? "Breaking the movement into " + willMake + " frames, then editing…"
+                  : "Making the base sprite, then editing " + willMake + " pose(s)…")
     : (cold || "Generating the sheet, then cutting it…"), cold ? "warn" : "", { bar: true });
 
   const d = (await api("/v1/sprites", { method: "POST", body })).data || {};
@@ -2609,6 +2685,9 @@ async function runSprites() {
   }
 
   const notes = [];
+  // The poses it chose are the thing to check when a described movement comes
+  // back wrong — without them the only feedback is the frames themselves.
+  const chosen = d.action && d.poses ? d.poses.filter(Boolean) : null;
   if (d.skipped && d.skipped.length) {
     notes.push(d.skipped.length + " pose(s) could not be made: "
                + d.skipped.map((x) => x.pose).join("; "));
@@ -2633,6 +2712,7 @@ async function runSprites() {
     meta: frames.length + " frame(s)" + (d.fps ? " · " + d.fps + " fps" : "")
           + " · " + body.style + " · " + method,
     shortfall: notes.length ? notes.join(" ") : null,
+    poses: chosen,
     sheetPath: d.sheet || d.base,
     sheetLabel: d.base ? "Base sprite" : "Sheet",
   });
@@ -4667,6 +4747,10 @@ $("pAdopt").onchange = describeAdoption;
 // the estimate showing the previous method's answer.
 $("spMethod").onchange = renderSpriteMethods;
 $("spPoses").addEventListener("input", estimateSprites);
+$("spActionFrames").addEventListener("input", estimateSprites);
+document.querySelectorAll("#spHow button").forEach((b) => {
+  b.onclick = () => setSpriteHow(b.dataset.how);
+});
 $("btnLibrary").onclick = () => setLibrary(!libView);
 $("varyCancel").onclick = clearVary;
 $("btnWrite").onclick = writeLyrics;
