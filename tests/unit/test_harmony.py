@@ -116,3 +116,38 @@ class TestTheEnvelope(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestControlTokensDoNotReachTheReader(unittest.TestCase):
+    """Qwen ends a turn with `<|im_end|>` and mlx_lm passes it through, so a
+    reply arrived as "Hi there! How can I assist you today?<|im_end|>" — the
+    stop token rendered as text. Measured against the running gateway.
+
+    Every model has one of these and they differ, so the fix is to strip the
+    control-token *shape* rather than a list of tokens that goes stale the next
+    time a model is added.
+    """
+
+    def test_a_trailing_stop_token_is_removed(self):
+        body = {"choices": [{"message": {"role": "assistant",
+                                         "content": "Hi there!<|im_end|>\n"}}]}
+        self.assertEqual(harmony.rewrite(body)["choices"][0]["message"]["content"],
+                         "Hi there!")
+
+    def test_tokens_in_the_middle_go_too(self):
+        body = {"choices": [{"message": {"content": "one<|im_end|>two"}}]}
+        self.assertEqual(harmony.rewrite(body)["choices"][0]["message"]["content"],
+                         "onetwo")
+
+    def test_ordinary_text_is_untouched(self):
+        for text in ("a < b and c > d", "if (x <| y) return", "<b>bold</b>",
+                     "shell pipe a | b"):
+            body = {"choices": [{"message": {"content": text}}]}
+            self.assertEqual(harmony.rewrite(body)["choices"][0]["message"]["content"],
+                             text)
+
+    def test_harmony_still_wins_where_it_applies(self):
+        body = {"choices": [{"message": {"content": ANALYSIS_ONLY}}]}
+        out = harmony.rewrite(body)["choices"][0]["message"]
+        self.assertEqual(out["content"], "Here is the answer.")
+        self.assertEqual(out["reasoning"], "Thinking about it.")
