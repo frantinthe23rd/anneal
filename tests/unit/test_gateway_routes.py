@@ -417,6 +417,140 @@ class TestOutputsEndpoint(GatewayCase):
         self.assertFalse(os.path.exists(path))
 
 
+class TestAgentRunEndpoints(GatewayCase):
+    """A run outlives the tab that started it (#67).
+
+    The loop runs on a worker thread and writes a durable record; the stream is
+    one view of that record and no longer the only one. These name the paths,
+    the payloads and the envelopes — nothing here starts a run, because every
+    case is answered before a model is needed.
+    """
+
+    def make(self, job, **fields):
+        rid = supervisor.AGENT_RUNS.create(job=job, prompt="make a page",
+                                           model="qwen-coder", max_steps=12)
+        self.addCleanup(supervisor.AGENT_RUNS.forget, rid)
+        if fields:
+            supervisor.AGENT_RUNS.update(rid, **fields)
+        return rid
+
+    def test_the_run_endpoints_refuse_an_anonymous_caller(self):
+        for method, path, payload in [("GET", "/v1/agent", None),
+                                      ("POST", "/v1/agent", {"prompt": "x"}),
+                                      ("POST", "/v1/agent/cancel", {"id": "x"})]:
+            status, _, body, _ = self.request(method, path, payload=payload)
+            self.assertEqual(status, 401, path)
+            self.assertEqual(body["error"], "unauthorized", path)
+
+    def test_a_run_without_a_prompt_is_refused(self):
+        status, _, body, _ = self.request("POST", "/v1/agent", key=KEY, payload={})
+        self.assertEqual(status, 400)
+        self.assertEqual(body["code"], 400)
+        self.assertIn("prompt", body["error"])
+
+    def test_a_second_run_against_the_same_folder_is_refused(self):
+        """Two loops writing into one directory is two models editing the same
+        files with no idea about each other."""
+        rid = self.make("busyfolder")
+        status, _, body, _ = self.request("POST", "/v1/agent", key=KEY,
+                                          payload={"prompt": "x", "job": "busyfolder"})
+        self.assertEqual(status, 409)
+        self.assertEqual(body["code"], 409)
+        self.assertIn("busyfolder", body["error"])
+        self.assertEqual(body["run_id"], rid)
+        self.assertEqual(body["poll"], "/v1/agent?id=" + rid)
+
+    def test_the_conflict_is_on_the_folder_not_the_string_asked_for(self):
+        """`agent_root` sanitises the job into a directory name, so two
+        different strings can mean one folder."""
+        job, _ = supervisor.agent_root("busy folder")
+        rid = self.make(job)
+        status, _, body, _ = self.request("POST", "/v1/agent", key=KEY,
+                                          payload={"prompt": "x", "job": "busy folder"})
+        self.assertEqual(status, 409, body)
+        self.assertEqual(body["run_id"], rid)
+
+    def test_a_finished_run_does_not_block_its_folder(self):
+        rid = self.make("freefolder")
+        supervisor.AGENT_RUNS.finish(rid, "done", reply="ok")
+        status, _, body, _ = self.request("POST", "/v1/agent", key=KEY,
+                                          payload={"prompt": "x", "job": "freefolder"})
+        self.assertNotEqual(status, 409, body)
+
+    def test_a_run_can_be_read_back_whole(self):
+        """What a page that was away renders: everything that happened."""
+        rid = self.make("readme")
+        supervisor.AGENT_RUNS.append_step(rid, {"step": 1, "tool": "write_file",
+                                                "args": {"path": "a.txt"}, "ok": True,
+                                                "result": "wrote a.txt (1 bytes)"})
+        supervisor.AGENT_RUNS.finish(rid, "done", reply="Made a.txt.", seconds=9.0,
+                                     files=[{"path": "a.txt", "bytes": 1}])
+        status, _, body, _ = self.get("/v1/agent?id=" + rid, key=KEY)
+        self.assertEqual(status, 200)
+        self.assertEqual(sorted(body), ["code", "data", "error"])
+        record = body["data"]
+        self.assertEqual(record["id"], rid)
+        self.assertEqual(record["job"], "readme")
+        self.assertEqual(record["state"], "done")
+        self.assertEqual(record["prompt"], "make a page")
+        self.assertEqual(record["model"], "qwen-coder")
+        self.assertEqual(record["steps"], 1)
+        self.assertEqual(record["trace"][0]["tool"], "write_file")
+        self.assertEqual(record["reply"], "Made a.txt.")
+        self.assertEqual(record["files"], [{"path": "a.txt", "bytes": 1}])
+
+    def test_an_unknown_run_is_404(self):
+        status, _, body, _ = self.get("/v1/agent?id=nosuchrun", key=KEY)
+        self.assertEqual(status, 404)
+        self.assertEqual(body["code"], 404)
+        self.assertTrue(body["error"])
+
+    def test_a_folder_can_be_asked_for_its_latest_run(self):
+        """A page that reconnects knows which folder it was working in; it may
+        not know the id, because the id was in the tab that went away."""
+        first = self.make("byjob")
+        supervisor.AGENT_RUNS.finish(first, "done")
+        second = self.make("byjob")
+        status, _, body, _ = self.get("/v1/agent?job=byjob", key=KEY)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["data"]["id"], second)
+        self.assertEqual(self.get("/v1/agent?job=nofolder", key=KEY)[0], 404)
+
+    def test_listing_runs_gives_the_recent_ones_newest_first(self):
+        older = self.make("list-a")
+        newer = self.make("list-b")
+        status, _, body, _ = self.get("/v1/agent", key=KEY)
+        self.assertEqual(status, 200)
+        ids = [r["id"] for r in body["data"]["runs"]]
+        self.assertIn(older, ids)
+        self.assertLess(ids.index(newer), ids.index(older))
+
+    def test_cancelling_needs_an_id_and_a_run(self):
+        status, _, body, _ = self.request("POST", "/v1/agent/cancel", key=KEY, payload={})
+        self.assertEqual(status, 400)
+        self.assertIn("id", body["error"])
+        status, _, body, _ = self.request("POST", "/v1/agent/cancel", key=KEY,
+                                          payload={"id": "nosuchrun"})
+        self.assertEqual(status, 404)
+
+    def test_cancelling_asks_the_run_to_stop(self):
+        """Blocking a second run against a folder means a wedged run holds it
+        until the wall-clock cap; there has to be a way out."""
+        rid = self.make("cancelme")
+        status, _, body, _ = self.request("POST", "/v1/agent/cancel", key=KEY,
+                                          payload={"id": rid})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["data"]["cancelled"], rid)
+        self.assertTrue(supervisor.AGENT_RUNS.cancelled(rid))
+
+    def test_a_run_that_already_settled_cannot_be_cancelled(self):
+        rid = self.make("settled")
+        supervisor.AGENT_RUNS.finish(rid, "done")
+        status, _, body, _ = self.request("POST", "/v1/agent/cancel", key=KEY,
+                                          payload={"id": rid})
+        self.assertEqual(status, 409, body)
+
+
 class TestProxyRefusal(GatewayCase):
     """A route no service owns must never reach start_service()."""
 

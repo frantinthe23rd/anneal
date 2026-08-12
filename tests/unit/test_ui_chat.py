@@ -346,3 +346,70 @@ class AgentComposerTest(unittest.TestCase):
         fn = self.src[self.src.index("async function runChat()"):]
         branch = fn[:fn.index("return runAgent(text);")]
         self.assertIn('$("cInput").value = ""', branch)
+
+
+class AgentRunSurvivesTheTabTest(unittest.TestCase):
+    """A run was only as durable as the tab (#67): the loop lived in the request
+    handler, the transcript kept whatever arrived before the drop, and nothing
+    said the work had carried on. The record is now the source of truth and the
+    page attaches to it — on a fresh load exactly as on the run it started.
+
+    Structural, like the rest of this file: there is no JavaScript runtime here.
+    The behaviour to check in a browser is in the commit — navigate away
+    mid-run, come back, and see the steps you missed."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open(UI, encoding="utf-8") as fh:
+            cls.src = fh.read()
+
+    def fn(self, name):
+        body = self.src[self.src.index(name):]
+        return body[:body.index("\n}")]
+
+    def test_the_run_id_is_stored_under_a_namespaced_key(self):
+        self.assertIn('const AGENT_RUN_KEY = "anneal.agentruns"', self.src)
+
+    def test_the_run_is_remembered_before_it_is_watched(self):
+        """A reload one second in must still find it, so the id is written the
+        moment the gateway hands it over — not when the run finishes."""
+        run = self.fn("async function runAgent(")
+        self.assertIn("rememberAgentRun(", run)
+        self.assertLess(run.index("rememberAgentRun("), run.index("watchAgentRun("))
+
+    def test_the_page_asks_for_the_run_rather_than_holding_a_stream(self):
+        """The stream is a convenience for API callers now. The page polls the
+        record, which is the same path a reconnecting page takes — so the way
+        back is exercised on every run rather than only after a drop."""
+        watch = self.fn("async function watchAgentRun(")
+        self.assertIn("/v1/agent?id=", watch)
+
+    def test_a_run_in_flight_is_picked_up_on_load(self):
+        boot = self.src[self.src.index("async function boot()"):]
+        self.assertIn("resumeAgentRun()", boot.split("\n}")[0])
+
+    def test_opening_a_conversation_picks_up_its_run(self):
+        """Each conversation has its own working folder, so each can have its
+        own run in flight."""
+        self.assertIn("resumeAgentRun()", self.fn("function openChat("))
+
+    def test_a_settled_run_is_rendered_and_then_forgotten(self):
+        """Otherwise every reload appends the same finished run again."""
+        watch = self.fn("async function watchAgentRun(")
+        self.assertIn("forgetAgentRun(", watch)
+
+    def test_a_busy_folder_attaches_to_the_run_that_holds_it(self):
+        """409 means someone is already working in that folder — which is a
+        thing to show, not an error to report."""
+        run = self.fn("async function runAgent(")
+        self.assertIn("409", run)
+        self.assertIn("run_id", run)
+
+    def test_stopping_stops_the_run_and_not_just_the_watching(self):
+        """The button said Stop and detached; the loop kept the folder for as
+        long as it liked."""
+        self.assertIn("/v1/agent/cancel", self.src)
+
+    def test_an_interrupted_run_is_shown_as_interrupted(self):
+        """A gateway restart leaves the record; it must not read as finished."""
+        self.assertIn("interrupted", self.fn("function agentRunLines("))

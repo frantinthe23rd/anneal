@@ -435,6 +435,34 @@ because a run is minutes and a body that arrives at the end tells you nothing
 while you wait. Measured on this machine: a three-step page took 27 s with
 `gemma`. Steps are capped, and so is wall-clock.
 
+**A run outlives the request that started it.** The loop is on a worker and
+writes a durable record as each step lands, so dropping the stream costs the
+stream. `start` carries a `run_id`; `GET /v1/agent?id=` returns the whole
+record — prompt, model, folder, state, every step and the summary — which is
+what a client that went away renders when it comes back. Send `stream: false`
+to skip the stream entirely and poll instead.
+
+```bash
+curl -s "$ANNEAL_URL/v1/agent?id=3f9c1a2b4d5e" -H "Authorization: Bearer $ANNEAL_KEY"
+```
+
+A client that knows the folder but not the id — a page that was reloaded — asks
+`GET /v1/agent?job=demo` for the folder's most recent run. `GET /v1/agent` with
+neither lists the recent ones.
+
+States are `running`, `done`, `failed`, `cancelled` and `interrupted`. A
+gateway restart takes the worker and leaves the record, so anything still
+running at startup is marked `interrupted` rather than left claiming to work;
+its files are in the folder, and there is no resume.
+
+**One run per folder.** A second run against a folder that already has one is
+refused with 409 naming the run that holds it, because two loops editing the
+same files have no idea about each other. `POST /v1/agent/cancel {"id": …}`
+stops the first: the loop looks before every tool call, so a batch of them in
+one turn stops partway rather than running to the end. It cannot interrupt a
+model call already in flight, so a run waiting on its first token stops when
+that token arrives.
+
 **Sound effects cost nothing else.** `POST /v1/sfx` returns a 44.1 kHz stereo
 WAV of whatever you describe.
 
@@ -1009,6 +1037,8 @@ back rather than thrown away.
 | GET | `/v1/artists` | **no** | Artists you have made records with, and their voices |
 | POST | `/v1/sfx` | **no model is evicted** | A sound effect, as a WAV |
 | POST | `/v1/agent` | text | The model with a working folder and the other tools |
+| GET | `/v1/agent?id=` | **no** | Poll a run, or list recent ones without `id` |
+| POST | `/v1/agent/cancel` | **no** | Stop a run; keeps what it already wrote |
 | POST | `/v1/press/cancel` | **no** | Stop a press deliberately; keeps finished tracks |
 | DELETE | `/v1/press?id=` | **no** | Remove a record; `&files=1` takes its audio too |
 | GET | `/v1/outputs` | **no** | The library, filterable by `kind` |

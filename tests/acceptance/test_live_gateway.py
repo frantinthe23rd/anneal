@@ -38,6 +38,9 @@ PROTECTED = [
     ("POST", "/v1/sprites"),
     ("POST", "/v1/press/resume"),
     ("POST", "/v1/press/cancel"),
+    ("GET", "/v1/agent"),
+    ("GET", "/v1/agent?id=nosuchrun"),
+    ("POST", "/v1/agent/cancel"),
     ("POST", "/v1/text"),
     ("POST", "/supervisor/start"),
     ("POST", "/supervisor/stop"),
@@ -381,6 +384,41 @@ class TestUI(LiveCase):
             self.assertEqual(status, 200, path)
             self.assertTrue(blob, path)
             self.assertNotEqual(headers["content-type"], "application/octet-stream", path)
+
+
+class TestAgentRuns(LiveCase):
+    """The durable record a client reads when it was not watching (#67).
+
+    Nothing here starts a run: a run would load the text model, which is what
+    this suite exists not to do. What it checks is the read side — the shape a
+    reconnecting page depends on, and that it is answered from sqlite without
+    waking anything.
+    """
+
+    def test_the_recent_runs_are_listed(self):
+        status, _, body, _ = self.authed("/v1/agent")
+        self.assertEnvelope(status, body, 200, "/v1/agent")
+        self.assertIsInstance(body["data"]["runs"], list)
+        for run in body["data"]["runs"]:
+            for key in ("id", "job", "state", "steps", "trace"):
+                self.assertIn(key, run)
+
+    def test_an_unknown_run_is_a_404_envelope(self):
+        status, _, body, _ = self.authed("/v1/agent?id=nosuchrun")
+        self.assertEnvelope(status, body, 404, "/v1/agent?id=")
+
+    def test_a_folder_nothing_has_run_in_is_a_404_envelope(self):
+        status, _, body, _ = self.authed("/v1/agent?job=no-such-folder-here")
+        self.assertEnvelope(status, body, 404, "/v1/agent?job=")
+
+    def test_stopping_a_run_that_does_not_exist_is_a_404_envelope(self):
+        status, _, body, _ = request("POST", "/v1/agent/cancel", key=self.key,
+                                     payload={"id": "nosuchrun"})
+        self.assertEnvelope(status, body, 404, "/v1/agent/cancel")
+
+    def test_a_run_without_a_prompt_is_refused_before_anything_loads(self):
+        status, _, body, _ = request("POST", "/v1/agent", key=self.key, payload={})
+        self.assertEnvelope(status, body, 400, "/v1/agent")
 
 
 class TestNothingWokeUp(LiveCase):

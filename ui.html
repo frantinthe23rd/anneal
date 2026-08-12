@@ -3976,6 +3976,10 @@ function loadChat() {
 
 /* Load one conversation into the live log. */
 function openChat(id, { render = true } = {}) {
+  // Let go of whatever was being watched: the message it paints into belongs
+  // to the conversation being left. The run itself carries on, and is picked
+  // up again by resumeAgentRun on the way back.
+  if (chatting && chatting.agentRun) chatting.abort();
   chatId = id || null;
   chatLog = [];
   if (chatId) {
@@ -3996,6 +4000,7 @@ function openChat(id, { render = true } = {}) {
     // out of its own way.
     if (window.matchMedia("(max-width: 760px)").matches) setChatAside(false, true);
     $("cInput").focus();
+    resumeAgentRun();
   }
 }
 
@@ -4044,8 +4049,12 @@ function shortWhen(ts) {
 function saveChat() {
   // Never persist the in-flight placeholder: on reload it would render as a
   // reply that is permanently "…".
+  // The file list travels with the message: it is what the run produced, and a
+  // reload used to drop it — leaving a transcript that described files with no
+  // way to open them.
   let keep = chatLog.filter((m) => !m.pending)
-                    .map((m) => ({ role: m.role, content: m.content, reasoning: m.reasoning }));
+                    .map((m) => ({ role: m.role, content: m.content, reasoning: m.reasoning,
+                                   agentJob: m.agentJob, agentFiles: m.agentFiles }));
   if (keep.length > CHAT_MAX_MESSAGES) keep = keep.slice(-CHAT_MAX_MESSAGES);
   let body = JSON.stringify(keep);
   // Shed reasoning first — bulky, and nobody reloads a page to re-read it.
@@ -4495,77 +4504,191 @@ function splitHarmony(text) {
   return { content: finals.join("\n").trim(), reasoning: analysis.join("\n").trim() };
 }
 
-/* Agent mode. The same composer, a different endpoint: instead of a reply it
-   streams the tool calls as they happen, because a run is minutes and a result
-   that arrives at the end tells you nothing while you wait.
+/* Agent mode. The same composer, a different endpoint — and a run that is not
+   the connection that asked for it.
 
-   Each conversation gets its own working folder, named by its id, so asking
-   for another change continues where the last one left off rather than
-   starting a fresh directory. */
+   It used to be: the gateway ran the loop inside the request handler and
+   streamed it, so a run was exactly as durable as the tab. Navigating away,
+   closing it or losing the tailnet dropped the stream; the loop carried on
+   server-side with nothing able to re-attach, and the steps and the summary
+   were lost even though the files landed in the folder (#67).
+
+   So the page asks for a run, is given an id, and watches the record. Watching
+   from the start and re-attaching after a week are the same call, which is the
+   only way to be sure the way back works — it is the way there as well.
+
+   Each conversation gets its own working folder, named by its id, so asking for
+   another change continues where the last one left off. One run per folder: a
+   second against a folder that already has one attaches to it rather than
+   starting a rival. */
+const AGENT_RUN_KEY = "anneal.agentruns";
+const AGENT_POLL_MS = 1000;
+
+function agentRuns() {
+  try { return JSON.parse(localStorage.getItem(AGENT_RUN_KEY) || "{}") || {}; }
+  catch (_) { return {}; }
+}
+
+function rememberAgentRun(chat, runId) {
+  const all = agentRuns();
+  all[chat] = runId;
+  try { localStorage.setItem(AGENT_RUN_KEY, JSON.stringify(all)); } catch (_) {}
+}
+
+function forgetAgentRun(chat) {
+  const all = agentRuns();
+  delete all[chat];
+  try { localStorage.setItem(AGENT_RUN_KEY, JSON.stringify(all)); } catch (_) {}
+}
+
+/* The record as a transcript: a line per tool call, then whatever it said.
+   Built from the record rather than accumulated as events arrive, so a page
+   that saw none of them renders exactly what a page that saw them all does. */
+function agentRunLines(run) {
+  const steps = (run.trace || []).map((s) => (s.ok ? "\u2713 " : "\u2717 ") + s.tool
+    + (s.args && s.args.path ? "  " + s.args.path : "")
+    + (s.ok ? "" : " \u2014 " + (s.result || "").split("\n")[0]));
+  const parts = steps.length ? [steps.join("\n")] : [];
+  if (run.state !== "running" && run.reply) parts.push(run.reply);
+  if (run.state === "interrupted") {
+    parts.push("*(interrupted — the gateway restarted while this was running. "
+             + "What it had written is still in " + run.job + ".)*");
+  } else if (run.state === "cancelled") {
+    parts.push("*(stopped)*");
+  } else if (run.state === "failed") {
+    parts.push("Failed: " + (run.error || "the run did not finish"));
+  } else if (run.stopped) {
+    parts.push("*(stopped: " + run.stopped + ")*");
+  }
+  return parts.join("\n\n");
+}
+
+/* Watch one run to the end. `reply` is the transcript message it paints into,
+   which this tab may have created a second ago or a day ago. */
+async function watchAgentRun(runId, reply, owner, controller) {
+  controller = controller || new AbortController();
+  controller.agentRun = runId;
+  chatting = controller;
+  reply.agentRun = runId;
+  reply.pending = true;
+  $("cSend").textContent = "Stop";
+  $("go").textContent = "Stop";
+  renderForge();
+
+  let settled = false;
+  try {
+    for (;;) {
+      const res = await fetch("/v1/agent?id=" + encodeURIComponent(runId),
+        { signal: controller.signal,
+          headers: apiKey ? { Authorization: "Bearer " + apiKey } : {} });
+      if (!res.ok) throw await httpError(res);
+      const run = ((await res.json()) || {}).data || {};
+      reply.content = agentRunLines(run);
+      reply.agentJob = run.job;
+      reply.model = run.model || reply.model;
+      if (run.state !== "running") {
+        reply.agentFiles = run.files || [];
+        settled = true;
+        break;
+      }
+      scheduleChatRender();
+      await new Promise((done) => setTimeout(done, AGENT_POLL_MS));
+    }
+  } catch (err) {
+    // Aborting is how switching conversation lets go of a run; the run keeps
+    // going and is picked up again on the way back, so it is not a failure.
+    if (err.name !== "AbortError") {
+      reply.content += "\n\nLost sight of this run: " + err.message
+                     + "\n\n*(it may still be working — reload to pick it up)*";
+      // A run that has been deleted or pruned is never coming back.
+      if (err.status === 404) { settled = true; }
+    }
+  } finally {
+    if (chatting === controller) {
+      chatting = null;
+      $("cSend").textContent = "Send";
+      $("go").textContent = mode === "chat" ? "Send" : "Forge";
+    }
+    if (settled) forgetAgentRun(owner);
+    reply.pending = false;
+    saveChat();
+    renderChat();
+    renderForge();
+  }
+}
+
+/* Stop for real. The button said Stop and only stopped the watching, which was
+   harmless when a run held nothing — it holds its folder now. */
+async function cancelAgentRun(runId) {
+  try { await api("/v1/agent/cancel", { method: "POST", body: { id: runId } }); }
+  catch (_) { /* already settled, or gone: there is nothing left to stop */ }
+}
+
+/* A run in flight against this conversation, picked up on load. The records
+   list already does this for a press; there was no equivalent for a run. */
+async function resumeAgentRun() {
+  if (!chatId || chatting) return;
+  const runId = agentRuns()[chatId];
+  if (!runId) return;
+  let run;
+  try {
+    run = ((await api("/v1/agent?id=" + encodeURIComponent(runId))) || {}).data;
+  } catch (err) {
+    if (err.status === 404) forgetAgentRun(chatId);   // pruned, or another machine's
+    return;
+  }
+  if (!run) return;
+  const reply = { role: "assistant", content: agentRunLines(run), reasoning: "", raw: "",
+                  model: run.model, agentRun: runId, agentJob: run.job,
+                  agentFiles: run.state === "running" ? [] : (run.files || []),
+                  pending: run.state === "running" };
+  chatLog.push(reply);
+  renderChat();
+  if (run.state === "running") { await watchAgentRun(runId, reply, chatId); }
+  else { forgetAgentRun(chatId); saveChat(); renderChat(); }
+}
+
 async function runAgent(text) {
   const reply = { role: "assistant", content: "", reasoning: "", raw: "",
-                  steps: [], model: $("cModel").value || whoAnswers(),
+                  model: $("cModel").value || whoAnswers(),
                   note: noteModelSwitch(), pending: true };
   chatLog.push(reply);
   renderChat();
 
   if (!chatId) chatId = newChatId();
+  const owner = chatId;
   const controller = new AbortController();
   chatting = controller;
   $("cSend").textContent = "Stop";
   $("go").textContent = "Stop";
 
-  const line = (s) => (s.ok ? "✓ " : "✗ ") + s.tool
-    + (s.args && s.args.path ? "  " + s.args.path : "")
-    + (s.ok ? "" : " — " + (s.result || "").split("\n")[0]);
-
+  let runId = null;
   try {
-    const res = await fetch("/v1/agent", {
-      method: "POST", signal: controller.signal,
-      headers: Object.assign({ "Content-Type": "application/json" },
-                             apiKey ? { Authorization: "Bearer " + apiKey } : {}),
-      body: JSON.stringify({ prompt: text, job: chatId,
-                             model: $("cModel").value || undefined }),
-    });
-    if (!res.ok) throw await httpError(res);
-    const reader = res.body.getReader(), dec = new TextDecoder();
-    let buf = "";
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      const lines = buf.split("\n");
-      buf = lines.pop();
-      for (const l of lines) {
-        if (!l.startsWith("data: ")) continue;
-        let e; try { e = JSON.parse(l.slice(6)); } catch (_) { continue; }
-        if (e.type === "step") {
-          reply.steps.push(line(e));
-          reply.content = reply.steps.join("\n");
-        } else if (e.type === "done") {
-          const note = e.stopped ? "\n\n*(stopped: " + e.stopped + ")*" : "";
-          reply.content = (reply.steps.length ? reply.steps.join("\n") + "\n\n" : "")
-            + (e.reply || "") + note;
-          reply.agentFiles = e.files || [];
-          reply.agentJob = e.job;
-        } else if (e.type === "error") {
-          reply.content += "\n\nFailed: " + e.error;
-        }
-        scheduleChatRender();
-      }
-    }
+    const started = await api("/v1/agent", { method: "POST", body: {
+      prompt: text, job: owner, stream: false,
+      model: $("cModel").value || undefined } });
+    runId = (started.data || {}).run_id;
   } catch (err) {
-    reply.content += err.name === "AbortError" ? "\n\n*(stopped)*"
-                                               : "\n\nFailed: " + err.message;
-  } finally {
-    reply.pending = false;
-    chatting = null;
-    $("cSend").textContent = "Send";
-    $("go").textContent = mode === "chat" ? "Send" : "Forge";
-    saveChat();
-    renderChat();
-    renderForge();
+    // 409 means a run is already working in this folder — which is something
+    // to show, not an error to report. Attach to it.
+    if (err.status === 409 && err.payload && err.payload.run_id) {
+      runId = err.payload.run_id;
+    } else {
+      reply.content += (reply.content ? "\n\n" : "") + "Failed: " + err.message;
+      reply.pending = false;
+      chatting = null;
+      $("cSend").textContent = "Send";
+      $("go").textContent = mode === "chat" ? "Send" : "Forge";
+      saveChat();
+      renderChat();
+      renderForge();
+      return;
+    }
   }
+  // Written down before the first poll: a reload one second in must still find
+  // the run, and the run is already going.
+  rememberAgentRun(owner, runId);
+  await watchAgentRun(runId, reply, owner, controller);
 }
 
 /* The short name of whichever text model is loaded, for the transcript. Falls
@@ -4609,7 +4732,17 @@ async function openAgentFile(job, path, asPage) {
 }
 
 async function runChat() {
-  if (chatting) { chatting.abort(); return; }
+  if (chatting) {
+    // An agent run is not this connection: aborting the watch would leave it
+    // working, and holding its folder against the next one.
+    if (chatting.agentRun) {
+      $("cSend").textContent = "Stopping\u2026";
+      cancelAgentRun(chatting.agentRun);
+      return;
+    }
+    chatting.abort();
+    return;
+  }
   const text = $("cInput").value.trim();
   // The status panel belongs to the studio column, which chat replaces — so an
   // empty message just puts the cursor back rather than warning into thin air.
@@ -5551,6 +5684,7 @@ async function boot() {
   $("hostname").textContent = location.host;
   fillOrigin();
   loadChat();
+  resumeAgentRun();
   restoreChatAside();
   fillVoices(VOICES, DEFAULT_VOICE);
   loadTiers();

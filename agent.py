@@ -22,7 +22,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
+import threading
 import time
+import uuid
 
 MAX_STEPS = 12
 # A wall-clock stop as well as a step count: one generate_music call can take
@@ -31,6 +34,19 @@ MAX_SECONDS = 1800
 MAX_READ_BYTES = 200 * 1024
 MAX_WRITE_BYTES = 2 * 1024 * 1024
 MAX_LISTING = 200
+
+# What one trace row keeps once it is written down. The live result is already
+# cut at 4000 characters for the model; the stored copy is smaller again,
+# because the record is read whole on every poll and a twelve-step run whose
+# results are file contents is not small. `args` is cut too: a write_file call
+# carries the entire file in `args.content`, which would put a second copy of
+# everything the run made into the row.
+TRACE_RESULT_CHARS = 1200
+TRACE_ARG_CHARS = 300
+
+# The one non-terminal state. A run is a single loop with no stages to be in.
+RUNNING = "running"
+TERMINAL_STATES = ("done", "failed", "cancelled", "interrupted")
 
 
 def safe_path(root, rel):
@@ -177,11 +193,16 @@ def run_tool(name, args, root, media=None):
 
 
 def run(prompt, root, chat, max_steps=MAX_STEPS, max_seconds=MAX_SECONDS,
-        media=None, on_step=None, system=None):
+        media=None, on_step=None, system=None, should_stop=None):
     """Drive the model until it stops calling tools, or a cap is reached.
 
     `chat(messages, tools)` is injected rather than imported: the loop is the
     part worth testing on its own, and it should not need a model to test.
+
+    `should_stop()` is asked before every tool call, and between turns. Not
+    during a model call: one already in flight is not interruptible from here,
+    so cancelling a run waiting on its first token takes until that token
+    arrives. A tool call already running finishes too.
     """
     messages = [{"role": "system", "content": system or SYSTEM},
                 {"role": "user", "content": prompt}]
@@ -190,6 +211,9 @@ def run(prompt, root, chat, max_steps=MAX_STEPS, max_seconds=MAX_SECONDS,
     nudged = False
 
     while True:
+        if should_stop and should_stop():
+            stopped = "cancelled"
+            break
         turn = chat(messages, TOOLS) or {}
         calls = turn.get("tool_calls") or []
         reply = (turn.get("content") or "").strip()
@@ -209,6 +233,14 @@ def run(prompt, root, chat, max_steps=MAX_STEPS, max_seconds=MAX_SECONDS,
         messages.append({"role": "assistant", "content": turn.get("content") or "",
                          "tool_calls": calls})
         for call in calls:
+            # Asked before each call, not only between turns. A model can emit
+            # a whole batch in one turn — measured here: cancelled at 4s with
+            # nothing done yet, and the run went on to take 19 steps, 9 of them
+            # write_file, after being asked to stop. Between turns is not
+            # between steps when a turn carries nineteen of them.
+            if should_stop and should_stop():
+                stopped = "cancelled"
+                break
             fn = (call.get("function") or {})
             name = fn.get("name") or ""
             # Bound before the try: a call whose arguments will not parse still
@@ -234,6 +266,9 @@ def run(prompt, root, chat, max_steps=MAX_STEPS, max_seconds=MAX_SECONDS,
             messages.append({"role": "tool", "tool_call_id": call.get("id") or "",
                              "name": name, "content": _text(result)})
 
+        if stopped or (should_stop and should_stop()):
+            stopped = "cancelled"
+            break
         if steps >= max_steps:
             stopped = "step cap of %d reached" % max_steps
             break
@@ -263,6 +298,197 @@ network, or touch anything outside it — do not claim you have.
 
 When the task is finished, reply with a short plain-English summary of what you
 made. No tool call in that reply is how the work ends."""
+
+
+# ------------------------------------------------------------- the record
+#
+# A run used to live entirely in the request handler: the loop ran there and
+# streamed as it went, so it was exactly as durable as the tab. Closing it left
+# the loop running with nothing able to re-attach — the files landed in the
+# folder and the steps and the summary were gone (#67).
+#
+# The shape is Press's, deliberately: sqlite, one row per run, updated as each
+# step completes, terminal states and an `interrupted` sweep at startup. Press
+# solved this problem already and a second design would be a second thing to
+# keep working.
+
+RUN_SCHEMA = """
+CREATE TABLE IF NOT EXISTS runs (
+    id         TEXT PRIMARY KEY,
+    job        TEXT NOT NULL,      -- the working folder, as agent_root named it
+    prompt     TEXT NOT NULL,
+    model      TEXT NOT NULL,
+    state      TEXT NOT NULL,      -- running | done | failed | cancelled | interrupted
+    stage      TEXT,               -- what it is doing, for a page that just arrived
+    steps      INTEGER NOT NULL DEFAULT 0,
+    max_steps  INTEGER NOT NULL,
+    trace      TEXT NOT NULL DEFAULT '[]',
+    reply      TEXT,
+    stopped    TEXT,
+    files      TEXT,
+    error      TEXT,
+    seconds    REAL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS runs_job ON runs(job);
+CREATE INDEX IF NOT EXISTS runs_state ON runs(state);
+"""
+
+RUN_RETENTION_SECONDS = 14 * 24 * 3600
+
+
+def trimmed_step(entry):
+    """One trace row, small enough to store and to re-read on every poll."""
+    args = {}
+    for key, value in (entry.get("args") or {}).items():
+        args[key] = _text(value, TRACE_ARG_CHARS) if isinstance(value, str) else value
+    return {"step": entry.get("step"), "tool": entry.get("tool"), "args": args,
+            "ok": bool(entry.get("ok")),
+            "result": _text(entry.get("result") or "", TRACE_RESULT_CHARS)}
+
+
+class RunStore:
+    """Every agent run, durable, readable by anything that has the id."""
+
+    def __init__(self, path):
+        self._lock = threading.RLock()
+        self._conn = sqlite3.connect(path, check_same_thread=False)
+        self._conn.executescript(RUN_SCHEMA)
+        self._conn.commit()
+        # Cancellation is in memory on purpose: it asks a worker in this
+        # process to stop, and a restart takes the worker with it — after which
+        # the run is `interrupted`, not still waiting to be cancelled.
+        self._cancelled = set()
+
+    def _exec(self, sql, args=(), fetch=False):
+        with self._lock:
+            cur = self._conn.execute(sql, args)
+            rows = cur.fetchall() if fetch else None
+            self._conn.commit()
+            return rows
+
+    # -- writing ----------------------------------------------------------
+    def create(self, job, prompt, model, max_steps):
+        rid = uuid.uuid4().hex[:12]
+        now = time.time()
+        self._exec(
+            "INSERT INTO runs (id, job, prompt, model, state, stage, steps, max_steps,"
+            " trace, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'starting', 0, ?, '[]', ?, ?)",
+            (rid, job, prompt, model, RUNNING, int(max_steps), now, now))
+        return rid
+
+    def update(self, rid, **fields):
+        if not fields:
+            return
+        fields["updated_at"] = time.time()
+        cols = ", ".join("%s = ?" % k for k in fields)
+        self._exec("UPDATE runs SET %s WHERE id = ?" % cols,
+                   tuple(fields.values()) + (rid,))
+
+    def append_step(self, rid, entry):
+        """Record one tool call. Read-modify-write, so it holds the lock.
+
+        The trace is a JSON column rather than a table of its own: it is read
+        whole every time and never queried across runs, and a dozen rows per
+        run does not justify the join.
+        """
+        with self._lock:
+            record = self.get(rid)
+            if not record:
+                return
+            trace = record["trace"] + [trimmed_step(entry)]
+            self.update(rid, trace=json.dumps(trace), steps=len(trace),
+                        stage="step %d: %s" % (len(trace), entry.get("tool") or "?"))
+
+    def finish(self, rid, state, reply=None, stopped=None, seconds=None,
+               files=None, error=None):
+        self.update(rid, state=state, stage=stopped or error or state,
+                    reply=reply, stopped=stopped, seconds=seconds,
+                    files=json.dumps(files or []), error=error)
+        self._cancelled.discard(rid)
+
+    def forget(self, rid):
+        self._exec("DELETE FROM runs WHERE id = ?", (rid,))
+        self._cancelled.discard(rid)
+
+    # -- cancelling -------------------------------------------------------
+    def cancel(self, rid):
+        """Ask a run to stop. False if there is nothing to stop.
+
+        Needed because a folder now holds at most one run: without this a
+        wedged run keeps its folder until the wall-clock cap half an hour away.
+        """
+        record = self.get(rid)
+        if not record or record["state"] != RUNNING:
+            return False
+        self._cancelled.add(rid)
+        self.update(rid, stage="stopping")
+        return True
+
+    def cancelled(self, rid):
+        return rid in self._cancelled
+
+    # -- reading ----------------------------------------------------------
+    COLUMNS = ("id, job, prompt, model, state, stage, steps, max_steps, trace,"
+               " reply, stopped, files, error, seconds, created_at, updated_at")
+
+    def get(self, rid):
+        rows = self._exec("SELECT %s FROM runs WHERE id = ?" % self.COLUMNS,
+                          (rid,), fetch=True)
+        return self._row(rows[0]) if rows else None
+
+    def recent(self, limit=25):
+        rows = self._exec("SELECT %s FROM runs ORDER BY created_at DESC LIMIT ?"
+                          % self.COLUMNS, (limit,), fetch=True) or []
+        return [self._row(r) for r in rows]
+
+    def latest_for(self, job):
+        rows = self._exec("SELECT %s FROM runs WHERE job = ? ORDER BY created_at DESC"
+                          " LIMIT 1" % self.COLUMNS, (job,), fetch=True)
+        return self._row(rows[0]) if rows else None
+
+    def active_for(self, job):
+        """The id of the run working in this folder, or None.
+
+        Two loops writing into one directory is two models editing the same
+        files with no idea about each other.
+        """
+        rows = self._exec("SELECT id FROM runs WHERE job = ? AND state = ?"
+                          " ORDER BY created_at DESC LIMIT 1", (job, RUNNING), fetch=True)
+        return rows[0][0] if rows else None
+
+    @staticmethod
+    def _row(r):
+        def j(value, default):
+            try:
+                return json.loads(value) if value else default
+            except ValueError:
+                return default
+        return {"id": r[0], "job": r[1], "prompt": r[2], "model": r[3],
+                "state": r[4], "stage": r[5], "steps": r[6], "max_steps": r[7],
+                "trace": j(r[8], []), "reply": r[9], "stopped": r[10],
+                "files": j(r[11], []), "error": r[12], "seconds": r[13],
+                "created": r[14], "updated": r[15]}
+
+    # -- reconciling ------------------------------------------------------
+    def sweep_interrupted(self):
+        """Mark runs whose worker died as interrupted.
+
+        A run lives in sqlite and runs in a thread. A restart keeps the record
+        and loses the worker, leaving a row that claims to be working with
+        nothing behind it — the same failure Press had, and the same fix.
+        """
+        stuck = [r for r in self.recent(200) if r["state"] == RUNNING]
+        for record in stuck:
+            self.update(record["id"], state="interrupted",
+                        stage="interrupted by a restart after %d step(s)" % record["steps"])
+        return len(stuck)
+
+    def prune(self, older_than_seconds=RUN_RETENTION_SECONDS):
+        """Drop settled runs past the cutoff. A running one is never touched."""
+        self._exec("DELETE FROM runs WHERE state != ? AND updated_at < ?",
+                   (RUNNING, time.time() - older_than_seconds))
 
 
 # ---------------------------------------------------------------- previewing
