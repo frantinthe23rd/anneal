@@ -19,6 +19,7 @@ import json
 import os
 import threading
 import unittest
+from unittest import mock
 from http.server import ThreadingHTTPServer
 
 from tests import context
@@ -476,6 +477,77 @@ class TestAgentRunEndpoints(GatewayCase):
         status, _, body, _ = self.request("POST", "/v1/agent", key=KEY,
                                           payload={"prompt": "x", "job": "freefolder"})
         self.assertNotEqual(status, 409, body)
+
+    def quiet(self):
+        """Answer a POST without resolving a model or running a loop.
+
+        The gateway would otherwise try to load one, and these are about the
+        payload and the envelope rather than about generation.
+        """
+        started = []
+        model = mock.patch.object(supervisor, "resolve_text_model",
+                                  lambda name=None: "qwen-coder")
+        worker = mock.patch.object(supervisor, "agent_worker",
+                                   lambda *a, **k: started.append(a))
+        ready = mock.patch.object(supervisor, "text_model_problem", lambda name: None)
+        model.start(); worker.start(); ready.start()
+        self.addCleanup(model.stop); self.addCleanup(worker.stop)
+        self.addCleanup(ready.stop)
+        return started
+
+    def start_run(self, **payload):
+        payload.setdefault("stream", False)
+        status, _, body, _ = self.request("POST", "/v1/agent", key=KEY, payload=payload)
+        if status == 200:
+            self.addCleanup(supervisor.AGENT_RUNS.forget, body["data"]["run_id"])
+        return status, body
+
+    def test_a_follow_up_carries_the_earlier_runs_in_its_folder(self):
+        """#70: every turn used to start from nothing, so "now wire the image
+        in" arrived with no idea what the image was. The count is in the
+        opening payload because it is the part of the seeding a caller can
+        actually see."""
+        self.quiet()
+        first = self.make("carryover")
+        supervisor.AGENT_RUNS.finish(first, "done", reply="I made index.html")
+        status, body = self.start_run(prompt="now wire the image in", job="carryover")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["data"]["history"], 1)
+
+    def test_the_run_it_starts_is_given_those_turns(self):
+        """The count in the response is a claim; this is the worker's argument."""
+        started = self.quiet()
+        first = self.make("handover")
+        supervisor.AGENT_RUNS.finish(first, "done", reply="I made index.html")
+        status, body = self.start_run(prompt="now wire the image in", job="handover")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(len(started), 1)
+        turns = started[0][-1]
+        self.assertEqual([t["role"] for t in turns], ["user", "assistant"])
+        self.assertIn("index.html", turns[1]["content"])
+
+    def test_a_first_run_in_a_fresh_folder_has_no_history(self):
+        self.quiet()
+        status, body = self.start_run(prompt="make a page", job="nohistory")
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["data"]["history"], 0)
+
+    def test_history_can_be_turned_off(self):
+        """A folder gets reused for an unrelated task often enough to need it."""
+        self.quiet()
+        first = self.make("optout")
+        supervisor.AGENT_RUNS.finish(first, "done", reply="I made index.html")
+        status, body = self.start_run(prompt="start again", job="optout", history=False)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["data"]["history"], 0)
+
+    def test_history_has_to_be_a_boolean(self):
+        """Checked before the model is resolved: a payload this caller can fix
+        should not come back as a 503 about a download."""
+        status, body = self.start_run(prompt="x", job="badhistory", history="yes")
+        self.assertEqual(status, 400, body)
+        self.assertEqual(body["code"], 400)
+        self.assertIn("history", body["error"])
 
     def test_a_run_can_be_read_back_whole(self):
         """What a page that was away renders: everything that happened."""
