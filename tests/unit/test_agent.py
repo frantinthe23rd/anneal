@@ -446,6 +446,40 @@ class TestTheLoopCanBeStopped(SandboxCase):
         self.assertEqual(out["stopped"], "cancelled")
         self.assertLessEqual(out["steps"], 2)
 
+    def test_it_stops_partway_through_a_batch_of_tool_calls(self):
+        """A cancel must not wait for the rest of the turn.
+
+        Measured against the running gateway before this was checked inside the
+        batch: cancelled at 4s with nothing done, and the run still took 19
+        steps — writing nine files after being asked to stop — because a turn
+        carrying nineteen tool calls was one indivisible unit.
+        """
+        stop = {"now": False}
+        turns = []
+
+        def chat(messages, tools):
+            turns.append(1)
+            return {"content": "", "tool_calls": [
+                {"id": "c%d" % i, "type": "function",
+                 "function": {"name": "write_file",
+                              "arguments": json.dumps({"path": "p%d.txt" % i,
+                                                       "content": "x"})}}
+                for i in range(10)]}
+
+        def should_stop():
+            # Asked once per call: let the first land, then cancel.
+            if stop["now"]:
+                return True
+            stop["now"] = len(os.listdir(self.root)) >= 1
+            return False
+
+        out = agent.run("go", self.root, chat, should_stop=should_stop)
+        self.assertEqual(out["stopped"], "cancelled")
+        # The whole batch was ten. Stopping inside it is the point.
+        self.assertLess(out["steps"], 10)
+        self.assertEqual(len(turns), 1)
+        self.assertLess(len(os.listdir(self.root)), 10)
+
     def test_a_run_nobody_cancelled_is_unaffected(self):
         out = agent.run("go", self.root, lambda m, t: {"content": "hi", "tool_calls": None},
                         should_stop=lambda: False)

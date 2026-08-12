@@ -199,9 +199,10 @@ def run(prompt, root, chat, max_steps=MAX_STEPS, max_seconds=MAX_SECONDS,
     `chat(messages, tools)` is injected rather than imported: the loop is the
     part worth testing on its own, and it should not need a model to test.
 
-    `should_stop()` is asked between steps. Only between: a model call already
-    in flight is not interruptible from here, so cancelling a run that is
-    waiting on the first token takes until that token arrives.
+    `should_stop()` is asked before every tool call, and between turns. Not
+    during a model call: one already in flight is not interruptible from here,
+    so cancelling a run waiting on its first token takes until that token
+    arrives. A tool call already running finishes too.
     """
     messages = [{"role": "system", "content": system or SYSTEM},
                 {"role": "user", "content": prompt}]
@@ -232,6 +233,14 @@ def run(prompt, root, chat, max_steps=MAX_STEPS, max_seconds=MAX_SECONDS,
         messages.append({"role": "assistant", "content": turn.get("content") or "",
                          "tool_calls": calls})
         for call in calls:
+            # Asked before each call, not only between turns. A model can emit
+            # a whole batch in one turn — measured here: cancelled at 4s with
+            # nothing done yet, and the run went on to take 19 steps, 9 of them
+            # write_file, after being asked to stop. Between turns is not
+            # between steps when a turn carries nineteen of them.
+            if should_stop and should_stop():
+                stopped = "cancelled"
+                break
             fn = (call.get("function") or {})
             name = fn.get("name") or ""
             # Bound before the try: a call whose arguments will not parse still
@@ -257,7 +266,7 @@ def run(prompt, root, chat, max_steps=MAX_STEPS, max_seconds=MAX_SECONDS,
             messages.append({"role": "tool", "tool_call_id": call.get("id") or "",
                              "name": name, "content": _text(result)})
 
-        if should_stop and should_stop():
+        if stopped or (should_stop and should_stop()):
             stopped = "cancelled"
             break
         if steps >= max_steps:

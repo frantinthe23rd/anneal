@@ -1780,7 +1780,7 @@
           "agent"
         ],
         "summary": "Stop an agent run",
-        "description": "Asks a run to stop. The loop looks between steps, so a run waiting on the model's first token stops when that token arrives; the record settles as `cancelled` once the worker notices, and the files already written stay in the folder.\n\nA folder holds at most one run, so this is also how a wedged run is got out of the way without waiting for the thirty-minute wall-clock cap.",
+        "description": "Asks a run to stop. The loop looks before every tool call, so a turn carrying a batch of them stops partway rather than running to the end; it cannot interrupt a model call already in flight, so a run waiting on its first token stops when that token arrives. The record settles as `cancelled` once the worker notices, and the files already written stay in the folder.\n\nA folder holds at most one run, so this is also how a wedged run is got out of the way without waiting for the thirty-minute wall-clock cap.",
         "requestBody": {
           "required": true,
           "content": {

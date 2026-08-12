@@ -458,8 +458,10 @@ its files are in the folder, and there is no resume.
 **One run per folder.** A second run against a folder that already has one is
 refused with 409 naming the run that holds it, because two loops editing the
 same files have no idea about each other. `POST /v1/agent/cancel {"id": …}`
-stops the first: the loop looks between steps, so a run waiting on the model's
-first token stops when that token arrives.
+stops the first: the loop looks before every tool call, so a batch of them in
+one turn stops partway rather than running to the end. It cannot interrupt a
+model call already in flight, so a run waiting on its first token stops when
+that token arrives.
 
 **Sound effects cost nothing else.** `POST /v1/sfx` returns a 44.1 kHz stereo
 WAV of whatever you describe.
