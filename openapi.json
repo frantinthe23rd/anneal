@@ -462,7 +462,7 @@
           "supervisor"
         ],
         "summary": "Gateway and service state",
-        "description": "Never wakes a model. Safe to poll as often as you like. No auth required.\n\nThe `system` block reports `free_mb`, `swap_used_mb`, `pageouts_per_sec` and `pressure_level` (macOS's own verdict: normal / warning / critical), plus a boolean `pressure`.\n\n**Do not treat swap volume as a problem.** This host routinely runs a model larger than physical RAM; macOS pages it out once and then idles at a negligible pageout rate. `pressure` is true only when the kernel reports warning or critical, or paging is genuinely sustained.\n\nThe `limits` block carries the numbers and options a client must respect, so a page or an agent can ask rather than repeat them. It includes `sprites`: every method the host knows, each with its label, its licence, whether it is `available` here and, when it is not, `why`. The Animation form is built from it — a method carrying a non-commercial term is stated in one place only.",
+        "description": "Never wakes a model. Safe to poll as often as you like. No auth required.\n\nThe `system` block reports `free_mb`, `swap_used_mb`, `pageouts_per_sec` and `pressure_level` (macOS's own verdict: normal / warning / critical), plus a boolean `pressure`.\n\n**Do not treat swap volume as a problem.** This host routinely runs a model larger than physical RAM; macOS pages it out once and then idles at a negligible pageout rate. `pressure` is true only when the kernel reports warning or critical, or paging is genuinely sustained.\n\nThe `limits` block carries the numbers and options a client must respect, so a page or an agent can ask rather than repeat them. It includes `sprites`: every method the host knows, each with its label, its licence, whether it is `available` here and, when it is not, `why`. The Animation form is built from it — a method carrying a non-commercial term is stated in one place only.\n\n`running` is measured rather than remembered: each service's port is probed, so a backend that outlived the gateway is reported as up, with its memory, instead of as cold.",
         "security": [],
         "responses": {
           "200": {
@@ -475,16 +475,28 @@
                     "services": {
                       "music": {
                         "running": false,
+                        "state": "cold",
                         "heavy": true,
-                        "idle_seconds": 812.4
+                        "idle_seconds": 812.4,
+                        "memory_mb": null
                       },
                       "speech": {
                         "running": true,
-                        "heavy": false
+                        "state": "hot",
+                        "heavy": false,
+                        "memory_mb": 692
+                      },
+                      "text": {
+                        "running": true,
+                        "state": "hot",
+                        "heavy": false,
+                        "memory_mb": 4689
                       },
                       "image": {
                         "running": false,
-                        "heavy": true
+                        "state": "cold",
+                        "heavy": true,
+                        "memory_mb": null
                       }
                     }
                   },

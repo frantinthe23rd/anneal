@@ -109,6 +109,12 @@ the idle window is warm. Each request resets the idle timer.
 health checks and re-downloads are free and instant. Poll `/health` as often as
 you like.
 
+What it reports is what is answering on each service's port, which is not always
+a process this gateway started — one can outlive it. A backend it finds running
+is reported `running` with its memory, and is unloaded when idle like any other,
+so `/health` is a reading of the machine rather than of the gateway's own
+bookkeeping.
+
 ---
 
 ## 3. Music: the flow

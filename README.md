@@ -258,6 +258,15 @@ which `ps` does not attribute to the process — a backend holding 21 GB reports
 an RSS of ~120 MB. The supervisor shells out to `footprint`, the same figure
 Activity Monitor shows.
 
+**What is up, not what was started.** A backend can outlive the supervisor: a
+crash, a `kill -9`, or — until [#46](https://github.com/frantinthe23rd/anneal/issues/46)
+— a stop that never named it. So `/health` comes from probing each service's
+port, and a backend already answering there is taken over: measured with
+`footprint`, evicted when a heavy model needs the slot, timed out when idle, and
+restarted when the model it holds is not the one being asked for. `./stop-api.sh`
+takes its kill list from `services.SERVICES`, so a service is covered by the stop
+path from the moment it is declared.
+
 `/health`, `/supervisor/status`, `/docs`, `/openapi.json` and `/v1/audio` are all
 answered by the supervisor itself, so health checks, docs and re-downloads never
 wake a model.
