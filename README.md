@@ -1,3 +1,5 @@
+![Anneal — music, speech, images and text, generated entirely on one machine. On-demand, Apple silicon, one API.](assets/brand/social-preview.png)
+
 # Anneal
 
 **Local, on-demand generation — music, speech, images and text behind one API.**
