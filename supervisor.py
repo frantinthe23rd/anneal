@@ -953,7 +953,7 @@ def agent_media(root):
     return media
 
 
-def agent_worker(rid, prompt, root, model, max_steps):
+def agent_worker(rid, prompt, root, model, max_steps, history=()):
     """One run, on a thread of its own.
 
     It used to be the request handler's own body, which is why a run was only
@@ -966,8 +966,11 @@ def agent_worker(rid, prompt, root, model, max_steps):
     # cannot leave the text service pinned for ever.
     pin_service("text")
     try:
+        # The folder as it is now, not as the trace says it was left: six runs
+        # in, those differ, and the model is about to be told to trust one.
         out = agent.run(prompt, root, agent_chat(model), max_steps=max_steps,
-                        media=agent_media(root),
+                        media=agent_media(root), history=history,
+                        system=agent.SYSTEM + agent.folder_note(agent_files(root)),
                         on_step=lambda entry: AGENT_RUNS.append_step(rid, entry),
                         should_stop=lambda: AGENT_RUNS.cancelled(rid))
         AGENT_RUNS.finish(rid, "cancelled" if out["stopped"] == "cancelled" else "done",
@@ -982,12 +985,22 @@ def agent_worker(rid, prompt, root, model, max_steps):
         unpin_service("text")
 
 
-def start_agent_run(prompt, job, root, model, max_steps):
-    """Record the run, then start it. Returns the id."""
+def start_agent_run(prompt, job, root, model, max_steps, with_history=True):
+    """Record the run, seed it with the folder's past, then start it.
+
+    Returns the id and how many earlier runs went in front of the prompt. The
+    history comes from the records rather than from the caller: it is
+    server-side truth that survives a reconnect, and the page's own copy is
+    not (#70). Read after `create()` so the new row can be excluded by id
+    rather than by trusting that nothing else wrote in between.
+    """
     rid = AGENT_RUNS.create(job=job, prompt=prompt, model=model, max_steps=max_steps)
-    threading.Thread(target=agent_worker, args=(rid, prompt, root, model, max_steps),
+    earlier = AGENT_RUNS.history_for(job, exclude=rid) if with_history else []
+    threading.Thread(target=agent_worker,
+                     args=(rid, prompt, root, model, max_steps,
+                           agent.conversation(earlier)),
                      daemon=True).start()
-    return rid
+    return rid, len(earlier)
 
 
 def agent_events(store, rid, sent=0, poll=0.5, idle_ping=15.0,
@@ -3365,6 +3378,13 @@ class Handler(BaseHTTPRequestHandler):
             if not prompt:
                 self._send_json({"code": 400, "error": "'prompt' is required"}, 400)
                 return
+            # Read before anything else is resolved: a payload the caller can
+            # fix should not come back as a 503 about a download.
+            wants_history = payload.get("history", True)
+            if not isinstance(wants_history, bool):
+                self._send_json({"code": 400,
+                                 "error": "'history' must be true or false"}, 400)
+                return
             job, root = agent_root(payload.get("job"))
             # Asked before the model is resolved, and on the folder rather than
             # on the string: two different job names can sanitise to one
@@ -3398,9 +3418,11 @@ class Handler(BaseHTTPRequestHandler):
             # caller gets back is a way of watching it: the stream, or the id
             # to poll. Neither is the run any more, which is the point — the
             # run outlives the connection either way (#67).
-            rid = start_agent_run(prompt, job, root, chosen, steps)
+            rid, carried = start_agent_run(prompt, job, root, chosen, steps,
+                                           with_history=wants_history)
             opening = {"run_id": rid, "job": job, "model": chosen,
                        "state": agent.RUNNING, "max_steps": steps,
+                       "history": carried,
                        "poll": "/v1/agent?id=" + rid}
             if payload.get("stream") is False:
                 self._send_json({"data": opening, "code": 200, "error": None})

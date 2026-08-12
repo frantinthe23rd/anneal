@@ -413,3 +413,41 @@ class AgentRunSurvivesTheTabTest(unittest.TestCase):
     def test_an_interrupted_run_is_shown_as_interrupted(self):
         """A gateway restart leaves the record; it must not read as finished."""
         self.assertIn("interrupted", self.fn("function agentRunLines("))
+
+
+class AgentModeFollowsTheConversationTest(unittest.TestCase):
+    """The Agent box was left clear when a conversation with agent work in it
+    was reopened, so the follow-up went to plain chat with no tools and no
+    working folder (#72). Structural, like the rest of this file — the browser
+    check is in the commit."""
+
+    def setUp(self):
+        with open(UI, encoding="utf-8") as fh:
+            self.src = fh.read()
+
+    def test_the_box_is_set_from_the_transcript(self):
+        self.assertIn("function reflectAgentMode()", self.src)
+        block = self.src[self.src.index("function reflectAgentMode()"):]
+        block = block[:block.index("\nasync function")]
+        self.assertIn("agentJob", block)
+        self.assertIn('$("cAgent")', block)
+
+    def test_it_runs_even_when_nothing_is_rendered(self):
+        """`loadChat` opens the conversation with `render: false`, which is the
+        path a reload takes. Inside the render branch the call never ran there,
+        and the box was still clear after coming back — which is the bug."""
+        block = self.src[self.src.index("function openChat("):]
+        block = block[:block.index("\nfunction deleteChat(")]
+        self.assertIn("reflectAgentMode()", block)
+        before, _, after = block.partition("if (render) {")
+        self.assertIn("reflectAgentMode()", before)
+
+    def test_a_run_picked_up_on_load_sets_it_too(self):
+        block = self.src[self.src.index("async function resumeAgentRun()"):]
+        block = block[:block.index("\nasync function runAgent(")]
+        self.assertIn("reflectAgentMode()", block)
+
+    def test_it_never_clears_a_box_the_person_set(self):
+        block = self.src[self.src.index("function reflectAgentMode()"):]
+        block = block[:block.index("\nasync function")]
+        self.assertNotIn("= false", block)

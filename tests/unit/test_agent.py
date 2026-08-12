@@ -628,3 +628,185 @@ class TestTheRunEndpointsAreDocumented(unittest.TestCase):
         import services
         self.assertIn("/v1/agent/cancel", services.GATEWAY_ROUTES)
         self.assertIsNone(services.resolve("/v1/agent/cancel"))
+
+
+class TestPriorRunsBecomeHistory(RunStoreCase):
+    """A follow-up used to arrive as a brand-new task (#70).
+
+    `run()` built its messages from the system prompt and the prompt in front
+    of it, so "now wire the image in" reached the model with no idea what "the
+    image" was, what the files were called, or that a previous run had
+    happened. The working folder persisted; the conversation did not.
+
+    The record from #67 is the source, rather than a copy held in the page:
+    it is server-side, it survives a reconnect, and it is already the thing the
+    page polls.
+    """
+
+    def settled(self, job="demo", prompt="make a page", reply="I made index.html",
+                trace=(), files=(), state="done"):
+        rid = self.store.create(job=job, prompt=prompt, model="qwen-coder", max_steps=12)
+        for entry in trace:
+            self.store.append_step(rid, entry)
+        self.store.finish(rid, state, reply=reply, files=list(files))
+        return rid
+
+    # -- which runs count ---------------------------------------------------
+    def test_a_folder_with_no_history_gives_nothing(self):
+        self.assertEqual(self.store.history_for("empty"), [])
+
+    def test_history_is_oldest_first(self):
+        self.settled(prompt="first")
+        self.settled(prompt="second")
+        self.settled(prompt="third")
+        self.assertEqual([r["prompt"] for r in self.store.history_for("demo")],
+                         ["first", "second", "third"])
+
+    def test_only_this_folder(self):
+        self.settled(job="mine", prompt="mine")
+        self.settled(job="theirs", prompt="theirs")
+        self.assertEqual([r["prompt"] for r in self.store.history_for("mine")], ["mine"])
+
+    def test_the_run_in_flight_is_not_its_own_history(self):
+        """Called after `create()`, so the new run is already a row."""
+        self.settled(prompt="earlier")
+        current = self.start()
+        got = self.store.history_for("demo", exclude=current)
+        self.assertEqual([r["prompt"] for r in got], ["earlier"])
+
+    def test_only_the_last_few_are_kept(self):
+        for i in range(agent.HISTORY_RUNS + 3):
+            self.settled(prompt="run %d" % i)
+        got = self.store.history_for("demo")
+        self.assertEqual(len(got), agent.HISTORY_RUNS)
+        self.assertEqual(got[-1]["prompt"], "run %d" % (agent.HISTORY_RUNS + 2))
+
+    def test_an_interrupted_run_is_still_history(self):
+        """Its files are in the folder, so pretending it did not happen is the
+        one thing that would be wrong."""
+        self.settled(prompt="cut short", state="interrupted")
+        self.assertEqual(len(self.store.history_for("demo")), 1)
+
+    # -- what a run turns into ---------------------------------------------
+    def test_a_run_becomes_a_user_turn_and_an_assistant_turn(self):
+        record = self.store.get(self.settled(prompt="make a page",
+                                             reply="I made index.html"))
+        turns = agent.conversation([record])
+        self.assertEqual([t["role"] for t in turns], ["user", "assistant"])
+        self.assertEqual(turns[0]["content"], "make a page")
+        self.assertIn("I made index.html", turns[1]["content"])
+
+    def test_the_assistant_turn_is_the_models_own_words(self):
+        """Measured: putting the tool trace in the assistant's mouth — "I
+        called: write_file index.html." — made qwen-coder repeat that sentence
+        back and call nothing. A small model imitates the last assistant turn,
+        so it must only ever contain what the model actually said."""
+        rid = self.settled(
+            reply="I made index.html.",
+            trace=[{"step": 1, "tool": "write_file",
+                    "args": {"path": "index.html", "content": "<h1>hi</h1>"},
+                    "ok": True, "result": "wrote index.html"}],
+            files=[{"path": "index.html", "bytes": 11}])
+        said = agent.conversation([self.store.get(rid)])[1]["content"]
+        self.assertEqual(said, "I made index.html.")
+        self.assertNotIn("I called", said)
+        self.assertNotIn("write_file", said)
+
+    def test_the_folder_is_described_by_the_environment_instead(self):
+        """The names still have to reach the model — just not as something it
+        supposedly said. `folder_note` goes on the end of the system prompt."""
+        note = agent.folder_note([{"path": "index.html", "bytes": 11},
+                                  {"path": "art/logo.png", "bytes": 4096}])
+        self.assertIn("index.html", note)
+        self.assertIn("art/logo.png", note)
+
+    def test_an_empty_folder_says_nothing(self):
+        self.assertEqual(agent.folder_note([]), "")
+        self.assertEqual(agent.folder_note(None), "")
+
+    def test_a_tool_call_the_model_typed_out_is_not_replayed(self):
+        """#73: qwen-coder sometimes prints its calls instead of making them,
+        and the run does nothing. History is where that compounds — replayed,
+        the block is the example the next turn copies. Measured before this
+        guard: turn three reproduced turn two's JSON word for word."""
+        printed = ('```json\n[\n  {\n    "name": "write_file",\n'
+                   '    "arguments": {"path": "index.html", "content": "<h1>hi</h1>"}\n'
+                   '  }\n]\n```')
+        self.assertTrue(agent.looks_like_a_printed_tool_call(printed))
+        rid = self.settled(reply=printed)
+        said = agent.conversation([self.store.get(rid)])[1]["content"]
+        self.assertNotIn("write_file", said)
+        self.assertTrue(said.strip())
+
+    def test_a_truncated_printed_call_is_caught_too(self):
+        """The reply is cut at the store's limit, so the common case does not
+        parse as JSON at all."""
+        self.assertTrue(agent.looks_like_a_printed_tool_call(
+            '{"name": "write_file", "arguments": {"path": "notes.md", "content": "## Gui'))
+
+    def test_an_ordinary_reply_is_left_alone(self):
+        for good in ("I made index.html.",
+                     "I wrote notes.md with three bullets, then read it back.",
+                     "Here is what I did: {nothing structured}"):
+            self.assertFalse(agent.looks_like_a_printed_tool_call(good), good)
+
+    def test_a_files_worth_of_content_is_not_replayed(self):
+        """The whole point of trimming: `args.content` carries the file, and a
+        history that repeats every byte the run wrote is the run again."""
+        rid = self.settled(trace=[{"step": 1, "tool": "write_file",
+                                   "args": {"path": "big.txt", "content": "x" * 50000},
+                                   "ok": True, "result": "wrote big.txt"}])
+        said = agent.conversation([self.store.get(rid)])[1]["content"]
+        self.assertLess(len(said), 4000)
+        self.assertNotIn("x" * 2000, said)
+
+    def test_a_run_that_stopped_early_says_so(self):
+        rid = self.settled(prompt="ten pages", reply="", state="cancelled")
+        said = agent.conversation([self.store.get(rid)])[1]["content"]
+        self.assertIn("cancelled", said)
+
+    def test_an_assistant_turn_is_never_empty(self):
+        """An empty assistant message is a turn some backends reject outright."""
+        rid = self.settled(reply="", state="done")
+        said = agent.conversation([self.store.get(rid)])[1]["content"]
+        self.assertTrue(said.strip())
+
+    # -- what the loop does with it ----------------------------------------
+    def test_the_loop_puts_history_between_the_system_prompt_and_the_ask(self):
+        seen = []
+
+        def chat(messages, tools):
+            seen.append([dict(m) for m in messages])
+            return {"content": "done", "tool_calls": None}
+
+        history = [{"role": "user", "content": "make a page"},
+                   {"role": "assistant", "content": "I made index.html"}]
+        agent.run("now wire the image in", self.tmp, chat, history=history)
+        roles = [m["role"] for m in seen[0]]
+        self.assertEqual(roles, ["system", "user", "assistant", "user"])
+        self.assertEqual(seen[0][1]["content"], "make a page")
+        self.assertEqual(seen[0][-1]["content"], "now wire the image in")
+
+    def test_without_history_the_loop_is_what_it_was(self):
+        seen = []
+
+        def chat(messages, tools):
+            seen.append([dict(m) for m in messages])
+            return {"content": "done", "tool_calls": None}
+
+        agent.run("make a page", self.tmp, chat)
+        self.assertEqual([m["role"] for m in seen[0]], ["system", "user"])
+
+
+class TestTheSystemPromptSaysWhatAFollowUpMustDo(unittest.TestCase):
+    """The unwired image was the same fault one level down (#70): the model
+    generated `art/logo.png`, was told "saved art/logo.png", and nothing said
+    an asset it makes has to be referenced from the page it wrote."""
+
+    def test_it_is_told_to_look_before_assuming(self):
+        self.assertIn("list_files", agent.SYSTEM)
+
+    def test_it_is_told_an_unreferenced_asset_is_not_delivered(self):
+        low = agent.SYSTEM.lower()
+        self.assertIn("reference", low)
+        self.assertTrue("generate" in low or "asset" in low)

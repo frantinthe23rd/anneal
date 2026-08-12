@@ -44,6 +44,16 @@ MAX_LISTING = 200
 TRACE_RESULT_CHARS = 1200
 TRACE_ARG_CHARS = 300
 
+# How much of the folder's past goes in front of a new prompt. A follow-up used
+# to arrive as a brand-new task (#70), and the fix is bounded on purpose: the
+# whole history is the context window, and the trace already holds enough of a
+# write_file call to replay a site byte for byte if nothing cut it.
+HISTORY_RUNS = 6
+HISTORY_PROMPT_CHARS = 600
+HISTORY_REPLY_CHARS = 800
+HISTORY_TOOLS = 20
+HISTORY_FILES = 40
+
 # The one non-terminal state. A run is a single loop with no stages to be in.
 RUNNING = "running"
 TERMINAL_STATES = ("done", "failed", "cancelled", "interrupted")
@@ -193,7 +203,7 @@ def run_tool(name, args, root, media=None):
 
 
 def run(prompt, root, chat, max_steps=MAX_STEPS, max_seconds=MAX_SECONDS,
-        media=None, on_step=None, system=None, should_stop=None):
+        media=None, on_step=None, system=None, should_stop=None, history=None):
     """Drive the model until it stops calling tools, or a cap is reached.
 
     `chat(messages, tools)` is injected rather than imported: the loop is the
@@ -204,8 +214,13 @@ def run(prompt, root, chat, max_steps=MAX_STEPS, max_seconds=MAX_SECONDS,
     so cancelling a run waiting on its first token takes until that token
     arrives. A tool call already running finishes too.
     """
-    messages = [{"role": "system", "content": system or SYSTEM},
-                {"role": "user", "content": prompt}]
+    # `history` is earlier turns in this same folder, oldest first — see
+    # `conversation`. Without them a follow-up is a brand-new task: "now wire
+    # the image in" reaching the model with no idea what the image is, what the
+    # files are called, or that anything happened here before (#70).
+    messages = [{"role": "system", "content": system or SYSTEM}]
+    messages.extend(list(history or []))
+    messages.append({"role": "user", "content": prompt})
     started = time.time()
     trace, steps, stopped, reply = [], 0, None, ""
     nudged = False
@@ -296,6 +311,17 @@ Describe what you want fully, because these are generators and not editors.
 Everything is relative to the working folder. You cannot run commands, reach the
 network, or touch anything outside it — do not claim you have.
 
+Nothing you make is delivered until something points at it. An image, a track or
+a voice line you generate, and any page you add to a site, has to be referenced
+from the page that should link to it: read that page, and write it back with the
+reference in. Writing the new file is half the job — a file sitting in the folder
+that nothing links to is work that was asked for and not received.
+
+Earlier turns may be shown above. They are work you already did and the files
+are still in the folder, so this may be a follow-up rather than a fresh start.
+Call list_files before assuming what is there: the folder is the truth, and the
+summary you wrote last time is not.
+
 When the task is finished, reply with a short plain-English summary of what you
 made. No tool call in that reply is how the work ends."""
 
@@ -346,6 +372,96 @@ def trimmed_step(entry):
     return {"step": entry.get("step"), "tool": entry.get("tool"), "args": args,
             "ok": bool(entry.get("ok")),
             "result": _text(entry.get("result") or "", TRACE_RESULT_CHARS)}
+
+
+def looks_like_a_printed_tool_call(reply):
+    """Is this reply a tool call the model typed out instead of making?
+
+    qwen-coder does this on a request that mixes kinds of work — writing a page
+    and generating an image — and the run settles having done nothing (#73).
+    That bug is upstream of here, but history is where it compounds: replayed
+    as an assistant turn, the block becomes the example the next turn imitates,
+    and one bad run poisons every follow-up in the folder. Measured: turn three
+    reproduced turn two's JSON verbatim and called nothing.
+    """
+    text = (reply or "").strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1]
+        text = text.rsplit("```", 1)[0]
+    text = text.strip()
+    if not text or text[0] not in "[{":
+        return False
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        # A truncated block is the common case — it is cut at the reply limit —
+        # so fall back to the shape rather than to the parse.
+        return bool(re.match(r'^[\[{]\s*(\{\s*)?"(name|function|tool_calls)"\s*:', text))
+    items = parsed if isinstance(parsed, list) else [parsed]
+    return any(isinstance(i, dict) and "name" in i and "arguments" in i for i in items)
+
+
+def run_summary(record):
+    """What one finished run says for itself, put back as an assistant turn.
+
+    Its own reply and nothing else. An earlier version added the tool trace and
+    the file list here — "I called: write_file index.html. The folder then held:
+    index.html." — and measured against qwen-coder that was worse than no
+    history at all: the follow-up came back as that sentence repeated, verbatim,
+    with zero tool calls. A small model imitates the last assistant turn, so
+    anything machine-shaped put in its mouth is a template it will fill in
+    rather than a fact it will use. Folder state is real and belongs in the
+    system prompt, where it is the environment talking; see `folder_note`.
+    """
+    parts = []
+    reply = (record.get("reply") or "").strip()
+    if reply and not looks_like_a_printed_tool_call(reply):
+        parts.append(_text(reply, HISTORY_REPLY_CHARS))
+
+    state = record.get("state")
+    if state and state != "done":
+        # A cancelled run's files are in the folder either way, so hiding that
+        # it stopped early would describe a folder that does not exist.
+        parts.append("(That run did not finish — it was %s after %d step(s).)"
+                     % (state, record.get("steps") or 0))
+
+    # Never empty: an assistant turn with no content is one some backends
+    # reject outright, and a run can settle having said nothing at all.
+    return "\n\n".join(parts) or "(That run ended without a summary.)"
+
+
+def folder_note(files):
+    """What is in the working folder, for the end of the system prompt.
+
+    The environment stating a fact, rather than the assistant being made to
+    claim it. This is also the honest source: the trace says what a run did,
+    the folder says what is there now, and after six runs those differ.
+    """
+    names = [f.get("path") for f in (files or []) if f.get("path")]
+    if not names:
+        return ""
+    shown = names[:HISTORY_FILES]
+    more = "" if len(names) <= HISTORY_FILES else ", and %d more" % (len(names) - HISTORY_FILES)
+    return ("\n\nThe folder already contains: %s%s. That work is done and those "
+            "files are real — read one before changing it, and do not write it "
+            "again from scratch unless you were asked to."
+            % (", ".join(shown), more))
+
+
+def conversation(records):
+    """Earlier runs in a folder, as turns to put in front of a new prompt.
+
+    One run becomes two turns — what was asked, and what came back — because
+    that is the shape the loop already speaks and the shape a chat model is
+    trained on. Oldest first, so the last thing before the new prompt is the
+    most recent thing that happened.
+    """
+    turns = []
+    for record in records or []:
+        turns.append({"role": "user",
+                      "content": _text(record.get("prompt") or "", HISTORY_PROMPT_CHARS)})
+        turns.append({"role": "assistant", "content": run_summary(record)})
+    return turns
 
 
 class RunStore:
@@ -447,6 +563,20 @@ class RunStore:
         rows = self._exec("SELECT %s FROM runs WHERE job = ? ORDER BY created_at DESC"
                           " LIMIT 1" % self.COLUMNS, (job,), fetch=True)
         return self._row(rows[0]) if rows else None
+
+    def history_for(self, job, limit=HISTORY_RUNS, exclude=None):
+        """The runs this folder has already had, oldest last-N first.
+
+        Server-side, so it survives the reconnect the page's own copy does not
+        — which is why the record is the source for history rather than
+        anything the client sends (#70). `exclude` is the run being started:
+        `create()` has already written its row by the time this is asked, and a
+        run must not be given itself as its own past.
+        """
+        rows = self._exec("SELECT %s FROM runs WHERE job = ? AND id IS NOT ?"
+                          " ORDER BY created_at DESC, rowid DESC LIMIT ?"
+                          % self.COLUMNS, (job, exclude, int(limit)), fetch=True) or []
+        return [self._row(r) for r in reversed(rows)]
 
     def active_for(self, job):
         """The id of the run working in this folder, or None.
