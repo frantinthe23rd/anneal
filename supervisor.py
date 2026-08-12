@@ -317,6 +317,62 @@ def system_memory():
     return info
 
 
+def _pid_alive(pid):
+    """True if `pid` exists. PermissionError means it exists and is not ours."""
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _pid_gone(pid):
+    """True if `pid` is dead, or a corpse nobody has collected yet.
+
+    An adopted backend is not our child, so it cannot be waited on: if its real
+    parent is slow to reap it, `kill(pid, 0)` goes on succeeding for a process
+    that is already dead. Waiting that out looks exactly like a backend
+    refusing to die, and ends in a warning that is not true.
+    """
+    if not _pid_alive(pid):
+        return True
+    try:
+        state = subprocess.check_output(
+            ["ps", "-o", "state=", "-p", str(pid)],
+            text=True, stderr=subprocess.DEVNULL, timeout=5,
+        ).strip()
+    except Exception:
+        return False
+    return state.startswith("Z")
+
+
+def _listening_pid(port):
+    """The pid listening on `port`, or None.
+
+    Used to take ownership of a backend this supervisor did not start. Without
+    a pid there is nothing to measure and nothing to stop, which is how an
+    orphan came to hold 5 GB while /health reported it cold.
+    """
+    lsof = shutil.which("lsof") or "/usr/sbin/lsof"
+    try:
+        out = subprocess.check_output(
+            [lsof, "-nP", "-tiTCP:%d" % port, "-sTCP:LISTEN"],
+            text=True, stderr=subprocess.DEVNULL, timeout=5,
+        )
+    except Exception:
+        return None
+    for token in out.split():
+        if token.isdigit():
+            return int(token)
+    return None
+
+
 class Service:
     """Owns one backend process."""
 
@@ -326,6 +382,13 @@ class Service:
         self.port = spec["port"]
         self.heavy = spec["heavy"]
         self.proc = None
+        # A backend on our port that this supervisor did not start — left by a
+        # previous one, or by a stop that missed it. Recorded so it can be
+        # measured, evicted, reaped and restarted like any other. See
+        # adopt_running().
+        self.adopted_pid = None
+        self._argv = None
+        self._argv_pid = None
         self.lock = threading.Lock()
         self.last_activity = time.time()
         self.in_flight = 0
@@ -340,8 +403,96 @@ class Service:
         self._snapshot_at = 0.0
 
     # -- state ------------------------------------------------------------
-    def is_running(self):
+    def owns_child(self):
+        """True if the live backend is a process we started."""
         return self.proc is not None and self.proc.poll() is None
+
+    def is_running(self):
+        """True if a backend is up, whether or not we started it.
+
+        The child handle alone was the whole of this check, and it is the
+        answer to a different question — "did *this* supervisor start one?".
+        Everything downstream reads it as "is one resident": /health, memory
+        accounting, eviction, the idle reaper, and the restart that switches
+        the text model. Against a backend left over from an earlier supervisor
+        every one of those was wrong.
+
+        Cheap on purpose: the recorded pid is checked, nothing is probed.
+        adopt_running() is what goes looking, and the callers that need it to
+        have looked call it first.
+        """
+        if self.owns_child():
+            return True
+        if self.adopted_pid is not None:
+            if _pid_alive(self.adopted_pid):
+                return True
+            self.adopted_pid = None
+        return False
+
+    def pid(self):
+        """The backend's pid, ours or adopted, or None."""
+        if self.owns_child():
+            return self.proc.pid
+        return self.adopted_pid if _pid_alive(self.adopted_pid) else None
+
+    def adopt_running(self):
+        """Take ownership of a backend already answering on our port.
+
+        ensure_started() has always adopted an open port for the purpose of
+        forwarding a request — that is why an orphaned speech backend went on
+        serving. It recorded nothing, so the supervisor forwarded to a process
+        it did not believe existed. This records the pid, which is what makes
+        the adoption real: memory_mb() can measure it, stop() can end it, the
+        reaper can time it out, and a model switch can restart it.
+
+        A TCP connect is not proof of life — straight after a stop the socket
+        can still accept — so a health response is required before believing
+        it, exactly as ensure_started() does.
+        """
+        if self.owns_child():
+            self.adopted_pid = None
+            return None
+        if self.adopted_pid is not None and _pid_alive(self.adopted_pid):
+            return self.adopted_pid
+        self.adopted_pid = None
+        if not self.port_open():
+            return None
+        if self._get_json(self.spec.get("health_path", "/health"), timeout=3.0) is None:
+            return None
+        pid = _listening_pid(self.port)
+        if pid is None:
+            return None
+        self.adopted_pid = pid
+        if not self.started_at:
+            self.started_at = time.time()
+        log("%s: adopted the backend already on port %d (pid %d) — not started "
+            "by this supervisor" % (self.name, self.port, pid))
+        return pid
+
+    def running_argv(self):
+        """The backend's actual command line, or None.
+
+        The spec says what the supervisor intends to run next; this says what
+        is running. They differ whenever a backend outlived the supervisor that
+        started it, and the difference is the whole of the model-switch bug.
+        Cached per pid — argv does not change over a process's life.
+        """
+        pid = self.pid()
+        if not pid:
+            return None
+        if self._argv_pid == pid and self._argv:
+            return self._argv
+        try:
+            out = subprocess.check_output(
+                ["ps", "-o", "command=", "-p", str(pid)],
+                text=True, stderr=subprocess.DEVNULL, timeout=5,
+            ).strip()
+        except Exception:
+            return None
+        if not out:
+            return None
+        self._argv_pid, self._argv = pid, out
+        return out
 
     def port_open(self):
         sock = socket.socket()
@@ -358,8 +509,11 @@ class Service:
         self.last_activity = time.time()
 
     def _pgid_pids(self):
+        pid = self.pid()
+        if not pid:
+            return []
         try:
-            pgid = os.getpgid(self.proc.pid)
+            pgid = os.getpgid(pid)
             out = subprocess.check_output(["ps", "-A", "-o", "pgid=,pid="], text=True)
         except Exception:
             return []
@@ -425,11 +579,13 @@ class Service:
             if self.port_open():
                 # A TCP connect alone is not proof of a live backend: straight
                 # after a stop the socket can still accept briefly, and we would
-                # "adopt" a corpse. Require a health response before believing it.
-                if self._get_json(self.spec.get("health_path", "/health"), timeout=3.0) is not None:
-                    log("%s: port %d already open, adopting it" % (self.name, self.port))
+                # "adopt" a corpse. adopt_running() requires a health response
+                # before believing it, and records the pid so the adoption is
+                # more than "forward and hope".
+                if self.adopt_running():
                     return
-                log("%s: port %d open but not healthy; starting our own" % (self.name, self.port))
+                log("%s: port %d open but not healthy (or its pid could not be "
+                    "found); starting our own" % (self.name, self.port))
 
             env = dict(os.environ)
             env.update(self.spec.get("env") or {})
@@ -467,15 +623,45 @@ class Service:
                 time.sleep(1.0)
             raise RuntimeError("%s did not become ready within %ds" % (self.name, timeout))
 
+    def _signal(self, pid, sig):
+        """Signal the backend's process group, or the process if that is not safe.
+
+        The group, because `uv run` and the servers here spawn children that
+        would otherwise be left behind. Never our own group: the supervisor is
+        in it, and an adopted process could in principle share it.
+        """
+        try:
+            pgid = os.getpgid(pid)
+        except OSError:
+            pgid = None
+        if pgid is not None and pgid != os.getpgid(0):
+            try:
+                os.killpg(pgid, sig)
+                return
+            except OSError:
+                pass
+        try:
+            os.kill(pid, sig)
+        except OSError:
+            pass
+
+    def _gone(self, pid):
+        if self.owns_child():
+            return self.proc.poll() is not None
+        return _pid_gone(pid)
+
     def stop(self, reason="idle"):
         with self.lock:
             if not self.is_running():
                 self.proc = None
+                self.adopted_pid = None
                 return
+            pid = self.pid()
             # Report the high-water mark: MLX hands buffers back once a job
             # finishes, so RSS sampled at stop time understates what was held.
-            log("%s: stopping (%s), peak memory was ~%s MB"
-                % (self.name, reason, self.peak_rss_mb or self.memory_mb()))
+            log("%s: stopping pid %s%s (%s), peak memory was ~%s MB"
+                % (self.name, pid, "" if self.owns_child() else " (adopted)",
+                   reason, self.peak_rss_mb or self.memory_mb()))
             # Before the process goes, not after: its results live in its
             # memory, and once it is gone they are unrecoverable.
             if self.name == "music":
@@ -483,24 +669,30 @@ class Service:
                     drain_music_results()
                 except Exception as exc:
                     log("drain before stop failed: %r" % exc)
-            try:
-                os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
-            except (ProcessLookupError, PermissionError):
-                pass
+            self._signal(pid, signal.SIGTERM)
             for _ in range(30):
-                if self.proc.poll() is not None:
+                if self._gone(pid):
                     break
                 time.sleep(1.0)
-            if self.proc.poll() is None:
-                try:
-                    os.killpg(os.getpgid(self.proc.pid), signal.SIGKILL)
-                except (ProcessLookupError, PermissionError):
-                    pass
+            if not self._gone(pid):
+                self._signal(pid, signal.SIGKILL)
+                for _ in range(10):
+                    if self._gone(pid):
+                        break
+                    time.sleep(1.0)
+            if self.owns_child():
                 try:
                     self.proc.wait(timeout=10)
                 except Exception:
                     pass
+            elif not self._gone(pid):
+                # Nothing else to try: it is not our child, so it cannot be
+                # waited on, and it has survived SIGKILL. Say so rather than
+                # let the next status read quietly re-adopt it.
+                log("%s: pid %d did not die" % (self.name, pid))
             self.proc = None
+            self.adopted_pid = None
+            self._argv = self._argv_pid = None
             self.peak_rss_mb = 0
             self._snapshot = {"state": "cold", "memory_mb": None}
             self._snapshot_at = time.time()
@@ -543,6 +735,10 @@ class Service:
 
     def refresh_snapshot(self):
         """Recompute state + memory. ~150ms per process, so call it sparingly."""
+        # Look for a backend we did not start before deciding anything: this is
+        # the probe that keeps /health describing the machine rather than the
+        # supervisor's own bookkeeping.
+        self.adopt_running()
         state = self.model_state()
         mem = self.memory_mb() if state != "cold" else None
         if mem and mem > self.peak_rss_mb:
@@ -552,10 +748,12 @@ class Service:
         return self._snapshot
 
     def snapshot(self, max_age=8.0):
-        if not self.is_running():
-            self._snapshot = {"state": "cold", "memory_mb": None}
-            self._snapshot_at = time.time()
-        elif time.time() - self._snapshot_at > max_age:
+        # Refreshed on age alone. It used to short-circuit to "cold" whenever
+        # the child handle was empty, which is exactly the case where the
+        # answer was wrong — a backend serving on the port, reported cold,
+        # with its memory unaccounted for. A closed port costs one refused
+        # connect on loopback, so probing the cold case is nearly free.
+        if time.time() - self._snapshot_at > max_age:
             self.refresh_snapshot()
         return self._snapshot
 
@@ -1171,12 +1369,40 @@ def text_model_problem(name):
     return None
 
 
-def loaded_text_model():
-    """Which registry entry the text backend is currently configured for."""
-    cmd = SERVICE_OBJECTS["text"].spec["cmd"]
+def _model_arg(argv):
+    """The `--model` argument in a command line, as a string or list."""
+    parts = argv.split() if isinstance(argv, str) else list(argv or [])
     try:
-        path = cmd[cmd.index("--model") + 1]
+        return parts[parts.index("--model") + 1]
     except (ValueError, IndexError):
+        return None
+
+
+def text_model_running():
+    """The model path the text backend is actually running, or None.
+
+    From the process's own command line, which is the only source that survives
+    the supervisor being restarted underneath it.
+    """
+    svc = SERVICE_OBJECTS["text"]
+    if not svc.is_running():
+        return None
+    return _model_arg(svc.running_argv())
+
+
+def loaded_text_model():
+    """Which registry entry the text backend is running.
+
+    What is up, not what is planned. This read the spec, which says what the
+    *next* start will use — so after a restart that left the old backend alive,
+    /health named the model that had been asked for while a different one was
+    answering.
+    """
+    path = text_model_running()
+    if path is None:
+        cmd = SERVICE_OBJECTS["text"].spec["cmd"]
+        path = _model_arg(cmd)
+    if path is None:
         return None
     for name, spec in TEXT_MODELS.items():
         if services.text_model_path(spec["repo"]) == path:
@@ -1202,16 +1428,26 @@ def ensure_text_model(name):
         at = cmd.index("--model") + 1
     except ValueError:
         return resolved
-    if cmd[at] == wanted:
-        return resolved                    # already running this one
 
-    if svc.is_running():
+    # Against the running process, not against the spec. The spec is what the
+    # supervisor means to start next, and comparing the two is only the same
+    # question while the supervisor owns what is running. It did not, after a
+    # stop that missed the backend: the comparison then rewrote the spec,
+    # reported the switch as done, and left the previous model answering.
+    svc.adopt_running()
+    running = svc.is_running()
+    current = _model_arg(svc.running_argv()) if running else cmd[at]
+
+    if running and current != wanted:
         with svc.flight_lock:
             busy = svc.in_flight
         if busy or svc.has_work():
             raise ServiceBusy("text", "text (%s)" % resolved)
-        log("text: switching model to %r — restarting" % resolved)
+        log("text: switching model to %r — restarting (was %s)"
+            % (resolved, current or "unreadable"))
         svc.stop("model switch to %s" % resolved)
+    # Written even when nothing was stopped, so the spec and the process agree
+    # about what is loaded rather than only about what was asked for.
     cmd[at] = wanted
     return resolved
 
@@ -1228,7 +1464,12 @@ def ensure_music_tier(tier):
         return None
     svc = SERVICE_OBJECTS["music"]
     wanted = spec["model"]
-    if svc.spec["env"].get("ACESTEP_CONFIG_PATH") == wanted:
+    # A backend this supervisor did not start takes its tier from the
+    # environment it was given, which cannot be read back. Unknown is not the
+    # same as matching, and the answer that costs a reload is the safe one.
+    svc.adopt_running()
+    unknown = svc.adopted_pid is not None
+    if not unknown and svc.spec["env"].get("ACESTEP_CONFIG_PATH") == wanted:
         return wanted                      # already configured for this tier
 
     if svc.is_running():
@@ -1255,7 +1496,10 @@ def free_heavy_slot(reason):
     """
     with _heavy_lock:
         for name, svc in SERVICE_OBJECTS.items():
-            if not svc.heavy or not svc.is_running():
+            if not svc.heavy:
+                continue
+            svc.adopt_running()     # a leftover backend holds the same memory
+            if not svc.is_running():
                 continue
             with svc.flight_lock:
                 in_flight = svc.in_flight
@@ -1292,7 +1536,13 @@ def start_service(name):
 
     with _heavy_lock:
         for other_name, other in SERVICE_OBJECTS.items():
-            if other_name == name or not other.heavy or not other.is_running():
+            if other_name == name or not other.heavy:
+                continue
+            # Adopt before deciding: an orphaned heavy backend is exactly the
+            # thing eviction exists to remove, and it is the one the supervisor
+            # could not see.
+            other.adopt_running()
+            if not other.is_running():
                 continue
             # A pin does *not* block eviction. It was written to, and that was
             # wrong in the other direction: an agent asking for an image would
@@ -1353,9 +1603,13 @@ def reaper():
 
         for name, svc in SERVICE_OBJECTS.items():
             try:
+                # Before the is_running() check, not after: a backend this
+                # supervisor did not start is still holding its weights, and
+                # nothing else will ever unload it. Adopted here, it inherits
+                # the idle timeout like any other.
+                svc.refresh_snapshot()
                 if not svc.is_running():
                     continue
-                svc.refresh_snapshot()
                 with svc.flight_lock:
                     busy = svc.in_flight > 0
                 if busy:
@@ -3577,6 +3831,17 @@ def main():
             log("press %s started from the queue after restart" % started)
     except Exception as exc:
         log("press sweep failed: %r" % exc)
+
+    # A backend left behind by an earlier supervisor is still holding its
+    # weights and still answering. Take ownership before serving, so the first
+    # /health, the first eviction and the first idle sweep are all made against
+    # what is actually resident.
+    for name, svc in SERVICE_OBJECTS.items():
+        try:
+            svc.adopt_running()
+        except Exception as exc:
+            log("could not check port %d for a leftover %s backend: %r"
+                % (svc.port, name, exc))
 
     threading.Thread(target=reaper, daemon=True).start()
 

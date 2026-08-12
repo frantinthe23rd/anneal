@@ -17,6 +17,9 @@ Fields:
     idle_timeout  Seconds with no traffic before the service is stopped.
     busy_path     Optional JSON endpoint used to check for in-progress work
                   before an idle stop, so a queued job is never killed.
+    stop_also     Optional extra `pkill -f` patterns, for a service that spawns
+                  a process under a name `cmd` does not contain. See
+                  stop_pattern(), which derives the rest.
 """
 
 from __future__ import annotations
@@ -194,6 +197,10 @@ SERVICES = {
         ],
         "port": _int("ACESTEP_BACKEND_PORT", 8011),
         "cmd": [UV_BIN, "run", "acestep-api"],
+        # `uv run` execs the console script, which then runs uvicorn under a
+        # name of its own. stop_patterns() cannot derive that from `cmd`, so it
+        # is declared here rather than written into stop-api.sh.
+        "stop_also": ["acestep.api_server:app"],
         "cwd": ACESTEP_DIR,
         "env": {"ACESTEP_API_HOST": "127.0.0.1",
                 "ACESTEP_CONFIG_PATH": MUSIC_TIERS[DEFAULT_MUSIC_TIER]["model"]},
@@ -261,6 +268,54 @@ SERVICES = {
 }
 
 
+# Interpreters and launchers: present in a service's `cmd` but useless for
+# identifying its process, because every service here starts with one.
+_LAUNCHERS = ("python", "python3", "uv", "uvx", "env")
+
+
+def stop_pattern(spec):
+    """A `pkill -f` pattern matching this service's process, from its own `cmd`.
+
+    The launcher is dropped and what is left identifies the program: an
+    absolute script path for the servers in this repo, `mlx_lm server` for the
+    one started with `-m`, `acestep-api` for the one `uv` resolves. Absolute
+    where the command is absolute, so a second checkout's backend is not caught
+    by this one's stop.
+    """
+    cmd = list(spec["cmd"])
+    i = 0
+    while i < len(cmd) and (os.path.basename(cmd[i]) in _LAUNCHERS or cmd[i] == "run"):
+        i += 1
+    if i < len(cmd) and cmd[i] == "-m":
+        # `python -m pkg sub` — the module and its subcommand. `ps` shows the
+        # argv as invoked, so both are there to match against.
+        rest = cmd[i + 1:i + 3]
+    else:
+        rest = cmd[i:]
+    out = []
+    for token in rest:
+        if token.startswith("-"):
+            break
+        out.append(token)
+    return " ".join(out)
+
+
+def stop_patterns():
+    """Every pattern `stop-api.sh` needs so that no backend survives a stop.
+
+    Derived from this table, so a service added here is covered by the stop
+    path the moment it exists. The two literals this replaces were written when
+    music was the only backend: speech, image and text were never killed, were
+    reparented to init, and went on holding their weights across every restart
+    while /health reported them cold.
+    """
+    out = []
+    for spec in SERVICES.values():
+        out.append(stop_pattern(spec))
+        out.extend(spec.get("stop_also") or ())
+    return [pattern for pattern in out if pattern]
+
+
 # Routes the gateway answers itself. They must never resolve to a backend, or
 # the proxy would try to forward them and 404.
 GATEWAY_ROUTES = ("/v1/press", "/v1/press/download", "/v1/press/resume",
@@ -282,3 +337,15 @@ def resolve(path: str):
                     or path.startswith(route)) and len(route) > best_len:
                 best_name, best_len = name, len(route)
     return best_name
+
+
+if __name__ == "__main__":
+    # `services.py --stop-patterns` is how stop-api.sh reads the table. A shell
+    # script cannot import Python, and the alternative is the list of names it
+    # used to carry.
+    import sys
+    if "--stop-patterns" in sys.argv:
+        print("\n".join(stop_patterns()))
+    else:
+        print("usage: services.py --stop-patterns", file=sys.stderr)
+        sys.exit(2)
