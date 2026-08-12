@@ -4552,6 +4552,11 @@ function agentRunLines(run) {
   const steps = (run.trace || []).map((s) => (s.ok ? "\u2713 " : "\u2717 ") + s.tool
     + (s.args && s.args.path ? "  " + s.args.path : "")
     + (s.ok ? "" : " \u2014 " + (s.result || "").split("\n")[0]));
+  // The call it is in right now, which the trace cannot show because the trace
+  // is what has come back. Without this a five-minute image generation looks
+  // exactly like a run that has died (#75).
+  const busy = run.state === "running" && run.stage !== "stopping" ? waitingOn(run) : null;
+  if (busy) steps.push("\u22ef " + busy + "  working\u2026");
   const parts = steps.length ? [steps.join("\n")] : [];
   if (run.state !== "running" && run.reply) parts.push(run.reply);
   if (run.state === "interrupted") {
@@ -4563,8 +4568,30 @@ function agentRunLines(run) {
     parts.push("Failed: " + (run.error || "the run did not finish"));
   } else if (run.stopped) {
     parts.push("*(stopped: " + run.stopped + ")*");
+  } else if (run.state === "running" && run.stage === "stopping") {
+    // Asked to stop and not yet stopped. The loop looks between steps, so a
+    // generator already in flight has to come back first — and pressing Stop
+    // during one used to show nothing at all, for as long as fourteen minutes
+    // (#76).
+    //
+    // It cannot name the call it is waiting on: `stage` is the only thing that
+    // knows, and a cancel overwrites it with "stopping" precisely so the run
+    // does not go on claiming to start work after you asked it not to. The
+    // last "working…" line is still above this one, which says it well enough.
+    parts.push("*(stopping. It stops as soon as the step it is in returns.)*");
   }
   return parts.join("\n\n");
+}
+
+/* The tool a run is sitting in, if the stage says so. `stage` is written as
+   "step N: tool" when a step completes, so a run that is mid-call is one step
+   past what the trace shows — which is exactly the call it is waiting on. */
+function waitingOn(run) {
+  const done = (run.trace || []).length;
+  const stage = String(run.stage || "");
+  const match = /^step\s+(\d+):\s*(\S+)/.exec(stage);
+  if (match && Number(match[1]) > done) return match[2];
+  return null;
 }
 
 /* Watch one run to the end. `reply` is the transcript message it paints into,
@@ -4754,7 +4781,12 @@ async function runChat() {
     // An agent run is not this connection: aborting the watch would leave it
     // working, and holding its folder against the next one.
     if (chatting.agentRun) {
+      // Recorded, not done: the loop looks between steps, so a generator
+      // already in flight has to return first. Say so rather than leaving a
+      // button reading "Stopping…" with nothing behind it (#76).
       $("cSend").textContent = "Stopping\u2026";
+      $("cSend").title = "Asked to stop. It stops as soon as the step it is in"
+                       + " returns — a generator already running has to finish first.";
       cancelAgentRun(chatting.agentRun);
       return;
     }

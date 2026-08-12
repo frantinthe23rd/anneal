@@ -187,7 +187,7 @@ def run_tool(name, args, root, media=None):
                     break
             return True, "\n".join(rows) or "the working folder is empty"
 
-        if name in ("generate_image", "generate_speech", "generate_sfx"):
+        if name in ASSET_TOOLS:
             if not media:
                 return False, "generation is not available here"
             path = safe_path(root, args.get("path"))
@@ -203,11 +203,17 @@ def run_tool(name, args, root, media=None):
 
 
 def run(prompt, root, chat, max_steps=MAX_STEPS, max_seconds=MAX_SECONDS,
-        media=None, on_step=None, system=None, should_stop=None, history=None):
+        media=None, on_step=None, system=None, should_stop=None, history=None,
+        on_call=None):
     """Drive the model until it stops calling tools, or a cap is reached.
 
     `chat(messages, tools)` is injected rather than imported: the loop is the
     part worth testing on its own, and it should not need a model to test.
+
+    `on_call(n, tool)` fires *before* a tool runs and `on_step` after it. Only
+    the second existed, so the record named the last thing that finished and
+    said nothing about what was in flight — during a five-minute image call it
+    was indistinguishable from a run that had died (#75).
 
     `should_stop()` is asked before every tool call, and between turns. Not
     during a model call: one already in flight is not interruptible from here,
@@ -296,6 +302,8 @@ def run(prompt, root, chat, max_steps=MAX_STEPS, max_seconds=MAX_SECONDS,
             except ValueError as exc:
                 ok, result = False, "could not read the arguments: %s" % exc
             else:
+                if on_call:
+                    on_call(steps + 1, name)
                 ok, result = run_tool(name, args, root, media)
 
             steps += 1
@@ -684,6 +692,17 @@ class RunStore:
             trace = record["trace"] + [trimmed_step(entry)]
             self.update(rid, trace=json.dumps(trace), steps=len(trace),
                         stage="step %d: %s" % (len(trace), entry.get("tool") or "?"))
+
+    def working(self, rid, n, tool):
+        """Note the call a run is in, before it returns.
+
+        A run that has been asked to stop keeps its `stopping` stage: the answer
+        to "why is nothing happening" is that it is stopping, not that it is on
+        step five.
+        """
+        if self.cancelled(rid):
+            return
+        self.update(rid, stage="step %d: %s (running)" % (n, tool))
 
     def finish(self, rid, state, reply=None, stopped=None, seconds=None,
                files=None, error=None):

@@ -910,12 +910,38 @@ def agent_chat(model):
     return chat
 
 
+# How long one media tool may block before the agent gives up on it.
+#
+# These used to inherit `_local_json`'s default of PROXY_TIMEOUT — 1800 s, which
+# is the *music* timeout, and music is not one of the agent's tools. So when the
+# image backend died of a Metal OOM mid-generation the worker sat on a dead
+# socket for half an hour, the record claimed to be running the whole time, and
+# a cancel issued 14 minutes in could not be looked at until the socket gave up
+# (#75, #76).
+#
+# Measured over the 89 image generations in this machine's log: min 14.2 s,
+# median 86.9 s, p90 135.6 s, max 164.1 s. 420 s is about two and a half times
+# the worst call ever recorded here, which leaves room for evicting a heavy
+# model and a cold load on top and still bounds the failure at minutes rather
+# than half an hour. Sound effects are seconds (5.2 s cold, measured), so their
+# allowance is mostly headroom for admission control rather than for the work.
+MEDIA_TIMEOUTS = {
+    "generate_image": float(os.environ.get("ANNEAL_AGENT_IMAGE_TIMEOUT", "420")),
+    "generate_speech": float(os.environ.get("ANNEAL_AGENT_SPEECH_TIMEOUT", "300")),
+    "generate_sfx": float(os.environ.get("ANNEAL_AGENT_SFX_TIMEOUT", "180")),
+}
+
+
 def agent_media(root):
     """The generators, saving into the working folder.
 
     Each goes through the gateway's own endpoint, so an agent asking for an
     image pays the same admission control and eviction as anyone else — and
     lands in the library as well as the folder.
+
+    Each is also bounded by MEDIA_TIMEOUTS rather than by the proxy's own
+    half-hour, so a backend that dies costs the run a tool call instead of an
+    afternoon.
     """
     def media(name, args, dest):
         if name == "generate_image":
@@ -924,7 +950,7 @@ def agent_media(root):
                     "steps": 4, "response_format": "path"}
             if args.get("cutout"):
                 body["cutout"] = True
-            data = (_local_json("/v1/images/generations", body).get("data") or [])
+            data = (_local_json("/v1/images/generations", body, timeout=MEDIA_TIMEOUTS['generate_image']).get("data") or [])
             if not data or not data[0].get("path"):
                 return False, "the image service returned nothing"
             shutil.copyfile(data[0]["path"], dest)
@@ -934,7 +960,7 @@ def agent_media(root):
             payload = {"input": args.get("text", ""), "response_format": "wav"}
             if args.get("voice"):
                 payload["voice"] = args["voice"]
-            raw = _local_bytes("/v1/audio/speech", payload)
+            raw = _local_bytes("/v1/audio/speech", payload, timeout=MEDIA_TIMEOUTS['generate_speech'])
             with open(dest, "wb") as fh:
                 fh.write(raw)
             return True, "saved %s (%d bytes)" % (os.path.relpath(dest, root), len(raw))
@@ -943,14 +969,29 @@ def agent_media(root):
             body = {"prompt": args.get("prompt", "")}
             if args.get("seconds"):
                 body["seconds"] = args["seconds"]
-            made = (_local_json("/v1/sfx", body).get("data") or {})
+            made = (_local_json("/v1/sfx", body, timeout=MEDIA_TIMEOUTS['generate_sfx']).get("data") or {})
             if not made.get("path"):
                 return False, "the effect was not produced"
             shutil.copyfile(made["path"], dest)
             return True, "saved %s" % os.path.relpath(dest, root)
 
         return False, "unknown generator %r" % name
-    return media
+
+    def bounded(name, args, dest):
+        """`media`, with a slow or dead backend reported rather than raised.
+
+        The result goes back to the model as a failed step, so it can try
+        something else or finish without it — and, more to the point, the loop
+        gets control back and can see a cancel it was asked for while it waited.
+        """
+        try:
+            return media(name, args, dest)
+        except socket.timeout:
+            return False, ("%s took longer than %.0fs and was given up on"
+                           % (name, MEDIA_TIMEOUTS.get(name, PROXY_TIMEOUT)))
+        except OSError as exc:
+            return False, "%s could not be reached: %s" % (name, exc)
+    return bounded
 
 
 def agent_worker(rid, prompt, root, model, max_steps, history=()):
@@ -972,6 +1013,10 @@ def agent_worker(rid, prompt, root, model, max_steps, history=()):
                         media=agent_media(root), history=history,
                         system=agent.SYSTEM + agent.folder_note(agent_files(root)),
                         on_step=lambda entry: AGENT_RUNS.append_step(rid, entry),
+                        # Written before the call, so a run sitting in a
+                        # five-minute image generation says so instead of
+                        # naming the last thing that finished (#75).
+                        on_call=lambda n, tool: AGENT_RUNS.working(rid, n, tool),
                         should_stop=lambda: AGENT_RUNS.cancelled(rid))
         AGENT_RUNS.finish(rid, "cancelled" if out["stopped"] == "cancelled" else "done",
                           reply=out["reply"], stopped=out["stopped"],
