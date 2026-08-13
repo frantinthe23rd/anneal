@@ -625,6 +625,18 @@ heavy slot; a track already in flight may still land, and a cancelled press
 cannot be resumed. `DELETE /v1/press?id=…` removes the record, with `&files=1`
 to take its audio and cover with it.
 
+**A press that recorded nothing ends `failed`.** Partial is still `done` —
+half an album is a thing you can listen to, and `stage_note` carries the count
+either way as `n/total track(s) recorded`. But every track failing used to end
+`done` with `error` null, so the only sign was a number nothing read. When it is
+`failed`, `error` carries what the music backend said about the first track.
+
+**The high tier has a duration ceiling on a 16 GB machine.** Measured against
+`acestep-v15-sft` at 50 steps: 60 s of audio takes 303 s, 90 s takes 925 s, and
+120 s runs out of Metal memory every time — the process peaks around 22.5 GB
+against 16 GB of RAM, so it is not competing with anything, it simply does not
+fit. Long tracks are the draft tier's job.
+
 **One at a time, and the gateway enforces it.** Press assumes it owns the model
 ordering for its whole run, so a second submission is **queued** rather than
 started alongside — and rather than refused, which would lose the brief you just

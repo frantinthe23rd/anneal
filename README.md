@@ -638,6 +638,7 @@ machine. They are generous — no ordinary request meets one.
 | `ANNEAL_MAX_PRESS_SECONDS` | 1800 | `tracks × duration` for one press. Eight ten-minute tracks was previously accepted and is hours of generation holding the heavy slot |
 | `ANNEAL_MAX_ZIP_BYTES` | 4 GB | The album zip, which is built on disk before any of it is sent |
 | `ANNEAL_JOB_RETENTION_SECONDS` | 7 days | Finished rows in `jobs.db`, pruned hourly. Pending rows are never pruned — that is the replay queue |
+| `ACESTEP_GENERATION_TIMEOUT` | 1800 s | One music generation, enforced by ACE-Step itself. Upstream defaults to 600 s, which is ample for the draft tier and not for the high one: measured here, 90 s of audio at 50 steps takes 925 s, so every high-tier press failed at step 39 of 50 |
 
 Files are served off disk only from under `outputs/` and the backend's own
 cache, only if the resolved path is genuinely inside one of them, and only if

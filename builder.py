@@ -283,6 +283,31 @@ def extract_json(text):
         return None
 
 
+def press_outcome(tracks):
+    """What a finished press actually amounts to: (state, stage_note, error).
+
+    Both endings used to call `finish(pid, "done", ...)` unconditionally — the
+    count of recorded tracks was worked out, put in the note, and then ignored.
+    So an album whose every track failed was `done` with `error` null, and the
+    only sign was a number in a stage note nothing read. Two high-tier presses
+    on this machine went out that way, `0/4` and `0/5`.
+
+    Partial is still done: half an album is a thing you can listen to, and
+    failing it would throw away the tracks that worked. Nothing at all is not.
+    """
+    ok = sum(1 for t in tracks if t.get("state") == "done")
+    note = "%d/%d track(s) recorded" % (ok, len(tracks))
+    if ok:
+        return "done", note, None
+    # Carry up whatever the backend said about the first track, because it is
+    # the same reason for all of them and the caller has nowhere else to look.
+    reason = next((t.get("error") for t in tracks if t.get("error")), None)
+    error = "no tracks were recorded"
+    if reason:
+        error += " — " + str(reason)[:200]
+    return "failed", note, error
+
+
 class PressStore:
     def __init__(self, path):
         self._lock = threading.Lock()
@@ -835,10 +860,10 @@ class Press:
                 cover = {"error": str(exc)[:200]}
             self.store.update(pid, cover=json.dumps(cover))
 
-        ok = sum(1 for t in tracks if t["state"] == "done")
+        state, note, error = press_outcome(tracks)
         self._write_manifest(pid, plan, tracks, cover, req)
-        self.finish(pid, "done", stage_note="%d/%d track(s) recorded" % (ok, len(tracks)))
-        self.log("press %s finished: %d/%d tracks" % (pid, ok, len(tracks)))
+        self.finish(pid, state, stage_note=note, error=error)
+        self.log("press %s finished: %s (%s)" % (pid, note, state))
 
     def _resume(self, pid, press, req):
         plan, tracks = press["plan"], press["tracks"]
@@ -893,10 +918,10 @@ class Press:
                 cover = {"error": str(exc)[:200]}
             self.store.update(pid, cover=json.dumps(cover))
 
-        ok = sum(1 for t in tracks if t.get("state") == "done")
+        state, note, error = press_outcome(tracks)
         self._write_manifest(pid, plan, tracks, cover, req)
-        self.finish(pid, "done", stage_note="%d/%d track(s) recorded" % (ok, len(tracks)))
-        self.log("press %s resumed to completion: %d/%d" % (pid, ok, len(tracks)))
+        self.finish(pid, state, stage_note=note, error=error)
+        self.log("press %s resumed to completion: %s (%s)" % (pid, note, state))
 
     def _write_manifest(self, pid, plan, tracks, cover, req):
         """Write the tracklist beside the audio, so the record is self-describing

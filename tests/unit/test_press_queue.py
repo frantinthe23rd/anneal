@@ -9,6 +9,7 @@ slot, which `start_service` refuses with a 409 that a press has no way to act on
 Refusing the second submission was the cheaper fix and is worse than doing
 nothing: you lose the brief you just typed. So they queue.
 """
+import io
 import os
 import shutil
 import tempfile
@@ -376,3 +377,59 @@ class TestLyricInstruction(QueueCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAnAlbumWithNoAudioIsNotDone(QueueCase):
+    """A press whose every track failed was recorded `done`, with `error` null
+    and a manifest written beside no audio.
+
+    Measured: two high-tier presses on this machine, `0/4 track(s) recorded`
+    and `0/5`, both `done`. The tracks had each failed with an out-of-memory or
+    a timeout from the music backend, and nothing above them said so — which is
+    why "Press with the High model fails" took a while to become a bug report
+    rather than a puzzle.
+    """
+
+    def outcome(self, states):
+        tracks = [{"n": i + 1, "title": "t%d" % i, "duration": 60,
+                   "state": st, "file": "f.flac" if st == "done" else None}
+                  for i, st in enumerate(states)]
+        return builder.press_outcome(tracks)
+
+    def test_every_track_failed_is_a_failure(self):
+        state, note, error = self.outcome(["failed", "failed", "failed", "failed"])
+        self.assertEqual(state, "failed")
+        self.assertIn("0/4", note)
+        self.assertTrue(error)
+
+    def test_the_error_says_what_the_backend_said(self):
+        tracks = [{"n": 1, "title": "t", "duration": 60, "state": "failed",
+                   "file": None, "error": "MPS backend out of memory"}]
+        _state, _note, error = builder.press_outcome(tracks)
+        self.assertIn("out of memory", error)
+
+    def test_some_audio_is_still_a_finished_album(self):
+        """Half an album is a thing you can listen to. The count already says
+        so, and failing it would throw away the tracks that worked."""
+        state, note, error = self.outcome(["done", "failed", "done", "failed"])
+        self.assertEqual(state, "done")
+        self.assertIn("2/4", note)
+        self.assertIsNone(error)
+
+    def test_a_full_album_is_done(self):
+        state, note, error = self.outcome(["done", "done"])
+        self.assertEqual(state, "done")
+        self.assertIn("2/2", note)
+        self.assertIsNone(error)
+
+    def test_an_album_with_no_tracks_at_all_is_a_failure(self):
+        state, _note, error = builder.press_outcome([])
+        self.assertEqual(state, "failed")
+        self.assertTrue(error)
+
+    def test_both_endings_use_it(self):
+        """The fresh path and the resume path both ended with an unconditional
+        `finish(pid, "done")`; neither may go on doing that."""
+        src = io.open(os.path.join(REPO_ROOT, "builder.py"), encoding="utf-8").read()
+        self.assertEqual(src.count('self.finish(pid, "done", stage_note='), 0)
+        self.assertGreaterEqual(src.count("press_outcome("), 3)
