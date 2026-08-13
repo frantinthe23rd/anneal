@@ -60,6 +60,10 @@ MUSIC_TIERS = {
         "model": "acestep-v15-turbo",
         "steps": 8,
         "label": "Draft — fast, distilled (8 steps)",
+        # Wall-clock seconds spent per second of audio, measured end to end over
+        # finished presses on this machine — planning and cover included:
+        # 585 s of audio in 14.5 min, 641 s in 18.5 min, 940 s in 26.9 min.
+        "seconds_per_second": 1.7,
     },
     # Non-turbo. Needs DCW off (patches/apply_patches.py derives that from the
     # model's own is_turbo flag, which upstream never did) plus real CFG, which
@@ -70,9 +74,23 @@ MUSIC_TIERS = {
         "label": "High — fine-tuned, 50 steps",
         "extra_params": {"guidance_scale": 7.0, "cfg_interval_start": 0.0,
                          "cfg_interval_end": 1.0, "use_adg": False},
+        # Six times the draft tier, measured: 60 s of audio took 303 s and 90 s
+        # took 925 s. It is also the reason the estimate has to be per tier — an
+        # album that is an hour at draft is most of a day here, and would have
+        # passed a cap counting seconds of audio.
+        "seconds_per_second": 10.3,
     },
 }
 DEFAULT_MUSIC_TIER = os.environ.get("ANNEAL_MUSIC_TIER", "draft")
+
+
+def press_seconds_per_second(quality):
+    """How long a tier takes per second of audio. Unknown tiers cost the most,
+    so a new one cannot quietly get an unbounded allowance."""
+    tier = MUSIC_TIERS.get(quality) or {}
+    if "seconds_per_second" in tier:
+        return float(tier["seconds_per_second"])
+    return max(float(t.get("seconds_per_second", 1.0)) for t in MUSIC_TIERS.values())
 
 # The text model, named once. mlx_lm is given a *resolved local snapshot*
 # rather than a repo id, so nothing can attempt a Hub lookup at run time.

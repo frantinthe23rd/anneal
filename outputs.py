@@ -101,6 +101,22 @@ def kind_dir(kind):
     return path
 
 
+def path_from_file_url(file_url):
+    """The local path inside a `/v1/audio?path=…` URL, or None.
+
+    Generated files are recorded as the URL the gateway serves them from, so
+    anything that needs the file itself — the album zip, tagging — has to undo
+    that. Shared rather than parsed in each place, because the two that did it
+    independently is exactly how they drift.
+
+    This does not decide whether the path is *allowed*; that is `paths.safe_file`
+    against the caller's own roots, and it is still required.
+    """
+    import urllib.parse
+    params = urllib.parse.parse_qs(urllib.parse.urlparse(file_url or "").query)
+    return (params.get("path") or [""])[0] or None
+
+
 def slugify(text, limit=48):
     slug = re.sub(r"[^A-Za-z0-9]+", "-", (text or "").strip()).strip("-").lower()
     return slug[:limit] or "untitled"

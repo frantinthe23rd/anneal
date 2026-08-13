@@ -18,6 +18,7 @@ import unittest
 from tests.context import REPO_ROOT  # noqa: F401  (sandboxes the environment)
 
 import builder
+import supervisor
 
 
 class QueueCase(unittest.TestCase):
@@ -433,3 +434,89 @@ class TestAnAlbumWithNoAudioIsNotDone(QueueCase):
         src = io.open(os.path.join(REPO_ROOT, "builder.py"), encoding="utf-8").read()
         self.assertEqual(src.count('self.finish(pid, "done", stage_note='), 0)
         self.assertGreaterEqual(src.count("press_outcome("), 3)
+
+
+class TestHowBigAPressMayBe(unittest.TestCase):
+    """The cap used to count seconds of audio, which is not the thing at risk.
+
+    A tier's cost per second differs sixfold — measured here, draft runs at
+    about 1.7x real time end to end and high at 10.3x — so one number over both
+    either lets a high-tier request run for most of a day or stops a draft album
+    that would take an afternoon. An album is normally 45 to 60 minutes, and
+    that has to be expressible.
+    """
+
+    def refusal(self, **payload):
+        payload.setdefault("prompt", "a brief")
+        return supervisor.press_limits(payload)
+
+    def test_an_ordinary_album_is_allowed(self):
+        """Twelve tracks of four minutes — about 48 minutes of music."""
+        self.assertIsNone(self.refusal(tracks=12, duration=240,
+                                       duration_max=240, quality="draft"))
+
+    def test_an_hour_of_draft_is_allowed(self):
+        self.assertIsNone(self.refusal(tracks=14, duration=260,
+                                       duration_max=260, quality="draft"))
+
+    def test_the_same_album_at_the_high_tier_is_refused(self):
+        """Six times the cost. It would still be generating tomorrow."""
+        refusal = self.refusal(tracks=12, duration=240,
+                               duration_max=240, quality="high")
+        self.assertIsNotNone(refusal)
+        self.assertIn("high", refusal)
+
+    def test_the_refusal_says_hours_not_seconds_of_audio(self):
+        """Seconds of audio was never the number a person could act on."""
+        refusal = self.refusal(tracks=8, duration=600, duration_max=600,
+                               quality="high")
+        self.assertIsNotNone(refusal)
+        for word in ("minute", "limit"):
+            self.assertIn(word, refusal.lower())
+
+    def test_more_tracks_than_the_old_eight(self):
+        """Eight was below a normal album, and the reason to cap the count at
+        all is the time it takes, which is now measured directly."""
+        self.assertIsNone(self.refusal(tracks=12, duration=180,
+                                       duration_max=180, quality="draft"))
+
+    def test_a_single_absurd_track_is_still_refused(self):
+        self.assertIsNotNone(self.refusal(tracks=16, duration=600,
+                                          duration_max=600, quality="draft"))
+
+    def test_an_unknown_tier_is_costed_at_the_worst_rate(self):
+        """A tier added later must not get an unbounded allowance by default."""
+        self.assertIsNotNone(self.refusal(tracks=12, duration=240,
+                                          duration_max=240, quality="nonesuch"))
+
+    def test_the_prompt_cap_still_applies(self):
+        refusal = self.refusal(prompt="x" * 99999, tracks=1, duration=60)
+        self.assertIn("character", refusal)
+
+
+class TestTheTrackCapIsOneNumber(unittest.TestCase):
+    """The gateway estimates how long a press will take from the track count it
+    expects; builder clamps to its own. When those disagreed the estimate was
+    computed for an album that never got made — a brief asking for ten was
+    planned as eight, silently, and the guard had sized the ten."""
+
+    def test_the_guard_bounds_what_the_planner_will_plan(self):
+        self.assertEqual(supervisor.press_limits.__globals__["builder"].MAX_TRACKS,
+                         builder.MAX_TRACKS)
+
+    def test_the_ui_offers_the_same_maximum(self):
+        import os
+        with open(os.path.join(REPO_ROOT, "ui.html"), encoding="utf-8") as fh:
+            line = next(l for l in fh if 'id="pTracks"' in l)
+        self.assertIn('max="%d"' % builder.MAX_TRACKS, line)
+
+    def test_the_spec_offers_the_same_maximum(self):
+        import json, os
+        with open(os.path.join(REPO_ROOT, "openapi.json"), encoding="utf-8") as fh:
+            spec = json.load(fh)
+        props = spec["paths"]["/v1/press"]["post"]["requestBody"]["content"][
+            "application/json"]["schema"]["properties"]
+        self.assertEqual(props["tracks"]["maximum"], builder.MAX_TRACKS)
+
+    def test_a_ten_track_album_is_planned_as_ten(self):
+        self.assertGreaterEqual(builder.MAX_TRACKS, 10)

@@ -110,6 +110,20 @@ FFMPEG_CANDIDATES = (
 _FFMPEG = None
 
 
+def ffprobe_bin():
+    """Absolute path to ffprobe, which ships beside ffmpeg.
+
+    Derived from the sibling rather than searched for separately: they come from
+    one install and one of them being present without the other is not a case
+    worth carrying code for. Named here because the alternative in use was
+    `ffmpeg_bin().replace("ffmpeg", "ffprobe")`, which also rewrites a directory
+    that happens to contain the word.
+    """
+    ffmpeg = ffmpeg_bin()
+    head, tail = os.path.split(ffmpeg)
+    return os.path.join(head, tail.replace("ffmpeg", "ffprobe", 1))
+
+
 def ffmpeg_bin(candidates=FFMPEG_CANDIDATES, search_path=True):
     """Absolute path to ffmpeg, or a RuntimeError that says what is missing."""
     global _FFMPEG

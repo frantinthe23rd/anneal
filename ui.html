@@ -1366,7 +1366,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
           <div class="field grid2">
             <div>
               <label class="f" for="pTracks">Tracks</label>
-              <input type="number" id="pTracks" value="1" min="1" max="8">
+              <input type="number" id="pTracks" value="1" min="1" max="20">
             </div>
             <div>
               <label class="f" for="pDur">Typical length (s)</label>
@@ -1374,7 +1374,22 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
             </div>
           </div>
           <div class="hint">On an album the planner varies lengths around this — openers and
-            interludes shorter, centrepieces longer.</div>
+            interludes shorter, centrepieces longer. Leave the window blank to let it
+            range from about two thirds to one and a half times the typical length.</div>
+
+          <div class="field grid2">
+            <div>
+              <label class="f" for="pDurMin">Shortest (s)</label>
+              <input type="number" id="pDurMin" placeholder="auto" min="20" max="600" step="10">
+            </div>
+            <div>
+              <label class="f" for="pDurMax">Longest (s)</label>
+              <input type="number" id="pDurMax" placeholder="auto" min="20" max="600" step="10">
+            </div>
+          </div>
+          <div class="hint">A press is refused if it would take longer than the limit to
+            generate, and the longest length is what that estimate uses — so pinning it
+            is how you fit a longer album inside the same budget.</div>
 
           <div class="field grid2">
             <div>
@@ -3500,6 +3515,8 @@ function renderPresses() {
       $("pPrompt").value = r.prompt || "";
       if (r.tracks) $("pTracks").value = r.tracks;
       if (r.duration) $("pDur").value = r.duration;
+      $("pDurMin").value = r.duration_min || "";
+      $("pDurMax").value = r.duration_max || "";
       if (r.quality) $("pQuality").value = r.quality;
       $("pArt").checked = r.art !== false;
       $("pInst").checked = !!r.instrumental;
@@ -4968,6 +4985,10 @@ async function runPress() {
       prompt,
       tracks: Number($("pTracks").value) || 1,
       duration: Number($("pDur").value) || 90,
+      // Omitted rather than sent as 0 when blank: the server derives the window
+      // from `duration`, and a zero would be a request for silence.
+      duration_min: Number($("pDurMin").value) || undefined,
+      duration_max: Number($("pDurMax").value) || undefined,
       quality: $("pQuality").value,
       art: $("pArt").checked,
       instrumental: $("pInst").checked,

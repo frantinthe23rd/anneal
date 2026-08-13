@@ -451,3 +451,40 @@ class AgentModeFollowsTheConversationTest(unittest.TestCase):
         block = self.src[self.src.index("function reflectAgentMode()"):]
         block = block[:block.index("\nasync function")]
         self.assertNotIn("= false", block)
+
+
+class PressTrackWindowTest(unittest.TestCase):
+    """`duration_max` decides how long the planner may make a track, and it is
+    what the size estimate is computed from — so it was the one parameter that
+    let a longer album fit, and the only way to set it was the API."""
+
+    def setUp(self):
+        with open(UI, encoding="utf-8") as fh:
+            self.src = fh.read()
+
+    def test_the_window_is_in_the_form(self):
+        for wanted in ('id="pDurMin"', 'id="pDurMax"'):
+            self.assertIn(wanted, self.src)
+
+    def test_it_is_sent(self):
+        self.assertIn("duration_min:", self.src)
+        self.assertIn("duration_max:", self.src)
+
+    def test_blank_is_omitted_rather_than_zero(self):
+        """The server derives the window from `duration`; a 0 is a request for
+        silence, and `|| 0` would have sent one."""
+        block = self.src[self.src.index("duration_min:"):]
+        block = block[:block.index("\n", block.index("duration_max:"))]
+        self.assertIn("undefined", block)
+        self.assertNotIn("|| 0", block)
+
+    def test_reuse_brief_restores_them(self):
+        block = self.src[self.src.index("const reuse = el("):]
+        block = block[:block.index("acts.appendChild(reuse)")]
+        self.assertIn('$("pDurMin").value', block)
+        self.assertIn('$("pDurMax").value', block)
+
+    def test_the_track_input_allows_an_album(self):
+        """Eight was below a normal tracklist."""
+        line = next(l for l in self.src.splitlines() if 'id="pTracks"' in l)
+        self.assertIn('max="20"', line)

@@ -50,6 +50,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import services
+import tags
 from services import (SERVICES, MUSIC_TIERS, DEFAULT_MUSIC_TIER,
                       TEXT_MODELS, DEFAULT_TEXT_MODEL,
                       COLD_START_SECONDS, resolve)  # noqa: E402
@@ -126,7 +127,19 @@ MAX_REQUEST_BYTES = int(os.environ.get("ANNEAL_MAX_REQUEST_BYTES", str(2 * 1024 
 MAX_PROMPT_CHARS = int(os.environ.get("ANNEAL_MAX_PROMPT_CHARS", "8000"))
 # A press can ask for 8 tracks of 600s each. Nothing stopped it, and that is
 # most of a day of generation on this hardware from a single unattended request.
-MAX_PRESS_TOTAL_SECONDS = int(os.environ.get("ANNEAL_MAX_PRESS_SECONDS", "1800"))
+# What one unattended request may cost the machine, in minutes of its time —
+# not in seconds of audio, which is what this used to count. A tier's cost per
+# second of music differs sixfold (services.press_seconds_per_second, measured),
+# so a single audio-seconds number either lets a high-tier request run for most
+# of a day or refuses a draft album that takes an afternoon. An album is
+# normally 45 to 60 minutes; at the draft tier that is about 102 minutes of
+# generation, so the default leaves room for one. It still refuses what the old
+# audio-seconds cap refused — eight ten-minute tracks is 136 minutes of draft
+# generation — and the same album at the high tier, which is 13 hours.
+MAX_PRESS_MINUTES = float(os.environ.get("ANNEAL_MAX_PRESS_MINUTES", "120"))
+# The planner's own clamp, not a second copy of it: the guard has to bound the
+# same number builder will actually plan, or the estimate is computed for an
+# album that never gets made.
 # The album zip is assembled in a temp directory before anything is sent, so its
 # size is a disk commitment. Judged from the FLAC masters, which are the largest
 # thing that can go in.
@@ -1673,14 +1686,21 @@ def press_limits(payload):
         except (TypeError, ValueError):
             return default
 
-    count = max(1, min(_int("tracks", 1), 8))
+    count = max(1, min(_int("tracks", 1), builder.MAX_TRACKS))
     target = _int("duration", 90)
     longest = min(600, _int("duration_max", round(target * 1.5)))
-    worst_case = count * max(target, longest)
-    if worst_case > MAX_PRESS_TOTAL_SECONDS:
-        return ("%d track(s) of up to %ds each is %d seconds of audio, over the %d "
-                "second limit for one press — reduce tracks or duration"
-                % (count, longest, worst_case, MAX_PRESS_TOTAL_SECONDS))
+    seconds = count * max(target, longest)
+
+    quality = payload.get("quality") or services.DEFAULT_MUSIC_TIER
+    rate = services.press_seconds_per_second(quality)
+    minutes = seconds * rate / 60.0
+    if minutes > MAX_PRESS_MINUTES:
+        return ("%d track(s) of up to %ds each is %d minutes of music, which at the "
+                "%r tier takes about %d minutes to generate — over the %d minute "
+                "limit for one press. Fewer or shorter tracks, or the draft tier, "
+                "which is about six times faster."
+                % (count, longest, round(seconds / 60), quality, round(minutes),
+                   round(MAX_PRESS_MINUTES)))
     return None
 
 
@@ -2361,6 +2381,15 @@ class Handler(BaseHTTPRequestHandler):
                              "source_bytes": source_bytes}, 413)
             return
 
+        # Resolved before the loop, because every transcode wants it. The
+        # masters carry it already — Press attaches it once the cover exists —
+        # but a press made before that, or one whose master predates tagging,
+        # would otherwise export art-less, so it is attached from the file
+        # rather than copied from the source.
+        cover = press.get("cover") or {}
+        cover_path = paths.safe_file(
+            cover.get("path") if isinstance(cover, dict) else None, IMAGE_ROOTS)
+
         workdir = tempfile.mkdtemp(prefix="press-zip-")
         zip_path = os.path.join(workdir, "album.zip")
         try:
@@ -2381,7 +2410,18 @@ class Handler(BaseHTTPRequestHandler):
                         zf.write(src, stem + ".flac")          # already the master
                         continue
                     out = os.path.join(workdir, stem + "." + fmt)
+                    # A picture only where the container can hold one: raw AAC
+                    # and WAV cannot, and asking ffmpeg to anyway produces a
+                    # file some players refuse.
+                    art = cover_path if fmt in ("mp3", "flac") else None
                     cmd = [paths.ffmpeg_bin(), "-v", "error", "-y", "-i", src]
+                    if art:
+                        cmd += ["-i", art]
+                    cmd += ["-map", "0:a"]
+                    if art:
+                        cmd += ["-map", "1:v", "-c:v", "copy",
+                                "-disposition:v:0", "attached_pic",
+                                "-metadata:s:v", "title=Album cover"]
                     if fmt == "mp3":
                         cmd += ["-c:a", "libmp3lame", "-b:a", bitrate]
                     elif fmt == "aac":
@@ -2390,6 +2430,11 @@ class Handler(BaseHTTPRequestHandler):
                         cmd += ["-c:a", "pcm_s24le"]
                     else:
                         cmd += ["-c:a", "flac"]
+                    # The download is what leaves the machine, so it carries the
+                    # album's details whether or not the master was tagged.
+                    for key, value in tags.track_tags(plan, t, total=len(tracks)).items():
+                        if value:
+                            cmd += ["-metadata", "%s=%s" % (key, value)]
                     cmd.append(out)
                     try:
                         subprocess.run(cmd, check=True, timeout=300)
@@ -2397,9 +2442,6 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception as exc:
                         log("press zip: transcode failed for %s: %r" % (stem, exc))
 
-                cover = press.get("cover") or {}
-                cover_path = paths.safe_file(
-                    cover.get("path") if isinstance(cover, dict) else None, IMAGE_ROOTS)
                 if cover_path:
                     zf.write(cover_path, "cover" + os.path.splitext(cover_path)[1])
 
@@ -2528,8 +2570,7 @@ class Handler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _path_from_file_url(file_url):
-        params = urllib.parse.parse_qs(urllib.parse.urlparse(file_url or "").query)
-        return (params.get("path") or [""])[0] or None
+        return outputs.path_from_file_url(file_url)
 
     # -- persistence ------------------------------------------------------
     def _translate_harmony(self, route, response_body):

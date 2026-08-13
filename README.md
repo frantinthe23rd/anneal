@@ -635,7 +635,8 @@ machine. They are generous — no ordinary request meets one.
 | --- | --- | --- |
 | `ANNEAL_MAX_REQUEST_BYTES` | 2 MB | Any request body. Refused on the declared `Content-Length`, before a byte is read, then the connection is closed |
 | `ANNEAL_MAX_PROMPT_CHARS` | 8000 | A press brief |
-| `ANNEAL_MAX_PRESS_SECONDS` | 1800 | `tracks × duration` for one press. Eight ten-minute tracks was previously accepted and is hours of generation holding the heavy slot |
+| `ANNEAL_MAX_PRESS_MINUTES` | 120 | How long one press may take to *generate*, estimated per tier from measured throughput — draft about 1.7× real time, high 10.3×. It replaced a cap on seconds of audio, which treated an hour-long draft album and a thirteen-hour high-tier one as the same request |
+| `ANNEAL_MAX_PRESS_TRACKS` | 20 | Tracks in one press. The time estimate is the real bound; this only refuses a number that is not a tracklist |
 | `ANNEAL_MAX_ZIP_BYTES` | 4 GB | The album zip, which is built on disk before any of it is sent |
 | `ANNEAL_JOB_RETENTION_SECONDS` | 7 days | Finished rows in `jobs.db`, pruned hourly. Pending rows are never pruned — that is the replay queue |
 | `ACESTEP_GENERATION_TIMEOUT` | 1800 s | One music generation, enforced by ACE-Step itself. Upstream defaults to 600 s, which is ample for the draft tier and not for the high one: measured here, 90 s of audio at 50 steps takes 925 s, so every high-tier press failed at step 39 of 50 |

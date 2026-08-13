@@ -26,7 +26,9 @@ import threading
 import time
 import uuid
 
+import outputs
 import paths
+import tags
 
 # What ACE-Step is asked to render at most, and the floor below which a
 # track is not worth the model load. Both are enforced on every derived bound.
@@ -34,7 +36,12 @@ MAX_TRACK_SECONDS = 600
 MIN_TRACK_SECONDS = 20
 # The most tracks one brief may ask for. Was a literal inside the clamp below,
 # which meant the UI, the spec and INTEGRATION.md each carried their own copy.
-MAX_TRACKS = 8
+#
+# Eight was below a normal album, and it clamped silently: a brief asking for
+# ten was planned as eight with nothing said. What actually bounds a press is
+# how long it would take to generate, which the gateway estimates per tier — so
+# this only has to refuse a number that is not a tracklist.
+MAX_TRACKS = int(os.environ.get("ANNEAL_MAX_PRESS_TRACKS", "20"))
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS presses (
@@ -861,6 +868,7 @@ class Press:
             self.store.update(pid, cover=json.dumps(cover))
 
         state, note, error = press_outcome(tracks)
+        self._tag_tracks(plan, tracks, cover, req)
         self._write_manifest(pid, plan, tracks, cover, req)
         self.finish(pid, state, stage_note=note, error=error)
         self.log("press %s finished: %s (%s)" % (pid, note, state))
@@ -919,9 +927,39 @@ class Press:
             self.store.update(pid, cover=json.dumps(cover))
 
         state, note, error = press_outcome(tracks)
+        self._tag_tracks(plan, tracks, cover, req)
         self._write_manifest(pid, plan, tracks, cover, req)
         self.finish(pid, state, stage_note=note, error=error)
         self.log("press %s resumed to completion: %s (%s)" % (pid, note, state))
+
+    def _tag_tracks(self, plan, tracks, cover, req):
+        """Write the album's details, and its cover, into the finished audio.
+
+        After the cover on purpose: Press paints last so the music model loads
+        once, which means the artwork does not exist while the tracks are being
+        made. Doing it here is the only point where both halves are on disk.
+
+        Best-effort per track. A file that will not take its tags is still a
+        finished take, and losing it to a metadata rewrite would be a far worse
+        bug than the one being fixed — `tags.embed` is written the same way.
+        """
+        art = (cover or {}).get("path") if isinstance(cover, dict) else None
+        done = [t for t in tracks if t.get("state") == "done" and t.get("file")]
+        if not done:
+            return 0
+        year = time.strftime("%Y")
+        written = 0
+        for t in done:
+            path = paths.safe_file(outputs.path_from_file_url(t.get("file")),
+                                   [os.path.join(paths.aimusic_root(), "outputs")])
+            if not path:
+                continue
+            if tags.embed(path, cover=art,
+                          tags=tags.track_tags(plan, t, total=len(tracks), year=year)):
+                written += 1
+        self.log("press: tagged %d/%d track(s)%s"
+                 % (written, len(done), " with cover" if art else ", no cover"))
+        return written
 
     def _write_manifest(self, pid, plan, tracks, cover, req):
         """Write the tracklist beside the audio, so the record is self-describing

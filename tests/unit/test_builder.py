@@ -146,13 +146,16 @@ class TestTrackCountClamping(PressCase):
             _, press = self.run_press({"prompt": "a brief", "tracks": asked})
             self.assertEqual(len(press["tracks"]), 1, asked)
 
-    def test_more_than_eight_is_capped_at_eight(self):
-        for asked in (9, 50, 10000):
+    def test_more_than_the_cap_is_capped(self):
+        """Against `builder.MAX_TRACKS`, not a copy of it. Written as a literal
+        8, this passed while the gateway had been raised to 20 and went on
+        planning eight-track albums for briefs asking for ten."""
+        for asked in (builder.MAX_TRACKS + 1, 50, 10000):
             _, press = self.run_press({"prompt": "a brief", "tracks": asked})
-            self.assertEqual(len(press["tracks"]), 8, asked)
+            self.assertEqual(len(press["tracks"]), builder.MAX_TRACKS, asked)
 
     def test_the_range_between_is_honoured(self):
-        for asked in range(1, 9):
+        for asked in range(1, builder.MAX_TRACKS + 1):
             _, press = self.run_press({"prompt": "a brief", "tracks": asked})
             self.assertEqual(len(press["tracks"]), asked)
 
