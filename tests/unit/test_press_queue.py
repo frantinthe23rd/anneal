@@ -9,6 +9,7 @@ slot, which `start_service` refuses with a 409 that a press has no way to act on
 Refusing the second submission was the cheaper fix and is worse than doing
 nothing: you lose the brief you just typed. So they queue.
 """
+import io
 import os
 import shutil
 import tempfile
@@ -17,6 +18,7 @@ import unittest
 from tests.context import REPO_ROOT  # noqa: F401  (sandboxes the environment)
 
 import builder
+import supervisor
 
 
 class QueueCase(unittest.TestCase):
@@ -376,3 +378,145 @@ class TestLyricInstruction(QueueCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAnAlbumWithNoAudioIsNotDone(QueueCase):
+    """A press whose every track failed was recorded `done`, with `error` null
+    and a manifest written beside no audio.
+
+    Measured: two high-tier presses on this machine, `0/4 track(s) recorded`
+    and `0/5`, both `done`. The tracks had each failed with an out-of-memory or
+    a timeout from the music backend, and nothing above them said so — which is
+    why "Press with the High model fails" took a while to become a bug report
+    rather than a puzzle.
+    """
+
+    def outcome(self, states):
+        tracks = [{"n": i + 1, "title": "t%d" % i, "duration": 60,
+                   "state": st, "file": "f.flac" if st == "done" else None}
+                  for i, st in enumerate(states)]
+        return builder.press_outcome(tracks)
+
+    def test_every_track_failed_is_a_failure(self):
+        state, note, error = self.outcome(["failed", "failed", "failed", "failed"])
+        self.assertEqual(state, "failed")
+        self.assertIn("0/4", note)
+        self.assertTrue(error)
+
+    def test_the_error_says_what_the_backend_said(self):
+        tracks = [{"n": 1, "title": "t", "duration": 60, "state": "failed",
+                   "file": None, "error": "MPS backend out of memory"}]
+        _state, _note, error = builder.press_outcome(tracks)
+        self.assertIn("out of memory", error)
+
+    def test_some_audio_is_still_a_finished_album(self):
+        """Half an album is a thing you can listen to. The count already says
+        so, and failing it would throw away the tracks that worked."""
+        state, note, error = self.outcome(["done", "failed", "done", "failed"])
+        self.assertEqual(state, "done")
+        self.assertIn("2/4", note)
+        self.assertIsNone(error)
+
+    def test_a_full_album_is_done(self):
+        state, note, error = self.outcome(["done", "done"])
+        self.assertEqual(state, "done")
+        self.assertIn("2/2", note)
+        self.assertIsNone(error)
+
+    def test_an_album_with_no_tracks_at_all_is_a_failure(self):
+        state, _note, error = builder.press_outcome([])
+        self.assertEqual(state, "failed")
+        self.assertTrue(error)
+
+    def test_both_endings_use_it(self):
+        """The fresh path and the resume path both ended with an unconditional
+        `finish(pid, "done")`; neither may go on doing that."""
+        src = io.open(os.path.join(REPO_ROOT, "builder.py"), encoding="utf-8").read()
+        self.assertEqual(src.count('self.finish(pid, "done", stage_note='), 0)
+        self.assertGreaterEqual(src.count("press_outcome("), 3)
+
+
+class TestHowBigAPressMayBe(unittest.TestCase):
+    """The cap used to count seconds of audio, which is not the thing at risk.
+
+    A tier's cost per second differs sixfold — measured here, draft runs at
+    about 1.7x real time end to end and high at 10.3x — so one number over both
+    either lets a high-tier request run for most of a day or stops a draft album
+    that would take an afternoon. An album is normally 45 to 60 minutes, and
+    that has to be expressible.
+    """
+
+    def refusal(self, **payload):
+        payload.setdefault("prompt", "a brief")
+        return supervisor.press_limits(payload)
+
+    def test_an_ordinary_album_is_allowed(self):
+        """Twelve tracks of four minutes — about 48 minutes of music."""
+        self.assertIsNone(self.refusal(tracks=12, duration=240,
+                                       duration_max=240, quality="draft"))
+
+    def test_an_hour_of_draft_is_allowed(self):
+        self.assertIsNone(self.refusal(tracks=14, duration=260,
+                                       duration_max=260, quality="draft"))
+
+    def test_the_same_album_at_the_high_tier_is_refused(self):
+        """Six times the cost. It would still be generating tomorrow."""
+        refusal = self.refusal(tracks=12, duration=240,
+                               duration_max=240, quality="high")
+        self.assertIsNotNone(refusal)
+        self.assertIn("high", refusal)
+
+    def test_the_refusal_says_hours_not_seconds_of_audio(self):
+        """Seconds of audio was never the number a person could act on."""
+        refusal = self.refusal(tracks=8, duration=600, duration_max=600,
+                               quality="high")
+        self.assertIsNotNone(refusal)
+        for word in ("minute", "limit"):
+            self.assertIn(word, refusal.lower())
+
+    def test_more_tracks_than_the_old_eight(self):
+        """Eight was below a normal album, and the reason to cap the count at
+        all is the time it takes, which is now measured directly."""
+        self.assertIsNone(self.refusal(tracks=12, duration=180,
+                                       duration_max=180, quality="draft"))
+
+    def test_a_single_absurd_track_is_still_refused(self):
+        self.assertIsNotNone(self.refusal(tracks=16, duration=600,
+                                          duration_max=600, quality="draft"))
+
+    def test_an_unknown_tier_is_costed_at_the_worst_rate(self):
+        """A tier added later must not get an unbounded allowance by default."""
+        self.assertIsNotNone(self.refusal(tracks=12, duration=240,
+                                          duration_max=240, quality="nonesuch"))
+
+    def test_the_prompt_cap_still_applies(self):
+        refusal = self.refusal(prompt="x" * 99999, tracks=1, duration=60)
+        self.assertIn("character", refusal)
+
+
+class TestTheTrackCapIsOneNumber(unittest.TestCase):
+    """The gateway estimates how long a press will take from the track count it
+    expects; builder clamps to its own. When those disagreed the estimate was
+    computed for an album that never got made — a brief asking for ten was
+    planned as eight, silently, and the guard had sized the ten."""
+
+    def test_the_guard_bounds_what_the_planner_will_plan(self):
+        self.assertEqual(supervisor.press_limits.__globals__["builder"].MAX_TRACKS,
+                         builder.MAX_TRACKS)
+
+    def test_the_ui_offers_the_same_maximum(self):
+        import os
+        with open(os.path.join(REPO_ROOT, "ui.html"), encoding="utf-8") as fh:
+            line = next(l for l in fh if 'id="pTracks"' in l)
+        self.assertIn('max="%d"' % builder.MAX_TRACKS, line)
+
+    def test_the_spec_offers_the_same_maximum(self):
+        import json, os
+        with open(os.path.join(REPO_ROOT, "openapi.json"), encoding="utf-8") as fh:
+            spec = json.load(fh)
+        props = spec["paths"]["/v1/press"]["post"]["requestBody"]["content"][
+            "application/json"]["schema"]["properties"]
+        self.assertEqual(props["tracks"]["maximum"], builder.MAX_TRACKS)
+
+    def test_a_ten_track_album_is_planned_as_ten(self):
+        self.assertGreaterEqual(builder.MAX_TRACKS, 10)

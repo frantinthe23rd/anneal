@@ -625,6 +625,33 @@ heavy slot; a track already in flight may still land, and a cancelled press
 cannot be resumed. `DELETE /v1/press?id=…` removes the record, with `&files=1`
 to take its audio and cover with it.
 
+**Finished tracks carry their own details.** Title, artist, album, track number
+and the cover are written into the audio once the cover exists — Press paints
+last, so that is the first moment both halves are on disk. A downloaded album
+carries them too, and a transcode is given the cover from the file rather than
+copied from the master, so a press made before this still exports with artwork.
+FLAC and MP3 hold a picture; raw AAC and WAV cannot, and are tagged without one.
+The audio itself is copied, never re-encoded: a master comes out bit-identical.
+
+**A press is bounded by how long it would take, not by how much audio it is.**
+`ANNEAL_MAX_PRESS_MINUTES` (120) against an estimate built from measured
+throughput per tier — draft about 1.7x real time, high 10.3x. So an hour-long
+draft album is accepted and the same album at the high tier is refused, which a
+cap counting seconds of audio could not express. `duration_max` is what the
+estimate uses, so pinning it is how a longer album fits.
+
+**A press that recorded nothing ends `failed`.** Partial is still `done` —
+half an album is a thing you can listen to, and `stage_note` carries the count
+either way as `n/total track(s) recorded`. But every track failing used to end
+`done` with `error` null, so the only sign was a number nothing read. When it is
+`failed`, `error` carries what the music backend said about the first track.
+
+**The high tier has a duration ceiling on a 16 GB machine.** Measured against
+`acestep-v15-sft` at 50 steps: 60 s of audio takes 303 s, 90 s takes 925 s, and
+120 s runs out of Metal memory every time — the process peaks around 22.5 GB
+against 16 GB of RAM, so it is not competing with anything, it simply does not
+fit. Long tracks are the draft tier's job.
+
 **One at a time, and the gateway enforces it.** Press assumes it owns the model
 ordering for its whole run, so a second submission is **queued** rather than
 started alongside — and rather than refused, which would lose the brief you just

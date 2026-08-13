@@ -37,7 +37,7 @@ MIN_TRIM_SECONDS = 0.75
 
 def _probe_duration(path):
     out = subprocess.run(
-        [paths.ffmpeg_bin().replace("ffmpeg", "ffprobe"), "-v", "error",
+        [paths.ffprobe_bin(), "-v", "error",
          "-show_entries", "format=duration", "-of", "json", path],
         capture_output=True, text=True)
     try:
