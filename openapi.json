@@ -941,7 +941,8 @@
                       "draft",
                       "high"
                     ],
-                    "default": "draft"
+                    "default": "draft",
+                    "description": "`draft` is the distilled model at 8 steps; `high` is the fine-tuned one at 50. On a 16 GB machine `high` has a duration ceiling: 90 s of audio takes about 925 s and works, 120 s runs out of Metal memory every time. Use `draft` for long tracks."
                   },
                   "instrumental": {
                     "type": "boolean",
@@ -1032,7 +1033,7 @@
           "press"
         ],
         "summary": "Press state, or recent presses",
-        "description": "With `id`, the full record: plan, artist, per-track state, lyrics and cover. Without, recent presses.",
+        "description": "With `id`, the full record: plan, artist, per-track state, lyrics and cover. Without, recent presses. A press that recorded no tracks ends `failed` with `error` saying why; one that recorded some ends `done`, and `stage_note` carries `n/total track(s) recorded` in both cases.",
         "parameters": [
           {
             "name": "id",

@@ -203,7 +203,16 @@ SERVICES = {
         "stop_also": ["acestep.api_server:app"],
         "cwd": ACESTEP_DIR,
         "env": {"ACESTEP_API_HOST": "127.0.0.1",
-                "ACESTEP_CONFIG_PATH": MUSIC_TIERS[DEFAULT_MUSIC_TIER]["model"]},
+                "ACESTEP_CONFIG_PATH": MUSIC_TIERS[DEFAULT_MUSIC_TIER]["model"],
+                # Upstream gives one generation 600 s and then abandons the
+                # thread. That is ample for the draft tier and not for the high
+                # one: measured on this machine, 50 steps at 120 s of audio runs
+                # about 15.4 s/step — roughly 770 s — so it was killed at step
+                # 39 of 50, every time, and reported to the caller as a bare
+                # `status: 2`. A 60 s track at the same tier finishes in 303 s
+                # and always worked, which is why this looked like "high is
+                # broken" rather than "high is slow".
+                "ACESTEP_GENERATION_TIMEOUT": str(_int("ACESTEP_GENERATION_TIMEOUT", 1800))},
         "port_env": "ACESTEP_API_PORT",
         "heavy": True,
         # Weights load lazily on the first generation request, not at boot.
