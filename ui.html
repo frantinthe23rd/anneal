@@ -727,7 +727,12 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .navrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   margin: 0 0 20px; }
 .navrow .sp { flex: 1; }
-.pagetabs { display: inline-flex; background: var(--bg); border-radius: var(--radius); }
+/* The transparent border is not decoration: the mode strip below is a .panel,
+   whose 1px border insets its contents, so without a matching one the two rows
+   of tabs sit a pixel apart — Studio's left edge at 125 against Music's at 126.
+   Measured, not guessed; it is the kind of thing you see without seeing. */
+.pagetabs { display: inline-flex; background: var(--bg); border-radius: var(--radius);
+  border: 1px solid transparent; }
 .pagetabs .tab { flex: 0 0 auto; padding: 9px 20px; }
 
 /* ------------------------------------------------------------- doc pages
@@ -1503,7 +1508,9 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
     </div>
   </div>
 
-</div>
+<!-- .wrap continues: the doc pages and the footer belong inside it, or
+     they lose the page's max-width and its gutters and start hard against
+     the viewport edge while the header and the tabs above them do not. -->
 
   <!-- ----------------------------------------------------------- guide -->
   <div class="doc hidden" id="pageGuide">
@@ -2036,6 +2043,7 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
   <footer class="sitefoot">
     <span>Anneal — local generation. MIT licensed, © 2026 Jon Moseley.</span>
   </footer>
+</div>
 
 <!-- ------------------------------------------------------------- key gate -->
 <div class="gate hidden" id="gate">
