@@ -451,3 +451,34 @@ class AgentModeFollowsTheConversationTest(unittest.TestCase):
         block = self.src[self.src.index("function reflectAgentMode()"):]
         block = block[:block.index("\nasync function")]
         self.assertNotIn("= false", block)
+
+
+class ARunShowsWhatItIsDoingTest(unittest.TestCase):
+    """"Is it stuck or actually doing something?" — the transcript showed the
+    last completed step and nothing else, so a five-minute image generation was
+    indistinguishable from a dead worker (#75), and pressing Stop showed
+    nothing at all for as long as fourteen minutes (#76)."""
+
+    def setUp(self):
+        with open(UI, encoding="utf-8") as fh:
+            self.src = fh.read()
+
+    def test_the_call_in_flight_is_rendered(self):
+        block = self.src[self.src.index("function agentRunLines("):]
+        block = block[:block.index("\nfunction waitingOn(")]
+        self.assertIn("waitingOn(run)", block)
+        self.assertIn("working", block)
+
+    def test_a_stop_says_what_it_is_waiting_for(self):
+        block = self.src[self.src.index("function agentRunLines("):]
+        block = block[:block.index("\nfunction waitingOn(")]
+        self.assertIn("stopping", block)
+        self.assertIn("as soon as the step it is in returns", block)
+
+    def test_the_in_flight_step_is_read_from_the_stage(self):
+        """`stage` is the only thing that knows: the trace holds what came
+        back, so a call still running is not in it."""
+        block = self.src[self.src.index("function waitingOn(run)"):]
+        block = block[:block.index("\n}") + 2]
+        self.assertIn("run.stage", block)
+        self.assertIn("run.trace", block)

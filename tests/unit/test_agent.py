@@ -17,10 +17,12 @@ import shutil
 import tempfile
 import time
 import unittest
+import socket
 
 from tests.context import REPO_ROOT
 
 import agent
+import supervisor
 
 
 class SandboxCase(unittest.TestCase):
@@ -1040,3 +1042,118 @@ class TestAnAssetNothingPointsAtIsNotDone(SandboxCase):
 
         open(os.path.join(self.root, "index.html"), "w").write('<img src="logo.png">')
         self.assertIsNone(agent.unreferenced_asset(self.root, trace))
+
+
+class TestAMediaCallIsBounded(SandboxCase):
+    """A crashed image backend cost a run half an hour (#75, #76).
+
+    The media calls inherited `_local_json`'s default of PROXY_TIMEOUT — the
+    *music* timeout, and music is not one of the agent's tools. The worker sat
+    on a dead socket, the record claimed `running`, and a cancel issued
+    fourteen minutes in could not be looked at until the socket gave up.
+    """
+
+    def test_every_generator_has_a_timeout(self):
+        """Asserted against the tool list rather than a copy of it: a fourth
+        generator must not quietly inherit the half-hour."""
+        self.assertEqual(set(supervisor.MEDIA_TIMEOUTS), set(agent.ASSET_TOOLS))
+
+    def test_none_of_them_is_the_proxy_default(self):
+        for tool, seconds in supervisor.MEDIA_TIMEOUTS.items():
+            self.assertLess(seconds, supervisor.PROXY_TIMEOUT, tool)
+
+    def test_an_image_is_allowed_longer_than_the_slowest_one_measured(self):
+        """89 generations in this machine's log: max 164.1 s. The bound has to
+        clear that with room for an eviction and a cold load, or a legitimate
+        picture starts failing."""
+        self.assertGreater(supervisor.MEDIA_TIMEOUTS["generate_image"], 164.1 * 2)
+
+    def test_a_timeout_is_a_failed_step_not_a_failed_run(self):
+        """The loop has to get control back — that is the whole point. A run
+        that dies here cannot see the cancel it was already asked for."""
+        def media(name, args, dest):
+            raise socket.timeout("timed out")
+
+        seen = []
+
+        def chat(messages, tools):
+            if not seen:
+                seen.append(1)
+                return {"content": "", "tool_calls": [
+                    {"id": "a", "type": "function", "function": {
+                        "name": "generate_image",
+                        "arguments": json.dumps({"prompt": "a logo",
+                                                 "path": "logo.png"})}}]}
+            return {"content": "The image did not work, so here is the page.",
+                    "tool_calls": None}
+
+        out = agent.run("make a logo", self.root, chat, media=media)
+        self.assertEqual(out["steps"], 1)
+        self.assertFalse(out["trace"][0]["ok"])
+        self.assertIsNone(out["stopped"])
+        self.assertIn("The image did not work", out["reply"])
+
+    def test_a_cancel_asked_for_during_the_call_is_seen_when_it_returns(self):
+        """The case actually hit: stop pressed while the image call was wedged.
+        It cannot interrupt the call, but it must act the moment it is back."""
+        stopping = {"asked": False}
+
+        def media(name, args, dest):
+            stopping["asked"] = True          # the user presses Stop mid-call
+            raise socket.timeout("timed out")
+
+        def chat(messages, tools):
+            return {"content": "", "tool_calls": [
+                {"id": "a", "type": "function", "function": {
+                    "name": "generate_image",
+                    "arguments": json.dumps({"prompt": "x", "path": "a.png"})}},
+                {"id": "b", "type": "function", "function": {
+                    "name": "write_file",
+                    "arguments": json.dumps({"path": "after.md", "content": "no"})}}]}
+
+        out = agent.run("go", self.root, chat, media=media,
+                        should_stop=lambda: stopping["asked"])
+        self.assertEqual(out["stopped"], "cancelled")
+        self.assertFalse(os.path.exists(os.path.join(self.root, "after.md")))
+
+
+class TestARunSaysWhatItIsDoingNow(RunStoreCase):
+    """"Is it stuck or actually doing something?" had no answer in the record.
+
+    `stage` was written only when a step *completed*, so a run sitting in a
+    five-minute image generation named the last thing that finished — which is
+    indistinguishable from a run whose worker had died (#75).
+    """
+
+    def test_the_stage_names_the_call_in_flight(self):
+        rid = self.start()
+        self.store.working(rid, 5, "generate_image")
+        record = self.store.get(rid)
+        self.assertIn("generate_image", record["stage"])
+        self.assertIn("running", record["stage"])
+        # The trace is still four steps: this one has not come back.
+        self.assertEqual(record["steps"], 0)
+
+    def test_a_run_being_stopped_keeps_saying_so(self):
+        """Otherwise the next call overwrites "stopping" and the person who
+        pressed Stop watches it claim to start more work."""
+        rid = self.start()
+        self.store.cancel(rid)
+        self.store.working(rid, 2, "write_file")
+        self.assertEqual(self.store.get(rid)["stage"], "stopping")
+
+    def test_the_loop_reports_before_it_runs_the_tool(self):
+        order = []
+
+        def chat(messages, tools):
+            if not order:
+                order.append("ask")
+                return {"content": "", "tool_calls": [
+                    {"id": "a", "type": "function", "function": {
+                        "name": "list_files", "arguments": "{}"}}]}
+            return {"content": "done", "tool_calls": None}
+
+        agent.run("go", self.tmp, chat,
+                  on_call=lambda n, tool: order.append("call:%d:%s" % (n, tool)),
+                  on_step=lambda e: order.append("step:%d" % e["step"]))
+        self.assertEqual(order, ["ask", "call:1:list_files", "step:1"])
