@@ -413,3 +413,72 @@ class AgentRunSurvivesTheTabTest(unittest.TestCase):
     def test_an_interrupted_run_is_shown_as_interrupted(self):
         """A gateway restart leaves the record; it must not read as finished."""
         self.assertIn("interrupted", self.fn("function agentRunLines("))
+
+
+class AgentModeFollowsTheConversationTest(unittest.TestCase):
+    """The Agent box was left clear when a conversation with agent work in it
+    was reopened, so the follow-up went to plain chat with no tools and no
+    working folder (#72). Structural, like the rest of this file — the browser
+    check is in the commit."""
+
+    def setUp(self):
+        with open(UI, encoding="utf-8") as fh:
+            self.src = fh.read()
+
+    def test_the_box_is_set_from_the_transcript(self):
+        self.assertIn("function reflectAgentMode()", self.src)
+        block = self.src[self.src.index("function reflectAgentMode()"):]
+        block = block[:block.index("\nasync function")]
+        self.assertIn("agentJob", block)
+        self.assertIn('$("cAgent")', block)
+
+    def test_it_runs_even_when_nothing_is_rendered(self):
+        """`loadChat` opens the conversation with `render: false`, which is the
+        path a reload takes. Inside the render branch the call never ran there,
+        and the box was still clear after coming back — which is the bug."""
+        block = self.src[self.src.index("function openChat("):]
+        block = block[:block.index("\nfunction deleteChat(")]
+        self.assertIn("reflectAgentMode()", block)
+        before, _, after = block.partition("if (render) {")
+        self.assertIn("reflectAgentMode()", before)
+
+    def test_a_run_picked_up_on_load_sets_it_too(self):
+        block = self.src[self.src.index("async function resumeAgentRun()"):]
+        block = block[:block.index("\nasync function runAgent(")]
+        self.assertIn("reflectAgentMode()", block)
+
+    def test_it_never_clears_a_box_the_person_set(self):
+        block = self.src[self.src.index("function reflectAgentMode()"):]
+        block = block[:block.index("\nasync function")]
+        self.assertNotIn("= false", block)
+
+
+class ARunShowsWhatItIsDoingTest(unittest.TestCase):
+    """"Is it stuck or actually doing something?" — the transcript showed the
+    last completed step and nothing else, so a five-minute image generation was
+    indistinguishable from a dead worker (#75), and pressing Stop showed
+    nothing at all for as long as fourteen minutes (#76)."""
+
+    def setUp(self):
+        with open(UI, encoding="utf-8") as fh:
+            self.src = fh.read()
+
+    def test_the_call_in_flight_is_rendered(self):
+        block = self.src[self.src.index("function agentRunLines("):]
+        block = block[:block.index("\nfunction waitingOn(")]
+        self.assertIn("waitingOn(run)", block)
+        self.assertIn("working", block)
+
+    def test_a_stop_says_what_it_is_waiting_for(self):
+        block = self.src[self.src.index("function agentRunLines("):]
+        block = block[:block.index("\nfunction waitingOn(")]
+        self.assertIn("stopping", block)
+        self.assertIn("as soon as the step it is in returns", block)
+
+    def test_the_in_flight_step_is_read_from_the_stage(self):
+        """`stage` is the only thing that knows: the trace holds what came
+        back, so a call still running is not in it."""
+        block = self.src[self.src.index("function waitingOn(run)"):]
+        block = block[:block.index("\n}") + 2]
+        self.assertIn("run.stage", block)
+        self.assertIn("run.trace", block)

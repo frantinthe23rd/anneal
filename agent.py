@@ -44,6 +44,16 @@ MAX_LISTING = 200
 TRACE_RESULT_CHARS = 1200
 TRACE_ARG_CHARS = 300
 
+# How much of the folder's past goes in front of a new prompt. A follow-up used
+# to arrive as a brand-new task (#70), and the fix is bounded on purpose: the
+# whole history is the context window, and the trace already holds enough of a
+# write_file call to replay a site byte for byte if nothing cut it.
+HISTORY_RUNS = 6
+HISTORY_PROMPT_CHARS = 600
+HISTORY_REPLY_CHARS = 800
+HISTORY_TOOLS = 20
+HISTORY_FILES = 40
+
 # The one non-terminal state. A run is a single loop with no stages to be in.
 RUNNING = "running"
 TERMINAL_STATES = ("done", "failed", "cancelled", "interrupted")
@@ -177,7 +187,7 @@ def run_tool(name, args, root, media=None):
                     break
             return True, "\n".join(rows) or "the working folder is empty"
 
-        if name in ("generate_image", "generate_speech", "generate_sfx"):
+        if name in ASSET_TOOLS:
             if not media:
                 return False, "generation is not available here"
             path = safe_path(root, args.get("path"))
@@ -193,22 +203,34 @@ def run_tool(name, args, root, media=None):
 
 
 def run(prompt, root, chat, max_steps=MAX_STEPS, max_seconds=MAX_SECONDS,
-        media=None, on_step=None, system=None, should_stop=None):
+        media=None, on_step=None, system=None, should_stop=None, history=None,
+        on_call=None):
     """Drive the model until it stops calling tools, or a cap is reached.
 
     `chat(messages, tools)` is injected rather than imported: the loop is the
     part worth testing on its own, and it should not need a model to test.
+
+    `on_call(n, tool)` fires *before* a tool runs and `on_step` after it. Only
+    the second existed, so the record named the last thing that finished and
+    said nothing about what was in flight — during a five-minute image call it
+    was indistinguishable from a run that had died (#75).
 
     `should_stop()` is asked before every tool call, and between turns. Not
     during a model call: one already in flight is not interruptible from here,
     so cancelling a run waiting on its first token takes until that token
     arrives. A tool call already running finishes too.
     """
-    messages = [{"role": "system", "content": system or SYSTEM},
-                {"role": "user", "content": prompt}]
+    # `history` is earlier turns in this same folder, oldest first — see
+    # `conversation`. Without them a follow-up is a brand-new task: "now wire
+    # the image in" reaching the model with no idea what the image is, what the
+    # files are called, or that anything happened here before (#70).
+    messages = [{"role": "system", "content": system or SYSTEM}]
+    messages.extend(list(history or []))
+    messages.append({"role": "user", "content": prompt})
     started = time.time()
     trace, steps, stopped, reply = [], 0, None, ""
     nudged = False
+    asked_to_wire = False
 
     while True:
         if should_stop and should_stop():
@@ -217,6 +239,21 @@ def run(prompt, root, chat, max_steps=MAX_STEPS, max_seconds=MAX_SECONDS,
         turn = chat(messages, TOOLS) or {}
         calls = turn.get("tool_calls") or []
         reply = (turn.get("content") or "").strip()
+        if FABRICATED.search(reply):
+            # It has written out tool traffic of its own invention. Whatever it
+            # claims happened in there did not, and showing it as the summary
+            # hands the user a transcript of a conversation that never
+            # happened — measured: "<tool_response>wrote index.html with logo".
+            reply = FABRICATED.sub("", reply).strip()
+        if not calls:
+            # Nothing in `tool_calls`, but the content may be the calls written
+            # out as text — see printed_tool_calls (#73).
+            calls = printed_tool_calls(reply)
+            if calls:
+                # It was never an answer. Leaving it as the reply would show the
+                # user a code block instead of a summary, and hand the next run
+                # a block to imitate.
+                reply = ""
         if not calls:
             # A smaller model often answers the first turn with a *plan* — "I
             # will create index.html, then a stylesheet" — and stops, because
@@ -227,6 +264,16 @@ def run(prompt, root, chat, max_steps=MAX_STEPS, max_seconds=MAX_SECONDS,
                 nudged = True
                 messages.append({"role": "assistant", "content": turn.get("content") or ""})
                 messages.append({"role": "user", "content": NUDGE})
+                continue
+            # It says it is finished. If it made an asset and nothing points at
+            # it, say so once — the system prompt asks for this and measurably
+            # does not get it, and unlike the prompt this can be checked.
+            orphan = None if asked_to_wire else unreferenced_asset(root, trace)
+            page = wire_target(root, trace) if orphan else None
+            if orphan and page:
+                asked_to_wire = True
+                messages.append({"role": "assistant", "content": turn.get("content") or ""})
+                messages.append({"role": "user", "content": WIRE % (orphan, page, orphan)})
                 continue
             break
 
@@ -255,6 +302,8 @@ def run(prompt, root, chat, max_steps=MAX_STEPS, max_seconds=MAX_SECONDS,
             except ValueError as exc:
                 ok, result = False, "could not read the arguments: %s" % exc
             else:
+                if on_call:
+                    on_call(steps + 1, name)
                 ok, result = run_tool(name, args, root, media)
 
             steps += 1
@@ -283,6 +332,11 @@ def run(prompt, root, chat, max_steps=MAX_STEPS, max_seconds=MAX_SECONDS,
 NUDGE = ("Do it now — call the tools. A plan is not the work: nothing exists "
          "until write_file has run. Start with the first file.")
 
+WIRE = ("You made %s and nothing references it, so nobody will see it. Call "
+        "write_file on %s now — the whole page, with %s in it. One tool call, "
+        "and make it; do not describe it. The asset already exists, so do not "
+        "generate it again.")
+
 SYSTEM = """You are working inside one folder on a local machine.
 
 Use the tools to do what is asked. Write real files with write_file — do not
@@ -295,6 +349,17 @@ Describe what you want fully, because these are generators and not editors.
 
 Everything is relative to the working folder. You cannot run commands, reach the
 network, or touch anything outside it — do not claim you have.
+
+Nothing you make is delivered until something points at it. An image, a track or
+a voice line you generate, and any page you add to a site, has to be referenced
+from the page that should link to it: read that page, and write it back with the
+reference in. Writing the new file is half the job — a file sitting in the folder
+that nothing links to is work that was asked for and not received.
+
+Earlier turns may be shown above. They are work you already did and the files
+are still in the folder, so this may be a follow-up rather than a fresh start.
+Call list_files before assuming what is there: the folder is the truth, and the
+summary you wrote last time is not.
 
 When the task is finished, reply with a short plain-English summary of what you
 made. No tool call in that reply is how the work ends."""
@@ -346,6 +411,233 @@ def trimmed_step(entry):
     return {"step": entry.get("step"), "tool": entry.get("tool"), "args": args,
             "ok": bool(entry.get("ok")),
             "result": _text(entry.get("result") or "", TRACE_RESULT_CHARS)}
+
+
+SAVED = re.compile(r"^saved\s+(\S+)")
+# What a generated asset can be put into. Deliberately the text formats the
+# tools can write, because the fix the model is being asked for is a write_file.
+REFERRING_SUFFIXES = (".html", ".htm", ".md", ".css", ".js", ".json", ".txt", ".svg")
+ASSET_TOOLS = ("generate_image", "generate_speech", "generate_sfx")
+
+
+def unreferenced_asset(root, trace):
+    """An asset this run generated that nothing in the folder points at.
+
+    The reported half of #70 — "it generated an image for the website but did
+    not wire it in" — and the one part of it that can be checked rather than
+    asked for. Only assets from *this* run, so a logo deliberately left unused
+    three runs ago is not dragged up every time; and only when there is
+    something to put it in, since a sound effect asked for on its own has no
+    page to go into.
+    """
+    made = []
+    for entry in trace or []:
+        if entry.get("tool") not in ASSET_TOOLS or not entry.get("ok"):
+            continue
+        found = SAVED.match((entry.get("result") or "").strip())
+        if found:
+            made.append(found.group(1))
+    if not made:
+        return None
+
+    pages = []
+    for path, _dirs, names in os.walk(root):
+        for name in names:
+            if name.lower().endswith(REFERRING_SUFFIXES):
+                pages.append(os.path.join(path, name))
+    if not pages:
+        return None
+
+    body = ""
+    for page in pages[:MAX_LISTING]:
+        try:
+            with open(page, "r", encoding="utf-8", errors="replace") as fh:
+                body += fh.read(MAX_READ_BYTES)
+        except OSError:
+            continue
+    for asset in made:
+        if asset not in body and os.path.basename(asset) not in body:
+            return asset
+    return None
+
+
+def wire_target(root, trace):
+    """The page a loose asset most likely belongs in.
+
+    Named in the nudge so the model has one thing to do rather than two. Asked
+    to `read_file` then `write_file`, qwen-coder answered with fabricated
+    `<tool_response>` blocks describing both — it simulated the work instead of
+    doing it, three times out of three. One call is within reach; a chain of
+    two is where it starts pretending.
+    """
+    written = [(entry.get("args") or {}).get("path") for entry in trace or []
+               if entry.get("tool") == "write_file" and entry.get("ok")]
+    pages = [p for p in written if p and p.lower().endswith(REFERRING_SUFFIXES)]
+    if not pages:
+        pages = sorted(f for f in os.listdir(root)
+                       if f.lower().endswith(REFERRING_SUFFIXES)) if os.path.isdir(root) else []
+    for page in pages:
+        if os.path.basename(page).lower().startswith("index."):
+            return page
+    return pages[0] if pages else None
+
+
+# Tool traffic a model has typed into its own reply. It is describing work it
+# did not do, and showing it as a summary hands the user a transcript of a
+# conversation that never happened.
+FABRICATED = re.compile(r"</?tool_(?:response|call)\b[^>]*>", re.I)
+
+
+FENCE = re.compile(r"```(?:json|tool_calls)?\s*\n(.*?)```", re.S | re.I)
+
+
+def printed_tool_calls(content, known=None):
+    """Tool calls a model typed out instead of making, as calls (#73).
+
+    Asked for a page *and* an image in one prompt, qwen-coder answers with a
+    fenced JSON list of `{name, arguments}` and no `tool_calls` at all. The loop
+    saw no calls, stopped, and the run settled having written nothing — six runs
+    out of six, three of them on a build with none of this in it. The blocks are
+    complete and well formed: the model did the work and used the wrong channel.
+
+    #64 taught the loop the shapes Qwen emits natively; this is the next one.
+    Deliberately strict, because the alternative to reading it is doing nothing
+    and the alternative to reading it *wrong* is a bad file on disk:
+
+      - every name must be a real tool, so a JSON document that happens to have
+        a `name` key is not mistaken for a call;
+      - the block must parse whole. A truncated `write_file` is half a file,
+        and half a file is worse than no file;
+      - one bad item refuses the batch, rather than running the prefix of a
+        plan whose remainder was not understood.
+    """
+    names = set(known or TOOL_NAMES)
+    text = (content or "").strip()
+    if not text:
+        return []
+    fenced = FENCE.search(text)
+    if fenced:
+        text = fenced.group(1).strip()
+    if not text or text[0] not in "[{":
+        return []
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return []
+
+    items = parsed if isinstance(parsed, list) else [parsed]
+    if not items:
+        return []
+    calls = []
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            return []
+        # Some models nest it the way the wire format does.
+        fn = item.get("function") if isinstance(item.get("function"), dict) else item
+        name = fn.get("name")
+        if name not in names:
+            return []
+        args = fn.get("arguments")
+        if isinstance(args, str):
+            try:
+                args = json.loads(args or "{}")
+            except ValueError:
+                return []
+        if not isinstance(args, dict):
+            return []
+        calls.append({"id": "typed-%d" % (i + 1), "type": "function",
+                      "function": {"name": name, "arguments": json.dumps(args)}})
+    return calls
+
+
+def looks_like_a_printed_tool_call(reply):
+    """Is this reply a tool call the model typed out instead of making?
+
+    qwen-coder does this on a request that mixes kinds of work — writing a page
+    and generating an image — and the run settles having done nothing (#73).
+    That bug is upstream of here, but history is where it compounds: replayed
+    as an assistant turn, the block becomes the example the next turn imitates,
+    and one bad run poisons every follow-up in the folder. Measured: turn three
+    reproduced turn two's JSON verbatim and called nothing.
+    """
+    text = (reply or "").strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1]
+        text = text.rsplit("```", 1)[0]
+    text = text.strip()
+    if not text or text[0] not in "[{":
+        return False
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        # A truncated block is the common case — it is cut at the reply limit —
+        # so fall back to the shape rather than to the parse.
+        return bool(re.match(r'^[\[{]\s*(\{\s*)?"(name|function|tool_calls)"\s*:', text))
+    items = parsed if isinstance(parsed, list) else [parsed]
+    return any(isinstance(i, dict) and "name" in i and "arguments" in i for i in items)
+
+
+def run_summary(record):
+    """What one finished run says for itself, put back as an assistant turn.
+
+    Its own reply and nothing else. An earlier version added the tool trace and
+    the file list here — "I called: write_file index.html. The folder then held:
+    index.html." — and measured against qwen-coder that was worse than no
+    history at all: the follow-up came back as that sentence repeated, verbatim,
+    with zero tool calls. A small model imitates the last assistant turn, so
+    anything machine-shaped put in its mouth is a template it will fill in
+    rather than a fact it will use. Folder state is real and belongs in the
+    system prompt, where it is the environment talking; see `folder_note`.
+    """
+    parts = []
+    reply = (record.get("reply") or "").strip()
+    if reply and not looks_like_a_printed_tool_call(reply):
+        parts.append(_text(reply, HISTORY_REPLY_CHARS))
+
+    state = record.get("state")
+    if state and state != "done":
+        # A cancelled run's files are in the folder either way, so hiding that
+        # it stopped early would describe a folder that does not exist.
+        parts.append("(That run did not finish — it was %s after %d step(s).)"
+                     % (state, record.get("steps") or 0))
+
+    # Never empty: an assistant turn with no content is one some backends
+    # reject outright, and a run can settle having said nothing at all.
+    return "\n\n".join(parts) or "(That run ended without a summary.)"
+
+
+def folder_note(files):
+    """What is in the working folder, for the end of the system prompt.
+
+    The environment stating a fact, rather than the assistant being made to
+    claim it. This is also the honest source: the trace says what a run did,
+    the folder says what is there now, and after six runs those differ.
+    """
+    names = [f.get("path") for f in (files or []) if f.get("path")]
+    if not names:
+        return ""
+    shown = names[:HISTORY_FILES]
+    more = "" if len(names) <= HISTORY_FILES else ", and %d more" % (len(names) - HISTORY_FILES)
+    return ("\n\nThe folder already contains: %s%s. That work is done and those "
+            "files are real — read one before changing it, and do not write it "
+            "again from scratch unless you were asked to."
+            % (", ".join(shown), more))
+
+
+def conversation(records):
+    """Earlier runs in a folder, as turns to put in front of a new prompt.
+
+    One run becomes two turns — what was asked, and what came back — because
+    that is the shape the loop already speaks and the shape a chat model is
+    trained on. Oldest first, so the last thing before the new prompt is the
+    most recent thing that happened.
+    """
+    turns = []
+    for record in records or []:
+        turns.append({"role": "user",
+                      "content": _text(record.get("prompt") or "", HISTORY_PROMPT_CHARS)})
+        turns.append({"role": "assistant", "content": run_summary(record)})
+    return turns
 
 
 class RunStore:
@@ -401,6 +693,17 @@ class RunStore:
             self.update(rid, trace=json.dumps(trace), steps=len(trace),
                         stage="step %d: %s" % (len(trace), entry.get("tool") or "?"))
 
+    def working(self, rid, n, tool):
+        """Note the call a run is in, before it returns.
+
+        A run that has been asked to stop keeps its `stopping` stage: the answer
+        to "why is nothing happening" is that it is stopping, not that it is on
+        step five.
+        """
+        if self.cancelled(rid):
+            return
+        self.update(rid, stage="step %d: %s (running)" % (n, tool))
+
     def finish(self, rid, state, reply=None, stopped=None, seconds=None,
                files=None, error=None):
         self.update(rid, state=state, stage=stopped or error or state,
@@ -447,6 +750,20 @@ class RunStore:
         rows = self._exec("SELECT %s FROM runs WHERE job = ? ORDER BY created_at DESC"
                           " LIMIT 1" % self.COLUMNS, (job,), fetch=True)
         return self._row(rows[0]) if rows else None
+
+    def history_for(self, job, limit=HISTORY_RUNS, exclude=None):
+        """The runs this folder has already had, oldest last-N first.
+
+        Server-side, so it survives the reconnect the page's own copy does not
+        — which is why the record is the source for history rather than
+        anything the client sends (#70). `exclude` is the run being started:
+        `create()` has already written its row by the time this is asked, and a
+        run must not be given itself as its own past.
+        """
+        rows = self._exec("SELECT %s FROM runs WHERE job = ? AND id IS NOT ?"
+                          " ORDER BY created_at DESC, rowid DESC LIMIT ?"
+                          % self.COLUMNS, (job, exclude, int(limit)), fetch=True) or []
+        return [self._row(r) for r in reversed(rows)]
 
     def active_for(self, job):
         """The id of the run working in this folder, or None.

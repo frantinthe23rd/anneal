@@ -910,12 +910,38 @@ def agent_chat(model):
     return chat
 
 
+# How long one media tool may block before the agent gives up on it.
+#
+# These used to inherit `_local_json`'s default of PROXY_TIMEOUT — 1800 s, which
+# is the *music* timeout, and music is not one of the agent's tools. So when the
+# image backend died of a Metal OOM mid-generation the worker sat on a dead
+# socket for half an hour, the record claimed to be running the whole time, and
+# a cancel issued 14 minutes in could not be looked at until the socket gave up
+# (#75, #76).
+#
+# Measured over the 89 image generations in this machine's log: min 14.2 s,
+# median 86.9 s, p90 135.6 s, max 164.1 s. 420 s is about two and a half times
+# the worst call ever recorded here, which leaves room for evicting a heavy
+# model and a cold load on top and still bounds the failure at minutes rather
+# than half an hour. Sound effects are seconds (5.2 s cold, measured), so their
+# allowance is mostly headroom for admission control rather than for the work.
+MEDIA_TIMEOUTS = {
+    "generate_image": float(os.environ.get("ANNEAL_AGENT_IMAGE_TIMEOUT", "420")),
+    "generate_speech": float(os.environ.get("ANNEAL_AGENT_SPEECH_TIMEOUT", "300")),
+    "generate_sfx": float(os.environ.get("ANNEAL_AGENT_SFX_TIMEOUT", "180")),
+}
+
+
 def agent_media(root):
     """The generators, saving into the working folder.
 
     Each goes through the gateway's own endpoint, so an agent asking for an
     image pays the same admission control and eviction as anyone else — and
     lands in the library as well as the folder.
+
+    Each is also bounded by MEDIA_TIMEOUTS rather than by the proxy's own
+    half-hour, so a backend that dies costs the run a tool call instead of an
+    afternoon.
     """
     def media(name, args, dest):
         if name == "generate_image":
@@ -924,7 +950,7 @@ def agent_media(root):
                     "steps": 4, "response_format": "path"}
             if args.get("cutout"):
                 body["cutout"] = True
-            data = (_local_json("/v1/images/generations", body).get("data") or [])
+            data = (_local_json("/v1/images/generations", body, timeout=MEDIA_TIMEOUTS['generate_image']).get("data") or [])
             if not data or not data[0].get("path"):
                 return False, "the image service returned nothing"
             shutil.copyfile(data[0]["path"], dest)
@@ -934,7 +960,7 @@ def agent_media(root):
             payload = {"input": args.get("text", ""), "response_format": "wav"}
             if args.get("voice"):
                 payload["voice"] = args["voice"]
-            raw = _local_bytes("/v1/audio/speech", payload)
+            raw = _local_bytes("/v1/audio/speech", payload, timeout=MEDIA_TIMEOUTS['generate_speech'])
             with open(dest, "wb") as fh:
                 fh.write(raw)
             return True, "saved %s (%d bytes)" % (os.path.relpath(dest, root), len(raw))
@@ -943,17 +969,32 @@ def agent_media(root):
             body = {"prompt": args.get("prompt", "")}
             if args.get("seconds"):
                 body["seconds"] = args["seconds"]
-            made = (_local_json("/v1/sfx", body).get("data") or {})
+            made = (_local_json("/v1/sfx", body, timeout=MEDIA_TIMEOUTS['generate_sfx']).get("data") or {})
             if not made.get("path"):
                 return False, "the effect was not produced"
             shutil.copyfile(made["path"], dest)
             return True, "saved %s" % os.path.relpath(dest, root)
 
         return False, "unknown generator %r" % name
-    return media
+
+    def bounded(name, args, dest):
+        """`media`, with a slow or dead backend reported rather than raised.
+
+        The result goes back to the model as a failed step, so it can try
+        something else or finish without it — and, more to the point, the loop
+        gets control back and can see a cancel it was asked for while it waited.
+        """
+        try:
+            return media(name, args, dest)
+        except socket.timeout:
+            return False, ("%s took longer than %.0fs and was given up on"
+                           % (name, MEDIA_TIMEOUTS.get(name, PROXY_TIMEOUT)))
+        except OSError as exc:
+            return False, "%s could not be reached: %s" % (name, exc)
+    return bounded
 
 
-def agent_worker(rid, prompt, root, model, max_steps):
+def agent_worker(rid, prompt, root, model, max_steps, history=()):
     """One run, on a thread of its own.
 
     It used to be the request handler's own body, which is why a run was only
@@ -966,9 +1007,16 @@ def agent_worker(rid, prompt, root, model, max_steps):
     # cannot leave the text service pinned for ever.
     pin_service("text")
     try:
+        # The folder as it is now, not as the trace says it was left: six runs
+        # in, those differ, and the model is about to be told to trust one.
         out = agent.run(prompt, root, agent_chat(model), max_steps=max_steps,
-                        media=agent_media(root),
+                        media=agent_media(root), history=history,
+                        system=agent.SYSTEM + agent.folder_note(agent_files(root)),
                         on_step=lambda entry: AGENT_RUNS.append_step(rid, entry),
+                        # Written before the call, so a run sitting in a
+                        # five-minute image generation says so instead of
+                        # naming the last thing that finished (#75).
+                        on_call=lambda n, tool: AGENT_RUNS.working(rid, n, tool),
                         should_stop=lambda: AGENT_RUNS.cancelled(rid))
         AGENT_RUNS.finish(rid, "cancelled" if out["stopped"] == "cancelled" else "done",
                           reply=out["reply"], stopped=out["stopped"],
@@ -982,12 +1030,22 @@ def agent_worker(rid, prompt, root, model, max_steps):
         unpin_service("text")
 
 
-def start_agent_run(prompt, job, root, model, max_steps):
-    """Record the run, then start it. Returns the id."""
+def start_agent_run(prompt, job, root, model, max_steps, with_history=True):
+    """Record the run, seed it with the folder's past, then start it.
+
+    Returns the id and how many earlier runs went in front of the prompt. The
+    history comes from the records rather than from the caller: it is
+    server-side truth that survives a reconnect, and the page's own copy is
+    not (#70). Read after `create()` so the new row can be excluded by id
+    rather than by trusting that nothing else wrote in between.
+    """
     rid = AGENT_RUNS.create(job=job, prompt=prompt, model=model, max_steps=max_steps)
-    threading.Thread(target=agent_worker, args=(rid, prompt, root, model, max_steps),
+    earlier = AGENT_RUNS.history_for(job, exclude=rid) if with_history else []
+    threading.Thread(target=agent_worker,
+                     args=(rid, prompt, root, model, max_steps,
+                           agent.conversation(earlier)),
                      daemon=True).start()
-    return rid
+    return rid, len(earlier)
 
 
 def agent_events(store, rid, sent=0, poll=0.5, idle_ping=15.0,
@@ -3365,6 +3423,13 @@ class Handler(BaseHTTPRequestHandler):
             if not prompt:
                 self._send_json({"code": 400, "error": "'prompt' is required"}, 400)
                 return
+            # Read before anything else is resolved: a payload the caller can
+            # fix should not come back as a 503 about a download.
+            wants_history = payload.get("history", True)
+            if not isinstance(wants_history, bool):
+                self._send_json({"code": 400,
+                                 "error": "'history' must be true or false"}, 400)
+                return
             job, root = agent_root(payload.get("job"))
             # Asked before the model is resolved, and on the folder rather than
             # on the string: two different job names can sanitise to one
@@ -3398,9 +3463,11 @@ class Handler(BaseHTTPRequestHandler):
             # caller gets back is a way of watching it: the stream, or the id
             # to poll. Neither is the run any more, which is the point — the
             # run outlives the connection either way (#67).
-            rid = start_agent_run(prompt, job, root, chosen, steps)
+            rid, carried = start_agent_run(prompt, job, root, chosen, steps,
+                                           with_history=wants_history)
             opening = {"run_id": rid, "job": job, "model": chosen,
                        "state": agent.RUNNING, "max_steps": steps,
+                       "history": carried,
                        "poll": "/v1/agent?id=" + rid}
             if payload.get("stream") is False:
                 self._send_json({"data": opening, "code": 200, "error": None})

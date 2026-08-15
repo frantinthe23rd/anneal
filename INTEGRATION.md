@@ -455,6 +455,17 @@ gateway restart takes the worker and leaves the record, so anything still
 running at startup is marked `interrupted` rather than left claiming to work;
 its files are in the folder, and there is no resume.
 
+**A second run in the same folder is a follow-up.** The earlier prompts and
+what came back go in front of the new one, so "now wire the image in" knows what
+the image is and what the files are called. The turns are read from the run
+records, not from anything the client sends, so they survive the reconnect a
+page's own copy does not — a run started on the laptop is history for the next
+one started on the phone. The last six runs are used and each is trimmed to its
+summary, the tools it called and the files it left: a `write_file` call carries
+the whole file in its arguments, and replaying that untrimmed is the run again.
+Send `history: false` to start over in the folder without clearing it; the
+response says how many runs were carried, as `history`.
+
 **One run per folder.** A second run against a folder that already has one is
 refused with 409 naming the run that holds it, because two loops editing the
 same files have no idea about each other. `POST /v1/agent/cancel {"id": …}`

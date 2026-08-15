@@ -17,10 +17,12 @@ import shutil
 import tempfile
 import time
 import unittest
+import socket
 
 from tests.context import REPO_ROOT
 
 import agent
+import supervisor
 
 
 class SandboxCase(unittest.TestCase):
@@ -628,3 +630,530 @@ class TestTheRunEndpointsAreDocumented(unittest.TestCase):
         import services
         self.assertIn("/v1/agent/cancel", services.GATEWAY_ROUTES)
         self.assertIsNone(services.resolve("/v1/agent/cancel"))
+
+
+class TestPriorRunsBecomeHistory(RunStoreCase):
+    """A follow-up used to arrive as a brand-new task (#70).
+
+    `run()` built its messages from the system prompt and the prompt in front
+    of it, so "now wire the image in" reached the model with no idea what "the
+    image" was, what the files were called, or that a previous run had
+    happened. The working folder persisted; the conversation did not.
+
+    The record from #67 is the source, rather than a copy held in the page:
+    it is server-side, it survives a reconnect, and it is already the thing the
+    page polls.
+    """
+
+    def settled(self, job="demo", prompt="make a page", reply="I made index.html",
+                trace=(), files=(), state="done"):
+        rid = self.store.create(job=job, prompt=prompt, model="qwen-coder", max_steps=12)
+        for entry in trace:
+            self.store.append_step(rid, entry)
+        self.store.finish(rid, state, reply=reply, files=list(files))
+        return rid
+
+    # -- which runs count ---------------------------------------------------
+    def test_a_folder_with_no_history_gives_nothing(self):
+        self.assertEqual(self.store.history_for("empty"), [])
+
+    def test_history_is_oldest_first(self):
+        self.settled(prompt="first")
+        self.settled(prompt="second")
+        self.settled(prompt="third")
+        self.assertEqual([r["prompt"] for r in self.store.history_for("demo")],
+                         ["first", "second", "third"])
+
+    def test_only_this_folder(self):
+        self.settled(job="mine", prompt="mine")
+        self.settled(job="theirs", prompt="theirs")
+        self.assertEqual([r["prompt"] for r in self.store.history_for("mine")], ["mine"])
+
+    def test_the_run_in_flight_is_not_its_own_history(self):
+        """Called after `create()`, so the new run is already a row."""
+        self.settled(prompt="earlier")
+        current = self.start()
+        got = self.store.history_for("demo", exclude=current)
+        self.assertEqual([r["prompt"] for r in got], ["earlier"])
+
+    def test_only_the_last_few_are_kept(self):
+        for i in range(agent.HISTORY_RUNS + 3):
+            self.settled(prompt="run %d" % i)
+        got = self.store.history_for("demo")
+        self.assertEqual(len(got), agent.HISTORY_RUNS)
+        self.assertEqual(got[-1]["prompt"], "run %d" % (agent.HISTORY_RUNS + 2))
+
+    def test_an_interrupted_run_is_still_history(self):
+        """Its files are in the folder, so pretending it did not happen is the
+        one thing that would be wrong."""
+        self.settled(prompt="cut short", state="interrupted")
+        self.assertEqual(len(self.store.history_for("demo")), 1)
+
+    # -- what a run turns into ---------------------------------------------
+    def test_a_run_becomes_a_user_turn_and_an_assistant_turn(self):
+        record = self.store.get(self.settled(prompt="make a page",
+                                             reply="I made index.html"))
+        turns = agent.conversation([record])
+        self.assertEqual([t["role"] for t in turns], ["user", "assistant"])
+        self.assertEqual(turns[0]["content"], "make a page")
+        self.assertIn("I made index.html", turns[1]["content"])
+
+    def test_the_assistant_turn_is_the_models_own_words(self):
+        """Measured: putting the tool trace in the assistant's mouth — "I
+        called: write_file index.html." — made qwen-coder repeat that sentence
+        back and call nothing. A small model imitates the last assistant turn,
+        so it must only ever contain what the model actually said."""
+        rid = self.settled(
+            reply="I made index.html.",
+            trace=[{"step": 1, "tool": "write_file",
+                    "args": {"path": "index.html", "content": "<h1>hi</h1>"},
+                    "ok": True, "result": "wrote index.html"}],
+            files=[{"path": "index.html", "bytes": 11}])
+        said = agent.conversation([self.store.get(rid)])[1]["content"]
+        self.assertEqual(said, "I made index.html.")
+        self.assertNotIn("I called", said)
+        self.assertNotIn("write_file", said)
+
+    def test_the_folder_is_described_by_the_environment_instead(self):
+        """The names still have to reach the model — just not as something it
+        supposedly said. `folder_note` goes on the end of the system prompt."""
+        note = agent.folder_note([{"path": "index.html", "bytes": 11},
+                                  {"path": "art/logo.png", "bytes": 4096}])
+        self.assertIn("index.html", note)
+        self.assertIn("art/logo.png", note)
+
+    def test_an_empty_folder_says_nothing(self):
+        self.assertEqual(agent.folder_note([]), "")
+        self.assertEqual(agent.folder_note(None), "")
+
+    def test_a_tool_call_the_model_typed_out_is_not_replayed(self):
+        """#73: qwen-coder sometimes prints its calls instead of making them,
+        and the run does nothing. History is where that compounds — replayed,
+        the block is the example the next turn copies. Measured before this
+        guard: turn three reproduced turn two's JSON word for word."""
+        printed = ('```json\n[\n  {\n    "name": "write_file",\n'
+                   '    "arguments": {"path": "index.html", "content": "<h1>hi</h1>"}\n'
+                   '  }\n]\n```')
+        self.assertTrue(agent.looks_like_a_printed_tool_call(printed))
+        rid = self.settled(reply=printed)
+        said = agent.conversation([self.store.get(rid)])[1]["content"]
+        self.assertNotIn("write_file", said)
+        self.assertTrue(said.strip())
+
+    def test_a_truncated_printed_call_is_caught_too(self):
+        """The reply is cut at the store's limit, so the common case does not
+        parse as JSON at all."""
+        self.assertTrue(agent.looks_like_a_printed_tool_call(
+            '{"name": "write_file", "arguments": {"path": "notes.md", "content": "## Gui'))
+
+    def test_an_ordinary_reply_is_left_alone(self):
+        for good in ("I made index.html.",
+                     "I wrote notes.md with three bullets, then read it back.",
+                     "Here is what I did: {nothing structured}"):
+            self.assertFalse(agent.looks_like_a_printed_tool_call(good), good)
+
+    def test_a_files_worth_of_content_is_not_replayed(self):
+        """The whole point of trimming: `args.content` carries the file, and a
+        history that repeats every byte the run wrote is the run again."""
+        rid = self.settled(trace=[{"step": 1, "tool": "write_file",
+                                   "args": {"path": "big.txt", "content": "x" * 50000},
+                                   "ok": True, "result": "wrote big.txt"}])
+        said = agent.conversation([self.store.get(rid)])[1]["content"]
+        self.assertLess(len(said), 4000)
+        self.assertNotIn("x" * 2000, said)
+
+    def test_a_run_that_stopped_early_says_so(self):
+        rid = self.settled(prompt="ten pages", reply="", state="cancelled")
+        said = agent.conversation([self.store.get(rid)])[1]["content"]
+        self.assertIn("cancelled", said)
+
+    def test_an_assistant_turn_is_never_empty(self):
+        """An empty assistant message is a turn some backends reject outright."""
+        rid = self.settled(reply="", state="done")
+        said = agent.conversation([self.store.get(rid)])[1]["content"]
+        self.assertTrue(said.strip())
+
+    # -- what the loop does with it ----------------------------------------
+    def test_the_loop_puts_history_between_the_system_prompt_and_the_ask(self):
+        seen = []
+
+        def chat(messages, tools):
+            seen.append([dict(m) for m in messages])
+            return {"content": "done", "tool_calls": None}
+
+        history = [{"role": "user", "content": "make a page"},
+                   {"role": "assistant", "content": "I made index.html"}]
+        agent.run("now wire the image in", self.tmp, chat, history=history)
+        roles = [m["role"] for m in seen[0]]
+        self.assertEqual(roles, ["system", "user", "assistant", "user"])
+        self.assertEqual(seen[0][1]["content"], "make a page")
+        self.assertEqual(seen[0][-1]["content"], "now wire the image in")
+
+    def test_without_history_the_loop_is_what_it_was(self):
+        seen = []
+
+        def chat(messages, tools):
+            seen.append([dict(m) for m in messages])
+            return {"content": "done", "tool_calls": None}
+
+        agent.run("make a page", self.tmp, chat)
+        self.assertEqual([m["role"] for m in seen[0]], ["system", "user"])
+
+
+class TestTheSystemPromptSaysWhatAFollowUpMustDo(unittest.TestCase):
+    """The unwired image was the same fault one level down (#70): the model
+    generated `art/logo.png`, was told "saved art/logo.png", and nothing said
+    an asset it makes has to be referenced from the page it wrote."""
+
+    def test_it_is_told_to_look_before_assuming(self):
+        self.assertIn("list_files", agent.SYSTEM)
+
+    def test_it_is_told_an_unreferenced_asset_is_not_delivered(self):
+        low = agent.SYSTEM.lower()
+        self.assertIn("reference", low)
+        self.assertTrue("generate" in low or "asset" in low)
+
+
+class TestACallTypedOutIsStillACall(SandboxCase):
+    """#73: asked for a page *and* an image in one prompt, qwen-coder stops
+    calling tools and writes the calls out as a fenced JSON block instead. The
+    run settles `done` having done nothing, which from outside is exactly the
+    "it one-shots and ignores feedback" that #70 was reported as.
+
+    The blocks are complete and well formed — checked against four stored
+    records, all ending in a closed `]` and a closing fence — so the model did
+    the work and used the wrong channel. Reading it is the same move #64 made
+    for the shapes Qwen emits natively.
+    """
+
+    FENCED = ('```json\n[\n  {\n    "name": "write_file",\n'
+              '    "arguments": {"path": "index.html", "content": "<h1>hi</h1>"}\n'
+              '  },\n  {\n    "name": "generate_image",\n'
+              '    "arguments": {"prompt": "a logo", "path": "logo.png"}\n'
+              '  }\n]\n```')
+
+    def test_a_fenced_block_of_calls_is_read(self):
+        calls = agent.printed_tool_calls(self.FENCED)
+        self.assertEqual([c["function"]["name"] for c in calls],
+                         ["write_file", "generate_image"])
+        args = json.loads(calls[0]["function"]["arguments"])
+        self.assertEqual(args["path"], "index.html")
+
+    def test_every_call_gets_its_own_id(self):
+        calls = agent.printed_tool_calls(self.FENCED)
+        ids = [c["id"] for c in calls]
+        self.assertEqual(len(set(ids)), len(ids))
+        self.assertTrue(all(c["type"] == "function" for c in calls))
+
+    def test_a_bare_object_counts(self):
+        calls = agent.printed_tool_calls(
+            '{"name": "list_files", "arguments": {}}')
+        self.assertEqual([c["function"]["name"] for c in calls], ["list_files"])
+
+    def test_an_unfenced_list_counts(self):
+        calls = agent.printed_tool_calls(
+            '[{"name": "read_file", "arguments": {"path": "a.md"}}]')
+        self.assertEqual(len(calls), 1)
+
+    def test_arguments_given_as_a_string_are_accepted(self):
+        calls = agent.printed_tool_calls(
+            '{"name": "read_file", "arguments": "{\\"path\\": \\"a.md\\"}"}')
+        self.assertEqual(json.loads(calls[0]["function"]["arguments"])["path"], "a.md")
+
+    # -- what must not be read as a call ----------------------------------
+    def test_ordinary_prose_is_not_a_call(self):
+        for text in ("I made index.html.", "", "Here is some JSON: {\"a\": 1}",
+                     "```json\n{\"title\": \"notes\"}\n```"):
+            self.assertEqual(agent.printed_tool_calls(text), [], text)
+
+    def test_a_name_that_is_not_a_tool_is_not_a_call(self):
+        self.assertEqual(agent.printed_tool_calls(
+            '{"name": "rm_rf", "arguments": {"path": "/"}}'), [])
+
+    def test_a_truncated_block_is_refused(self):
+        """Half a write_file is a broken file. Better to do nothing than to
+        execute a call whose arguments were cut off."""
+        self.assertEqual(agent.printed_tool_calls(
+            '```json\n[{"name": "write_file", "arguments": {"path": "a.html", "cont'), [])
+
+    def test_one_bad_item_refuses_the_whole_batch(self):
+        self.assertEqual(agent.printed_tool_calls(
+            '[{"name": "list_files", "arguments": {}}, {"name": "nope", "arguments": {}}]'),
+            [])
+
+    # -- and the loop acts on them ----------------------------------------
+    def test_the_loop_runs_a_printed_call(self):
+        turns = []
+
+        def chat(messages, tools):
+            turns.append(1)
+            if len(turns) == 1:
+                return {"content": ('```json\n[{"name": "write_file", "arguments": '
+                                    '{"path": "typed.md", "content": "hi"}}]\n```'),
+                        "tool_calls": None}
+            return {"content": "I wrote typed.md.", "tool_calls": None}
+
+        out = agent.run("make typed.md", self.root, chat)
+        self.assertEqual(out["steps"], 1)
+        self.assertEqual(out["trace"][0]["tool"], "write_file")
+        self.assertTrue(os.path.exists(os.path.join(self.root, "typed.md")))
+        self.assertEqual(out["reply"], "I wrote typed.md.")
+
+    def test_the_block_does_not_become_the_reply(self):
+        """It was never an answer, and it must not be shown as one — nor go
+        into the next run's history as something to imitate."""
+        def chat(messages, tools):
+            return {"content": ('[{"name": "list_files", "arguments": {}}]'),
+                    "tool_calls": None}
+
+        out = agent.run("look", self.root, chat, max_steps=2)
+        self.assertNotIn("list_files", out["reply"])
+
+
+class TestAnAssetNothingPointsAtIsNotDone(SandboxCase):
+    """The reported half of #70: "It generated an image for the website but did
+    not wire it in." The model writes the page, then generates the image, and
+    never goes back — asking it to in the system prompt did not move it across
+    three measured runs. So it is asked directly, once, the same way the plan
+    nudge works, and only when the folder actually shows the fault.
+    """
+
+    def image_then_stop(self, extra=None):
+        """A model that writes a page, makes a logo, and stops."""
+        turns = []
+
+        def chat(messages, tools):
+            turns.append(messages[-1].get("content") or "")
+            if len(turns) == 1:
+                return {"content": "", "tool_calls": [
+                    {"id": "a", "type": "function", "function": {
+                        "name": "write_file",
+                        "arguments": json.dumps({"path": "index.html",
+                                                 "content": "<h1>Tuning</h1>"})}},
+                    {"id": "b", "type": "function", "function": {
+                        "name": "generate_image",
+                        "arguments": json.dumps({"prompt": "a logo",
+                                                 "path": "logo.png"})}}]}
+            if extra and len(turns) == 2:
+                return extra(messages)
+            return {"content": "I made the page and a logo.", "tool_calls": None}
+
+        def media(name, args, dest):
+            with open(dest, "wb") as fh:
+                fh.write(b"\x89PNG fake")
+            return True, "saved %s" % os.path.relpath(dest, self.root)
+
+        return chat, media, turns
+
+    def test_it_is_told_when_the_asset_is_not_referenced(self):
+        chat, media, turns = self.image_then_stop()
+        agent.run("make a site with a logo", self.root, chat, media=media)
+        self.assertGreaterEqual(len(turns), 3)
+        self.assertIn("logo.png", turns[2])
+
+    def test_the_nudge_names_the_page_and_asks_for_one_call(self):
+        """Asked to read then write, qwen-coder answered with fabricated
+        <tool_response> blocks for both — it simulated the chain instead of
+        running it. One named call is what it can actually do."""
+        chat, media, turns = self.image_then_stop()
+        agent.run("make a site with a logo", self.root, chat, media=media)
+        self.assertIn("index.html", turns[2])
+        self.assertIn("One tool call", turns[2])
+        self.assertNotIn("read_file", turns[2])
+
+    def test_a_fabricated_transcript_is_not_shown_as_the_summary(self):
+        def chat(messages, tools):
+            return {"content": "<tool_response>\nwrote index.html\n</tool_response>\nAll done.",
+                    "tool_calls": None}
+
+        out = agent.run("go", self.root, chat)
+        self.assertNotIn("tool_response", out["reply"])
+        self.assertIn("All done.", out["reply"])
+
+    def test_it_gets_the_chance_to_fix_it(self):
+        def wire(messages):
+            return {"content": "", "tool_calls": [
+                {"id": "c", "type": "function", "function": {
+                    "name": "write_file",
+                    "arguments": json.dumps({
+                        "path": "index.html",
+                        "content": '<h1>Tuning</h1><img src="logo.png">'})}}]}
+
+        chat, media, _ = self.image_then_stop(extra=wire)
+        out = agent.run("make a site with a logo", self.root, chat, media=media)
+        page = open(os.path.join(self.root, "index.html")).read()
+        self.assertIn('src="logo.png"', page)
+        self.assertIsNone(out["stopped"])
+
+    def test_it_is_asked_only_once(self):
+        """A model that will not do it is not going to do it on the fourth
+        asking, and a loop of its own is worse than the fault."""
+        chat, media, turns = self.image_then_stop()
+        agent.run("make a site with a logo", self.root, chat, media=media)
+        self.assertEqual(sum(1 for t in turns if "logo.png" in t and "reference" in t), 1)
+
+    def test_an_asset_already_referenced_is_left_alone(self):
+        def chat(messages, tools):
+            if not os.path.exists(os.path.join(self.root, "logo.png")):
+                return {"content": "", "tool_calls": [
+                    {"id": "a", "type": "function", "function": {
+                        "name": "write_file",
+                        "arguments": json.dumps({"path": "index.html",
+                                                 "content": '<img src="logo.png">'})}},
+                    {"id": "b", "type": "function", "function": {
+                        "name": "generate_image",
+                        "arguments": json.dumps({"prompt": "a logo",
+                                                 "path": "logo.png"})}}]}
+            return {"content": "Done.", "tool_calls": None}
+
+        def media(name, args, dest):
+            with open(dest, "wb") as fh:
+                fh.write(b"png")
+            return True, "saved %s" % os.path.relpath(dest, self.root)
+
+        out = agent.run("make it", self.root, chat, media=media)
+        self.assertEqual(out["reply"], "Done.")
+        self.assertEqual(out["steps"], 2)
+
+    def test_an_asset_with_no_page_to_go_in_is_left_alone(self):
+        """Asked only for a sound effect, there is nothing to wire it into."""
+        def chat(messages, tools):
+            if not os.path.exists(os.path.join(self.root, "beep.wav")):
+                return {"content": "", "tool_calls": [
+                    {"id": "a", "type": "function", "function": {
+                        "name": "generate_sfx",
+                        "arguments": json.dumps({"description": "a beep",
+                                                 "path": "beep.wav"})}}]}
+            return {"content": "Here is the beep.", "tool_calls": None}
+
+        def media(name, args, dest):
+            with open(dest, "wb") as fh:
+                fh.write(b"wav")
+            return True, "saved %s" % os.path.relpath(dest, self.root)
+
+        out = agent.run("make a beep", self.root, chat, media=media)
+        self.assertEqual(out["reply"], "Here is the beep.")
+
+    def test_the_check_itself(self):
+        open(os.path.join(self.root, "index.html"), "w").write("<h1>no image</h1>")
+        open(os.path.join(self.root, "logo.png"), "wb").write(b"png")
+        trace = [{"tool": "generate_image", "ok": True, "result": "saved logo.png"}]
+        self.assertEqual(agent.unreferenced_asset(self.root, trace), "logo.png")
+
+        open(os.path.join(self.root, "index.html"), "w").write('<img src="logo.png">')
+        self.assertIsNone(agent.unreferenced_asset(self.root, trace))
+
+
+class TestAMediaCallIsBounded(SandboxCase):
+    """A crashed image backend cost a run half an hour (#75, #76).
+
+    The media calls inherited `_local_json`'s default of PROXY_TIMEOUT — the
+    *music* timeout, and music is not one of the agent's tools. The worker sat
+    on a dead socket, the record claimed `running`, and a cancel issued
+    fourteen minutes in could not be looked at until the socket gave up.
+    """
+
+    def test_every_generator_has_a_timeout(self):
+        """Asserted against the tool list rather than a copy of it: a fourth
+        generator must not quietly inherit the half-hour."""
+        self.assertEqual(set(supervisor.MEDIA_TIMEOUTS), set(agent.ASSET_TOOLS))
+
+    def test_none_of_them_is_the_proxy_default(self):
+        for tool, seconds in supervisor.MEDIA_TIMEOUTS.items():
+            self.assertLess(seconds, supervisor.PROXY_TIMEOUT, tool)
+
+    def test_an_image_is_allowed_longer_than_the_slowest_one_measured(self):
+        """89 generations in this machine's log: max 164.1 s. The bound has to
+        clear that with room for an eviction and a cold load, or a legitimate
+        picture starts failing."""
+        self.assertGreater(supervisor.MEDIA_TIMEOUTS["generate_image"], 164.1 * 2)
+
+    def test_a_timeout_is_a_failed_step_not_a_failed_run(self):
+        """The loop has to get control back — that is the whole point. A run
+        that dies here cannot see the cancel it was already asked for."""
+        def media(name, args, dest):
+            raise socket.timeout("timed out")
+
+        seen = []
+
+        def chat(messages, tools):
+            if not seen:
+                seen.append(1)
+                return {"content": "", "tool_calls": [
+                    {"id": "a", "type": "function", "function": {
+                        "name": "generate_image",
+                        "arguments": json.dumps({"prompt": "a logo",
+                                                 "path": "logo.png"})}}]}
+            return {"content": "The image did not work, so here is the page.",
+                    "tool_calls": None}
+
+        out = agent.run("make a logo", self.root, chat, media=media)
+        self.assertEqual(out["steps"], 1)
+        self.assertFalse(out["trace"][0]["ok"])
+        self.assertIsNone(out["stopped"])
+        self.assertIn("The image did not work", out["reply"])
+
+    def test_a_cancel_asked_for_during_the_call_is_seen_when_it_returns(self):
+        """The case actually hit: stop pressed while the image call was wedged.
+        It cannot interrupt the call, but it must act the moment it is back."""
+        stopping = {"asked": False}
+
+        def media(name, args, dest):
+            stopping["asked"] = True          # the user presses Stop mid-call
+            raise socket.timeout("timed out")
+
+        def chat(messages, tools):
+            return {"content": "", "tool_calls": [
+                {"id": "a", "type": "function", "function": {
+                    "name": "generate_image",
+                    "arguments": json.dumps({"prompt": "x", "path": "a.png"})}},
+                {"id": "b", "type": "function", "function": {
+                    "name": "write_file",
+                    "arguments": json.dumps({"path": "after.md", "content": "no"})}}]}
+
+        out = agent.run("go", self.root, chat, media=media,
+                        should_stop=lambda: stopping["asked"])
+        self.assertEqual(out["stopped"], "cancelled")
+        self.assertFalse(os.path.exists(os.path.join(self.root, "after.md")))
+
+
+class TestARunSaysWhatItIsDoingNow(RunStoreCase):
+    """"Is it stuck or actually doing something?" had no answer in the record.
+
+    `stage` was written only when a step *completed*, so a run sitting in a
+    five-minute image generation named the last thing that finished — which is
+    indistinguishable from a run whose worker had died (#75).
+    """
+
+    def test_the_stage_names_the_call_in_flight(self):
+        rid = self.start()
+        self.store.working(rid, 5, "generate_image")
+        record = self.store.get(rid)
+        self.assertIn("generate_image", record["stage"])
+        self.assertIn("running", record["stage"])
+        # The trace is still four steps: this one has not come back.
+        self.assertEqual(record["steps"], 0)
+
+    def test_a_run_being_stopped_keeps_saying_so(self):
+        """Otherwise the next call overwrites "stopping" and the person who
+        pressed Stop watches it claim to start more work."""
+        rid = self.start()
+        self.store.cancel(rid)
+        self.store.working(rid, 2, "write_file")
+        self.assertEqual(self.store.get(rid)["stage"], "stopping")
+
+    def test_the_loop_reports_before_it_runs_the_tool(self):
+        order = []
+
+        def chat(messages, tools):
+            if not order:
+                order.append("ask")
+                return {"content": "", "tool_calls": [
+                    {"id": "a", "type": "function", "function": {
+                        "name": "list_files", "arguments": "{}"}}]}
+            return {"content": "done", "tool_calls": None}
+
+        agent.run("go", self.tmp, chat,
+                  on_call=lambda n, tool: order.append("call:%d:%s" % (n, tool)),
+                  on_step=lambda e: order.append("step:%d" % e["step"]))
+        self.assertEqual(order, ["ask", "call:1:list_files", "step:1"])
