@@ -867,18 +867,47 @@ curl -X POST "$ANNEAL_URL/v1/images/generations" \
   -d '{"prompt":"a lighthouse in a storm, oil painting","size":"1024x1024","steps":4}'
 ```
 
-→ `{"created": ..., "data": [{"b64_json": "...", "path": "...", "seed": 7, "seconds": 122.4}]}`
+→ `{"created": ..., "data": [{"b64_json": "...", "path": "...", "seed": 7, "seconds": 122.4, "model": "schnell", "steps": 4}]}`
 
 | Field | Default | Notes |
 | --- | --- | --- |
 | `prompt` | — | Required. |
+| `model` | `schnell` | Short name or repo id. Naming one that is not loaded restarts the image backend. See below. |
 | `size` | `1024x1024` | Snapped to a multiple of 16, max ~1536x1536. Smaller is proportionally faster. |
-| `steps` | `4` | schnell is distilled for 4 steps; more mostly costs time. |
+| `steps` | per model | 4 for `schnell`, 9 for `photoreal` — what each was distilled for. Omit it unless you mean to override. |
 | `n` | `1` | Max 4. Each costs a full generation. |
 | `seed` | random | With `n>1` seeds increment from this. |
 | `response_format` | `b64_json` | Use `path` to skip base64 and fetch via `/v1/images/file?path=`. |
 | `init_image` | — | Absolute `path` from a previous result. Makes this a **variation** of that image. Paths outside the server's output directory are rejected with 400. |
 | `retention` | `0.7` | 0.3–0.95. How much of `init_image` survives. Ignored without it. |
+
+### Choosing the model
+
+Two are offered. `GET /health` returns them under `limits.image` with the
+licence, the step count, whether the weights are on this host and which one is
+loaded right now — build the control from that rather than from this table,
+which will go stale.
+
+| `model` | Steps | 768x1024 | Licence |
+| --- | --- | --- | --- |
+| `schnell` | 4 | ~110 s | Apache-2.0 |
+| `photoreal` | 9 | ~190 s | CreativeML OpenRAIL-M |
+
+`photoreal` is a finetune of Z-Image-Turbo. It is better on skin, faces and how
+light falls, at roughly 1.7x the time, and its licence attaches use
+restrictions the Apache-2.0 default does not.
+
+It is **not** a way around a content filter. That is what it was added for, and
+the assumption did not survive being checked: on the same prompt, seed and size
+both models drew an unclothed figure competently. Neither is doing any refusing,
+so pick on realism and speed.
+
+Only one image model fits in memory and mflux holds its weights for the life of
+the process, so naming a different one than the one loaded restarts the backend
+and pays the cold load again — the same trade `quality` makes on music. An
+unknown name is 400 rather than quietly served by the default; a known one this
+host has not downloaded is 503 naming the command that fetches it. Responses
+carry the `model` and `steps` that produced them.
 
 ### Variations are another take, not an edit
 

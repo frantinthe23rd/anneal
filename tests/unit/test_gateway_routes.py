@@ -24,6 +24,7 @@ from http.server import ThreadingHTTPServer
 
 from tests import context
 
+import services
 import supervisor
 
 KEY = context.TEST_API_KEY
@@ -621,6 +622,49 @@ class TestAgentRunEndpoints(GatewayCase):
         status, _, body, _ = self.request("POST", "/v1/agent/cancel", key=KEY,
                                           payload={"id": rid})
         self.assertEqual(status, 409, body)
+
+
+class TestChoosingAnImageModel(GatewayCase):
+    """`model` on /v1/images/generations, refused before anything is started.
+
+    Every request here names a model deliberately. Both branches under test
+    return before `start_service()`, and the suite's HF_HOME is empty so every
+    model reads as not-installed — but a request with no `model` at all would
+    fall through to the proxy and begin a multi-gigabyte load on this machine.
+    """
+
+    def post(self, payload):
+        return self.request("POST", "/v1/images/generations", key=KEY, payload=payload)
+
+    def test_an_unknown_model_is_400_and_lists_the_ones_that_exist(self):
+        status, _, body, _ = self.post({"prompt": "an anvil", "model": "dall-e-3"})
+        self.assertEqual(status, 400)
+        self.assertIn("dall-e-3", body["error"])
+        for name in services.IMAGE_MODELS:
+            self.assertIn(name, body["error"])
+
+    def test_the_error_says_where_to_find_out_what_is_installed(self):
+        _, _, body, _ = self.post({"prompt": "an anvil", "model": "dall-e-3"})
+        self.assertIn("/health", body["error"])
+
+    def test_a_known_but_missing_model_is_503_naming_the_model(self):
+        for name in services.IMAGE_MODELS:
+            status, _, body, _ = self.post({"prompt": "an anvil", "model": name})
+            self.assertEqual(status, 503, name)
+            self.assertEqual(body["model"], name)
+            self.assertIn("./anneal models", body["error"])
+
+    def test_the_repo_id_is_accepted_as_the_name(self):
+        """A client sends back whatever `model` string it was given, and the
+        served list carries the repo alongside the short name."""
+        repo = services.IMAGE_MODELS[services.DEFAULT_IMAGE_MODEL]["repo"]
+        status, _, body, _ = self.post({"prompt": "an anvil", "model": repo})
+        self.assertEqual(status, 503)
+        self.assertEqual(body["model"], services.DEFAULT_IMAGE_MODEL)
+
+    def test_nothing_was_started(self):
+        self.assertFalse(supervisor.SERVICE_OBJECTS["image"].is_running())
+        self.assertEqual(supervisor.SERVICE_OBJECTS["image"].epoch, 0)
 
 
 class TestProxyRefusal(GatewayCase):

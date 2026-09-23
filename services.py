@@ -173,6 +173,66 @@ def text_model_path(repo=None):
                         "models--" + repo.replace("/", "--"),
                         "snapshots", revision or "main")
 
+# Image models. The backend loads one at startup and holds it for the life of
+# the process, so choosing means restarting it — the same trade MUSIC_TIERS and
+# TEXT_MODELS already make, surfaced the same way rather than hidden.
+#
+# `loader` names the mflux class, because these are not the same architecture:
+# FLUX goes through Flux1, Z-Image through ZImageTurbo. `steps` is what each
+# model was distilled for and differs by more than a rounding — asking schnell
+# for nine wastes five, asking Z-Image for four returns mush — so the step
+# default is per model rather than one constant the caller has to know to
+# override.
+#
+# What the second model is *not*: an unlock. This was added on the assumption
+# that schnell would not draw an unclothed figure. It does — measured on the
+# same prompt, seed and size, both models returned a competent one, so no
+# filter is being worked around here and neither entry should be described as
+# lifting one. What separates them is photographic realism and speed.
+#
+# Only the default is required. Nobody should fetch 5.9 GB to make a cover.
+IMAGE_MODELS = {
+    "schnell": {
+        "repo": "dhairyashil/FLUX.1-schnell-mflux-4bit",
+        "loader": "flux-schnell",
+        "label": "FLUX.1 schnell — the default, 4 steps",
+        "licence": "Apache-2.0",
+        "steps": 4,
+        "note": "Distilled for four steps: about 110 s for 768x1280 on this "
+                "machine. The faster of the two and the more permissively "
+                "licensed. Weaker on skin, faces and light, where it looks "
+                "rendered rather than photographed.",
+    },
+    "photoreal": {
+        "repo": "avlp12/CyberRealistic-Z-Image-Turbo-v4-mflux-4bit",
+        "loader": "z-image-turbo",
+        "label": "CyberRealistic Z-Image — photographic, 9 steps",
+        "licence": "CreativeML OpenRAIL-M",
+        "steps": 9,
+        "note": "A photoreal finetune of Tongyi-MAI/Z-Image-Turbo, whose base "
+                "is Apache-2.0. Nine steps and no CFG: about 190 s for "
+                "768x1280 against the default's 110, and it earns that on skin "
+                "texture, faces and how light falls. Its licence adds use "
+                "restrictions the Apache-2.0 default does not — read them "
+                "before shipping anything made with it.",
+    },
+}
+DEFAULT_IMAGE_MODEL = os.environ.get("ANNEAL_IMAGE_MODEL", "schnell")
+if DEFAULT_IMAGE_MODEL not in IMAGE_MODELS:
+    DEFAULT_IMAGE_MODEL = "schnell"
+
+
+def image_model_path(repo=None):
+    """The local snapshot for an image model, or None if it is not downloaded.
+
+    Unlike the text backend, mflux is handed the repo id and resolves it from
+    the cache itself, so this exists for the availability check rather than for
+    the launch — the question "would this 503" answered without a download.
+    """
+    repo = repo or IMAGE_MODELS[DEFAULT_IMAGE_MODEL]["repo"]
+    return paths.hf_snapshot(repo, _locked_revision(repo))
+
+
 # Roughly how long a cold start takes, measured on the reference machine. Not a
 # timeout and not a promise — it is what the interface needs in order to warn
 # before a slow request, and it belongs next to the services it describes
@@ -255,7 +315,12 @@ SERVICES = {
     "image": {
         "routes": ["/v1/images"],
         "port": _int("IMAGE_PORT", 8013),
-        "cmd": [GEN_PYTHON, os.path.join(HERE, "image_server.py")],
+        # The model is on the command line, not in `env`, so `ps` can say which
+        # one a running backend actually holds. A backend can outlive the
+        # supervisor, and then the spec describes what the *next* start would
+        # use rather than what is answering.
+        "cmd": [GEN_PYTHON, os.path.join(HERE, "image_server.py"),
+                "--model", DEFAULT_IMAGE_MODEL],
         "cwd": HERE,
         "env": {},
         "port_env": "IMAGE_PORT",

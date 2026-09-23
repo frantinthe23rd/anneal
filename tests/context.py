@@ -69,6 +69,12 @@ def install():
     os.environ["ACESTEP_DIR"] = os.path.join(root, "ACE-Step-1.5")
     os.makedirs(os.environ["ACESTEP_DIR"], exist_ok=True)
     os.environ["IMAGE_OUTPUT_DIR"] = os.path.join(root, "outputs", "images")
+    # Empty, and deliberately so. "Is this model downloaded" now decides
+    # whether an endpoint 503s or starts a multi-gigabyte load, and tools/
+    # test.sh sources env.sh — so without this the answer came from whatever
+    # this machine happens to have fetched, and a test asserting the 503 would
+    # instead have driven the gateway into starting a backend.
+    os.environ["HF_HOME"] = os.path.join(root, "hf-cache")
     os.environ["ACESTEP_API_KEY"] = TEST_API_KEY
     os.environ["SUPERVISOR_HOST"] = "127.0.0.1"
     os.environ["SUPERVISOR_PORT"] = CLOSED_PORT
@@ -78,6 +84,8 @@ def install():
     # that launched them.
     os.environ.pop("ANNEAL_ALLOWED_LOGINS", None)
     os.environ.pop("ANNEAL_MUSIC_TIER", None)
+    os.environ.pop("ANNEAL_IMAGE_MODEL", None)
+    os.environ.pop("IMAGE_MODEL", None)
 
     if REPO_ROOT not in sys.path:
         sys.path.insert(0, REPO_ROOT)
