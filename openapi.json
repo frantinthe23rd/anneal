@@ -365,7 +365,7 @@
           "image"
         ],
         "summary": "Generate an image",
-        "description": "Synchronous. Measured at ~120s per 1024x1024 image at 4 steps on this hardware, plus ~30-60s model load if the image model is cold. Smaller sizes are proportionally faster.\n\nOnly one heavy model fits in memory, so an image request evicts an **idle** music model. If music is mid-generation the request is refused with **409** and a `Retry-After` header rather than killing that job — retry when it finishes, or stop music explicitly to take the slot. Set client timeouts to 900s or more.",
+        "description": "Synchronous. Measured at ~120s per 1024x1024 image at 4 steps on this hardware, plus ~30-60s model load if the image model is cold. Smaller sizes are proportionally faster.\n\nOnly one heavy model fits in memory, so an image request evicts an **idle** music model. If music is mid-generation the request is refused with **409** and a `Retry-After` header rather than killing that job — retry when it finishes, or stop music explicitly to take the slot. Set client timeouts to 900s or more.\n\nMeasured at 768x1024 on this hardware: schnell about 110s at 4 steps, photoreal about 190s at 9. Naming a `model` other than the loaded one restarts the backend, which adds the cold load again.",
         "requestBody": {
           "required": true,
           "content": {
@@ -380,7 +380,8 @@
                 "n": 1,
                 "response_format": "b64_json",
                 "init_image": "/path/to/anneal-root/outputs/images/a_puffin-42.png",
-                "retention": 0.7
+                "retention": 0.7,
+                "model": "schnell"
               }
             }
           }
@@ -399,7 +400,9 @@
                       "seed": 42,
                       "seconds": 34.2,
                       "b64_json": "iVBORw0KGgo...",
-                      "derived_from": null
+                      "derived_from": null,
+                      "model": "schnell",
+                      "steps": 4
                     }
                   ],
                   "code": 200
@@ -2230,6 +2233,11 @@
           "prompt": {
             "type": "string"
           },
+          "model": {
+            "type": "string",
+            "default": "schnell",
+            "description": "Which model draws. A short name (`schnell`, `photoreal`) or its repo id. Omit for the host default.\n\nOnly one image model fits in memory and mflux holds its weights for the life of the process, so naming a different one than the one loaded **restarts the image backend** and pays a cold load — the same trade `quality` makes on music. `GET /health` reports `limits.image`: the models this host has, their licences, their step counts, and which is loaded right now.\n\nAn unknown name is **400**, not silently served by the default. A known one that is not downloaded is **503** naming the command that fetches it."
+          },
           "size": {
             "type": "string",
             "default": "1024x1024",
@@ -2240,7 +2248,7 @@
             "minimum": 1,
             "maximum": 20,
             "default": 4,
-            "description": "schnell is distilled for 4 steps."
+            "description": "Defaults to what the chosen model was distilled for — 4 for schnell, 9 for photoreal — so a caller who does not care about steps should omit this rather than send 4."
           },
           "n": {
             "type": "integer",

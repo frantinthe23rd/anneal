@@ -727,7 +727,12 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
 .navrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   margin: 0 0 20px; }
 .navrow .sp { flex: 1; }
-.pagetabs { display: inline-flex; background: var(--bg); border-radius: var(--radius); }
+/* The transparent border is not decoration: the mode strip below is a .panel,
+   whose 1px border insets its contents, so without a matching one the two rows
+   of tabs sit a pixel apart — Studio's left edge at 125 against Music's at 126.
+   Measured, not guessed; it is the kind of thing you see without seeing. */
+.pagetabs { display: inline-flex; background: var(--bg); border-radius: var(--radius);
+  border: 1px solid transparent; }
 .pagetabs .tab { flex: 0 0 auto; padding: 9px 20px; }
 
 /* ------------------------------------------------------------- doc pages
@@ -1230,6 +1235,12 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
           <label class="f" for="iPrompt">Describe the image</label>
           <textarea id="iPrompt" placeholder="a blacksmith's anvil at dawn, sparks in cold air, photographic"></textarea>
 
+          <div class="field">
+            <label class="f" for="iModel">Model</label>
+            <select id="iModel"></select>
+            <div class="hint" id="iModelNote"></div>
+          </div>
+
           <div class="field grid2">
             <div>
               <label class="f" for="iSize">Size</label>
@@ -1245,7 +1256,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
               <input type="number" id="iSteps" value="4" min="1" max="20">
             </div>
           </div>
-          <div class="hint">Schnell is distilled for 4 steps — more mostly costs time. Smaller sizes are proportionally faster.</div>
+          <div class="hint">Each model is distilled for its own step count, and the box follows the
+            model — more mostly costs time. Smaller sizes are proportionally faster.</div>
 
           <div class="field">
             <label class="check"><input type="checkbox" id="iCutout"> Cut out the background</label>
@@ -1503,7 +1515,9 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
     </div>
   </div>
 
-</div>
+<!-- .wrap continues: the doc pages and the footer belong inside it, or
+     they lose the page's max-width and its gutters and start hard against
+     the viewport edge while the header and the tabs above them do not. -->
 
   <!-- ----------------------------------------------------------- guide -->
   <div class="doc hidden" id="pageGuide">
@@ -1682,9 +1696,15 @@ input:focus, textarea:focus, select:focus { border-color: var(--heat-1); outline
          the same, so one character can carry a scene. They take a few seconds rather than one, and
          a Direction sent to a plain voice is refused rather than ignored.</p>
       <h4>Image</h4>
-      <p>FLUX schnell is distilled for four steps; more steps mostly cost time. Smaller sizes are
-         proportionally faster, so draft at 512 and commit at 1024 or above. The backdrop on the
-         front door was made here.</p>
+      <p>Two models. <b>FLUX schnell</b> is the default and the quicker: distilled for four steps,
+         about 110 s at 768&times;1024. <b>CyberRealistic Z-Image</b> takes nine steps and about
+         190 s, and spends them on skin, faces and how light falls. The step box follows the model,
+         because those counts are what each was distilled for rather than a preference. Smaller
+         sizes are proportionally faster, so draft at 512 and commit at 1024 or above.</p>
+      <p>Only one image model fits in memory, so switching restarts it and you wait for a cold load
+         once. The second model is optional and carries a different licence — the Model box says
+         which, and says when a model is not installed on this host. The backdrop on the front door
+         was made here.</p>
       <h4>Chat</h4>
       <p>A plain conversation with the local Gemma model, streamed, with the transcript kept in your
          browser rather than on the server. Replies render as Markdown. <b>Show reasoning</b> is off
@@ -2036,6 +2056,7 @@ curl -X POST "__ORIGIN__/v1/images/generations" \
   <footer class="sitefoot">
     <span>Anneal — local generation. MIT licensed, © 2026 Jon Moseley.</span>
   </footer>
+</div>
 
 <!-- ------------------------------------------------------------- key gate -->
 <div class="gate hidden" id="gate">
@@ -2155,7 +2176,7 @@ async function refreshHealth() {
     health.__system = d.system || {};
     // Inside the try: `d` is scoped to it, and the limits only change when the
     // server restarts, so filling them on each poll is free and self-healing.
-    if (d.limits) { limits = d.limits; fillCapabilities(d.limits); renderTextModels(); }
+    if (d.limits) { limits = d.limits; fillCapabilities(d.limits); renderTextModels(); renderImageModels(); }
   } catch (_) { health = {}; }
   renderForge();
   // The front door says "the strip below is the truth about what is warm right
@@ -2872,6 +2893,7 @@ async function runImage() {
     prompt, size: $("iSize").value, steps: Number($("iSteps").value) || 4,
     n: 1, response_format: "path",
   };
+  if ($("iModel").value) body.model = $("iModel").value;
   if ($("iCutout").checked) body.cutout = true;
   if (init) {
     body.init_image = init.path;
@@ -2893,7 +2915,8 @@ async function runImage() {
     addResult({
       kind: "image", prompt, image: url, filename: slug(prompt) + ".png",
       cutout: !!img.cutout,
-      meta: body.size + (init ? " · variation" : ""), seed: img.seed,
+      meta: body.size + (img.model ? " · " + img.model : "")
+            + (init ? " · variation" : ""), seed: img.seed,
       path: img.path, size: body.size,
     });
   }
@@ -4489,6 +4512,57 @@ function renderTextModels() {
   sel.title = (chosen.note || chosen.label || "")
     + (willReload ? "\n\nSwitching restarts the text model — about "
                     + "twenty seconds before the first reply." : "");
+}
+
+/* Which model draws. Built from /health for the same reasons the text list is:
+   it carries a licence and whether the weights are downloaded, and a model this
+   host does not have should be visibly absent rather than a 503 after you wait.
+
+   Changing it restarts the image backend and pays a cold load. The step box
+   follows the choice, because four steps and nine are not a preference — they
+   are what each model was distilled for, and the wrong one is mush or waste. */
+function renderImageModels() {
+  const sel = $("iModel");
+  if (!sel) return;
+  const spec = limits.image || {};
+  const models = spec.models || {};
+  const names = Object.keys(models);
+  if (!names.length) return;
+  if (sel.options.length !== names.length) {
+    const keep = sel.value;
+    sel.textContent = "";
+    names.forEach((name) => {
+      const m = models[name];
+      const o = el("option", null, m.label + (m.available ? "" : " — not installed"));
+      o.value = name; o.disabled = !m.available;
+      sel.appendChild(o);
+    });
+    sel.value = models[keep] && models[keep].available ? keep
+      : (models[spec.loaded] && models[spec.loaded].available ? spec.loaded
+         : (models[spec.default] && models[spec.default].available ? spec.default
+            : names.find((n) => models[n].available) || names[0]));
+    sel.onchange = () => {
+      const m = models[sel.value] || {};
+      if (m.steps) $("iSteps").value = m.steps;
+      paintImageModelNote();
+    };
+    if ((models[sel.value] || {}).steps) $("iSteps").value = models[sel.value].steps;
+  }
+  paintImageModelNote();
+}
+
+function paintImageModelNote() {
+  const sel = $("iModel"), note = $("iModelNote");
+  if (!sel || !note) return;
+  const spec = limits.image || {};
+  const chosen = (spec.models || {})[sel.value] || {};
+  const bits = [];
+  if (chosen.note) bits.push(chosen.note);
+  if (chosen.licence) bits.push("Licence: " + chosen.licence + ".");
+  if (spec.loaded && sel.value !== spec.loaded) {
+    bits.push("Switching restarts the image model — about a minute before the first image.");
+  }
+  note.textContent = bits.join(" ");
 }
 
 /* The browser half of harmony.py. The gateway rewrites a complete response, but

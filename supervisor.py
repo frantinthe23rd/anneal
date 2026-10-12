@@ -52,6 +52,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import services
 from services import (SERVICES, MUSIC_TIERS, DEFAULT_MUSIC_TIER,
                       TEXT_MODELS, DEFAULT_TEXT_MODEL,
+                      IMAGE_MODELS, DEFAULT_IMAGE_MODEL,
                       COLD_START_SECONDS, resolve)  # noqa: E402
 from jobstore import JobStore  # noqa: E402
 import outputs  # noqa: E402
@@ -1510,6 +1511,92 @@ def ensure_text_model(name):
     return resolved
 
 
+def resolve_image_model(asked):
+    """The registry name for what a caller asked for, or None if it is unknown.
+
+    Accepts the short name or the repo id, for the same reason the text one
+    does: a client sends back whatever `model` string it was given. Unknown
+    resolves to None rather than the default — answering with a different model
+    than the one requested is the failure this exists to remove.
+    """
+    if not asked:
+        return DEFAULT_IMAGE_MODEL
+    asked = str(asked).strip()
+    if asked in IMAGE_MODELS:
+        return asked
+    for name, spec in IMAGE_MODELS.items():
+        if asked == spec["repo"]:
+            return name
+    return None
+
+
+def image_model_problem(name):
+    """Why this host cannot serve that image model, or None."""
+    resolved = resolve_image_model(name)
+    if not resolved:
+        return ("unknown model %r — one of: %s (or their repo ids)"
+                % (name, ", ".join(IMAGE_MODELS)))
+    repo = IMAGE_MODELS[resolved]["repo"]
+    if not services.image_model_path(repo):
+        # Name the model, not the service: `./anneal models image` fetches both
+        # and 15 GB, when what is missing here is 5.9.
+        return ("%s is not downloaded — ./anneal models %s fetches it"
+                % (repo, repo))
+    return None
+
+
+def loaded_image_model():
+    """Which registry entry the image backend is running.
+
+    From the process's own command line, which is why the model is on it: a
+    backend can outlive the supervisor, and the spec then says what the next
+    start would use rather than what is answering now.
+    """
+    svc = SERVICE_OBJECTS["image"]
+    name = _model_arg(svc.running_argv()) if svc.is_running() else None
+    if name is None:
+        name = _model_arg(svc.spec["cmd"])
+    return name if name in IMAGE_MODELS else None
+
+
+def ensure_image_model(name):
+    """Make the image backend run `name`, restarting if it is running another.
+
+    mflux loads weights into one object for the life of the process and there
+    is no room for a second, so switching costs a restart and a cold load —
+    surfaced rather than hidden, the same call ensure_text_model() makes.
+    """
+    resolved = resolve_image_model(name)
+    if not resolved:
+        return None
+    svc = SERVICE_OBJECTS["image"]
+    cmd = svc.spec["cmd"]
+    try:
+        at = cmd.index("--model") + 1
+    except ValueError:
+        return resolved
+
+    # Against the running process, not the spec: the spec is what the
+    # supervisor means to start next, and the two only answer the same question
+    # while the supervisor owns what is running.
+    svc.adopt_running()
+    running = svc.is_running()
+    current = _model_arg(svc.running_argv()) if running else cmd[at]
+
+    if running and current != resolved:
+        with svc.flight_lock:
+            busy = svc.in_flight
+        if busy or svc.has_work():
+            raise ServiceBusy("image", "image (%s)" % resolved)
+        log("image: switching model to %r — restarting (was %s)"
+            % (resolved, current or "unreadable"))
+        svc.stop("model switch to %s" % resolved)
+    # Written even when nothing was stopped, so the spec and the process agree
+    # about what is loaded rather than only about what was asked for.
+    cmd[at] = resolved
+    return resolved
+
+
 def ensure_music_tier(tier):
     """Make the music backend run the model for `tier`, restarting if needed.
 
@@ -1972,6 +2059,27 @@ def capability_limits():
             },
             "default": DEFAULT_TEXT_MODEL,
             "loaded": loaded_text_model(),
+            "switch_costs_a_reload": True,
+        },
+        # Which image models this host can serve, and which is loaded now.
+        # Same shape as `text` because it is the same decision: heavy, one at a
+        # time, switching costs a restart. `steps` is here because it differs
+        # per model and the form has to follow the choice.
+        "image": {
+            "models": {
+                name: {
+                    "label": spec["label"],
+                    "licence": spec["licence"],
+                    "note": spec.get("note"),
+                    "repo": spec["repo"],
+                    "steps": spec["steps"],
+                    "available": image_model_problem(name) is None,
+                    "why": image_model_problem(name),
+                }
+                for name, spec in IMAGE_MODELS.items()
+            },
+            "default": DEFAULT_IMAGE_MODEL,
+            "loaded": loaded_image_model(),
             "switch_costs_a_reload": True,
         },
         # Not a service: no port, no idle timer, nothing to evict. The page
@@ -2902,6 +3010,38 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 payload["model"] = services.text_model_path(
                     TEXT_MODELS[chosen]["repo"])
+                body = json.dumps(payload).encode()
+        elif route.startswith("/v1/images/generations") and body:
+            # The same shape as the text path above, and for the same reason:
+            # the field is read as a choice, acted on, and left in place so the
+            # backend can refuse if the restart did not take. An unrecognised
+            # name is refused rather than quietly served by the default.
+            try:
+                payload = json.loads(body.decode("utf-8"))
+            except Exception:
+                payload = None
+            if payload is not None and payload.get("model") is not None:
+                asked = payload.get("model")
+                chosen = resolve_image_model(asked)
+                if not chosen:
+                    self._send_json({
+                        "code": 400,
+                        "error": "unknown model %r — one of: %s (or their repo "
+                                 "ids). GET /health lists which are installed."
+                                 % (asked, ", ".join(IMAGE_MODELS))}, 400)
+                    return
+                problem = image_model_problem(chosen)
+                if problem:
+                    self._send_json({"code": 503, "error": problem,
+                                     "model": chosen}, 503)
+                    return
+                try:
+                    ensure_image_model(chosen)
+                except ServiceBusy as busy:
+                    self._send_json({"code": 409, "error": str(busy),
+                                     "busy_service": busy.holder}, 409)
+                    return
+                payload["model"] = chosen
                 body = json.dumps(payload).encode()
         elif route == "/release_task" and body:
             try:

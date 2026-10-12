@@ -73,6 +73,15 @@
    "licence": "Apache-2.0",
    "note": "Image. Ungated pre-quantized mirror — black-forest-labs' own repo is gated"
   },
+  "avlp12/CyberRealistic-Z-Image-Turbo-v4-mflux-4bit": {
+   "revision": "4b9ff68c9e3b82d94c181adef92a518ef9d971b9",
+   "target": "hf_cache",
+   "service": "image",
+   "required": false,
+   "size_gb": 5.9,
+   "licence": "CreativeML OpenRAIL-M — permits commercial use, but attaches use restrictions the Apache-2.0 default does not",
+   "note": "The photoreal image model. A finetune of Tongyi-MAI/Z-Image-Turbo (Apache-2.0 base); nine steps, no CFG, about 190 s for 768x1280 against the default's 110. Ungated. Without it, model=photoreal 503s and the default still works."
+  },
   "akx/FLUX.1-Kontext-dev-mflux-4bit": {
    "revision": "36e7dc0001f8f93129966ba87547eb87595a91f3",
    "target": "hf_cache",

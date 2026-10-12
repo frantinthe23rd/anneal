@@ -289,6 +289,36 @@ class TestImageHandler(unittest.TestCase):
         self.assertEqual(self.request("GET", "/nope")[0], 404)
         self.assertEqual(self.request("POST", "/nope", {})[0], 404)
 
+    # -- which model ------------------------------------------------------
+    def test_health_names_the_model_this_process_holds(self):
+        import services
+        _, body = self.request("GET", "/health")
+        self.assertEqual(body["model_name"], image_server.MODEL_NAME)
+        self.assertEqual(body["model"], image_server.MODEL_REPO)
+        self.assertEqual(body["default_steps"], image_server.DEFAULT_STEPS)
+        self.assertIn(body["model_name"], services.IMAGE_MODELS)
+
+    def test_the_loaded_model_is_accepted_by_name_or_by_repo(self):
+        for asked in (image_server.MODEL_NAME, image_server.MODEL_REPO):
+            status, _ = self.post({"prompt": "an anvil", "model": asked})
+            self.assertEqual(status, 200, asked)
+
+    def test_a_different_model_is_409_rather_than_a_wrong_image(self):
+        """One process holds one model. The gateway restarts this backend to
+        switch; reaching here with a mismatch means that did not happen, and
+        drawing anyway would answer with a model nobody asked for."""
+        status, body = self.post({"prompt": "an anvil", "model": "some-other-model"})
+        self.assertEqual(status, 409)
+        self.assertEqual(body["model"], image_server.MODEL_NAME)
+        self.assertIn(image_server.MODEL_NAME, body["error"])
+        self.assertEqual(self.generate.calls, [])
+
+    def test_the_step_default_follows_the_model(self):
+        """Four steps and nine are not a preference — they are what each model
+        was distilled for."""
+        self.post({"prompt": "an anvil"})
+        self.assertEqual(self.generate.calls[-1]["steps"], image_server.DEFAULT_STEPS)
+
     # -- validation -------------------------------------------------------
     def test_a_prompt_is_required(self):
         for payload in [{}, {"prompt": ""}, {"prompt": "   "}, {"prompt": None}]:
@@ -392,7 +422,12 @@ class TestImageHandler(unittest.TestCase):
         self.assertIsNone(body["error"])
         self.assertIsInstance(body["created"], int)
         entry = body["data"][0]
-        self.assertEqual(sorted(entry), ["path", "seconds", "seed", "url"])
+        # What a caller cannot do without, not the exact set. Freezing the list
+        # made this fail *after* a field was added rather than during, which is
+        # the wrong end of the change to hear about it.
+        for key in ("path", "seconds", "seed", "url", "model"):
+            self.assertIn(key, entry)
+        self.assertNotIn("b64_json", entry, "response_format=path asked for a path")
         self.assertEqual(entry["url"], "/v1/images/file?path=" + entry["path"])
 
     def test_b64_is_the_default_response_format(self):

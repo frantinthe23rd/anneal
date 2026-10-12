@@ -23,7 +23,7 @@ spec; the spec itself is local, and the UI at `/` fetches nothing.
 | Music | [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) | MIT | Songs with vocals, instrumentals, covers, continuation — up to 10 min. Two quality tiers. |
 | Speech | [Kokoro-82M](https://huggingface.co/prince-canuma/Kokoro-82M) via [mlx-audio](https://github.com/Blaizzy/mlx-audio) | Apache-2.0 | 28 voices, American and British English |
 | Speech, directed | [Qwen3-TTS CustomVoice](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice) 4-bit via mlx-audio | Apache-2.0 | 9 named voices that take a written performance direction |
-| Image | FLUX.1-schnell 4-bit via [mflux](https://github.com/filipstrand/mflux) | Apache-2.0 | Up to ~1536px, plus variations of an earlier image |
+| Image | FLUX.1-schnell 4-bit via [mflux](https://github.com/filipstrand/mflux), or a Z-Image-Turbo photoreal finetune | Apache-2.0 / OpenRAIL-M | Up to ~1536px, plus variations of an earlier image. Two models, chosen per request |
 | Text | Gemma 4 e4b 4-bit via [mlx-lm](https://github.com/ml-explore/mlx-lm) | Gemma Terms of Use | Chat completions, streaming |
 
 Full attribution for every model and library is in [Credits](#credits) and on
@@ -115,6 +115,7 @@ whether it is optional, before anything is downloaded:
 | Speech — Kokoro-82M | 0.3 GB | required for speech |
 | Speech — Qwen3-TTS CustomVoice | 2.2 GB | optional: the nine directed voices |
 | Image — FLUX.1-schnell 4-bit | 9.0 GB | required for images |
+| Image — CyberRealistic Z-Image 4-bit | 5.9 GB | optional: the `photoreal` model, **OpenRAIL-M licence** |
 | Text — Gemma 4 e4b 4-bit | 4.8 GB | required for text, and for Press |
 | Sprites — FLUX.1-Kontext 4-bit | 9.0 GB | optional, **non-commercial licence**; the method that uses it is declared but not yet implemented ([#37](https://github.com/frantinthe23rd/anneal/issues/37)) |
 
@@ -307,7 +308,7 @@ which one this install resolved to, and why.
 | --- | --- |
 | `$AIMUSIC_ROOT/ACE-Step-1.5` | upstream repo + `.venv` (2.7 GB) |
 | `$AIMUSIC_ROOT/models` | ACE-Step weights (15 GB — turbo 4.5, sft 4.5, planning LMs 4.8, Qwen3 embedder 1.1, VAE 0.3) |
-| `$AIMUSIC_ROOT/hf-cache` | FLUX 9.0 GB, Gemma 4.8 GB, Qwen3-TTS 2.2 GB, Kokoro 0.3 GB, and Kontext 9.0 GB if installed |
+| `$AIMUSIC_ROOT/hf-cache` | FLUX 9.0 GB, Gemma 4.8 GB, Qwen3-TTS 2.2 GB, Kokoro 0.3 GB, and if installed Z-Image 5.9 GB and Kontext 9.0 GB |
 | `$AIMUSIC_ROOT/gen-venv` | venv for speech + image (mlx-audio, mflux) — 1.3 GB |
 | `$AIMUSIC_ROOT/tools-venv` | rembg for sprite matting, Playwright for UI shots — optional |
 | `$AIMUSIC_ROOT/uv-cache`, `uv-python` | wheel cache + Python 3.12 (4.3 GB) |
@@ -456,6 +457,7 @@ Useful knobs:
 | `ACESTEP_LM_MODEL_PATH` | `acestep-5Hz-lm-0.6B` | Prompt/lyric planning LM |
 | `ANNEAL_MIN_FREE_MB` | `1200` | Refuse to load a heavy model below this much free RAM |
 | `SPEECH_QWEN_MODEL` | `mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-4bit` | The directed-speech model, loaded only when one of its voices is asked for |
+| `ANNEAL_IMAGE_MODEL` | `schnell` | Which image model a cold start loads. A request's `model` overrides it per call |
 | `ANNEAL_EXPOSE` | `loopback` | Set to `tailnet` to publish through `tailscale serve`. The gateway binds loopback either way |
 | `ANNEAL_SPRITE_PYTHON` | `$AIMUSIC_ROOT/tools-venv/bin/python` | Interpreter used to cut and matte sprite sheets. Needs rembg, so it is kept out of the pinned environment that serves the models |
 | `UV_BIN`, `TS_BIN`, `TAILNET_HOST` | auto-detected | Override only if detection picks wrong |
@@ -524,6 +526,34 @@ labels them "(planned)".
 
 Set `bpm` and `key_scale` explicitly on the request if you want them to mean
 something.
+
+## Image models
+
+Pick per request with `"model": "schnell" | "photoreal"`, or in the UI's Image
+form. Measured at 768x1024 on the same prompt and seed:
+
+| `model` | Weights | Steps | Generation | Licence |
+| --- | --- | --- | --- | --- |
+| `schnell` | FLUX.1-schnell 4-bit | 4 | ~110 s | Apache-2.0 |
+| `photoreal` | CyberRealistic Z-Image Turbo 4-bit | 9 | ~190 s | CreativeML OpenRAIL-M |
+
+`photoreal` is a finetune of Z-Image-Turbo, a different architecture that mflux
+loads through a different class. It is better on skin, faces and how light
+falls; it costs about 1.7x the time, and its licence attaches use restrictions
+the Apache-2.0 default does not.
+
+It was added to lift a content restriction, and that turned out not to be what
+it does. Asked for the same figure study at the same seed and size, both models
+drew it competently — neither refuses, so the choice is realism against speed.
+Recorded here because it is the obvious assumption to make about a distilled
+model from a large lab, and it was wrong.
+
+Only one image model fits in memory and mflux holds its weights for the life of
+the process, so asking for one that is not loaded restarts the image backend and
+pays the cold load again — the same trade the music tiers make. `GET /health`
+reports which is loaded under `limits.image`, so a client can tell whether it is
+about to pay for one. Steps default to what each model was distilled for; four
+steps of `photoreal` is mush and nine of `schnell` is five wasted.
 
 ## Vector output
 
@@ -722,7 +752,8 @@ to ACE-Step's non-turbo paths (`patches/apply_patches.py`).
 | [ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5) — DiT, 5 Hz planning LM, audio VAE, bundling Qwen3-Embedding-0.6B (Apache-2.0) | Music | MIT |
 | [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) by hexgrad, MLX conversion by Prince Canuma | Speech | Apache-2.0 |
 | [Qwen3-TTS CustomVoice](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice) by Alibaba, 4-bit MLX conversion by mlx-community | Directed speech — nine named voices that take a written performance direction | Apache-2.0 |
-| [FLUX.1-schnell](https://huggingface.co/black-forest-labs/FLUX.1-schnell) by Black Forest Labs, run as a 4-bit mflux quantisation | Images | Apache-2.0 |
+| [FLUX.1-schnell](https://huggingface.co/black-forest-labs/FLUX.1-schnell) by Black Forest Labs, run as a 4-bit mflux quantisation | Images — the default | Apache-2.0 |
+| [CyberRealistic Z-Image Turbo](https://huggingface.co/cyberdelia/cyberrealistic_zimage) by Cyberdelia, a finetune of [Z-Image-Turbo](https://huggingface.co/Tongyi-MAI/Z-Image-Turbo) by Tongyi-MAI (Apache-2.0), 4-bit mflux conversion by avlp12 | Images — the `photoreal` model | CreativeML OpenRAIL-M |
 | [Gemma 4 E4B](https://huggingface.co/google/gemma-4-E4B-it) by Google DeepMind, 4-bit MLX conversion by mlx-community | Text, lyrics | Gemma Terms of Use |
 
 | Component | For | Licence |
